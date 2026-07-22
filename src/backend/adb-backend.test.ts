@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AdbExecResult, AdbExecutor } from "./adb-executor.js";
 import { AdbBackend } from "./adb-backend.js";
+import type { ApkAcquirer } from "./apk-downloader.js";
+import { AdbKeyboardInstallFailedError } from "./ime-errors.js";
 
 function ok(stdout: string, stderr = ""): AdbExecResult {
   return { stdout: Buffer.from(stdout, "utf-8"), stderr: Buffer.from(stderr, "utf-8"), exitCode: 0 };
@@ -340,9 +342,12 @@ describe("AdbBackend", () => {
 
   describe("inputText — non-ASCII SESSION-based IME lifecycle (REQ-INPUT-003/004 revised, REQ-IDEMP-004)", () => {
     function okFirstSwitchSequence(originalIme = "com.google.android.inputmethod.latin/.LatinIME") {
-      // settings get (original IME) -> ime enable -> ime set (ADBKeyBoard) -> am broadcast -> keyevent hide
+      // pm list packages (self-heal check, already installed) -> settings
+      // get (original IME) -> ime enable -> ime set (ADBKeyBoard) -> am
+      // broadcast -> keyevent hide
       return vi
         .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("package:com.android.adbkeyboard\n")) // pm list packages (already installed)
         .mockResolvedValueOnce(ok(`${originalIme}\n`)) // settings get secure default_input_method
         .mockResolvedValueOnce(ok("")) // ime enable ADBKeyBoard
         .mockResolvedValueOnce(ok("")) // ime set ADBKeyBoard
@@ -356,7 +361,7 @@ describe("AdbBackend", () => {
 
       await backend.inputText("R58N90ABCDE", "😸");
 
-      expect(exec).toHaveBeenCalledTimes(5);
+      expect(exec).toHaveBeenCalledTimes(6);
     });
 
     it("records the original IME, switches to ADBKeyBoard, broadcasts base64 UTF-8, then hides the keyboard — WITHOUT restoring the original IME per-call (REQ-INPUT-004 revised)", async () => {
@@ -369,7 +374,8 @@ describe("AdbBackend", () => {
 
       await backend.inputText("R58N90ABCDE", text);
 
-      expect(exec).toHaveBeenNthCalledWith(1, [
+      expect(exec).toHaveBeenNthCalledWith(1, ["-s", "R58N90ABCDE", "shell", "pm", "list", "packages"]);
+      expect(exec).toHaveBeenNthCalledWith(2, [
         "-s",
         "R58N90ABCDE",
         "shell",
@@ -378,7 +384,7 @@ describe("AdbBackend", () => {
         "secure",
         "default_input_method",
       ]);
-      expect(exec).toHaveBeenNthCalledWith(2, [
+      expect(exec).toHaveBeenNthCalledWith(3, [
         "-s",
         "R58N90ABCDE",
         "shell",
@@ -386,7 +392,7 @@ describe("AdbBackend", () => {
         "enable",
         "com.android.adbkeyboard/.AdbIME",
       ]);
-      expect(exec).toHaveBeenNthCalledWith(3, [
+      expect(exec).toHaveBeenNthCalledWith(4, [
         "-s",
         "R58N90ABCDE",
         "shell",
@@ -394,7 +400,7 @@ describe("AdbBackend", () => {
         "set",
         "com.android.adbkeyboard/.AdbIME",
       ]);
-      expect(exec).toHaveBeenNthCalledWith(4, [
+      expect(exec).toHaveBeenNthCalledWith(5, [
         "-s",
         "R58N90ABCDE",
         "shell",
@@ -406,8 +412,8 @@ describe("AdbBackend", () => {
         "msg",
         expectedBase64,
       ]);
-      // 5th call is the keyboard-hide keyevent — NEVER a restore `ime set`.
-      expect(exec).toHaveBeenNthCalledWith(5, ["-s", "R58N90ABCDE", "shell", "input", "keyevent", "111"]);
+      // 6th call is the keyboard-hide keyevent — NEVER a restore `ime set`.
+      expect(exec).toHaveBeenNthCalledWith(6, ["-s", "R58N90ABCDE", "shell", "input", "keyevent", "111"]);
 
       // The session stays active: the original IME is still tracked, ready
       // to be restored only by `reset` (see reset.ts / doctor.ts tests).
@@ -420,13 +426,14 @@ describe("AdbBackend", () => {
     it("a second non-ASCII call on the SAME serial skips the IME switch entirely (session-based, REQ-INPUT-004 revised)", async () => {
       const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
       const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        if (args[3] === "pm") return ok("package:com.android.adbkeyboard\n");
         if (args[3] === "settings") return ok(`${originalIme}\n`);
         return ok("");
       });
       const backend = new AdbBackend(exec);
 
       await backend.inputText("R58N90ABCDE", "안녕");
-      expect(exec).toHaveBeenCalledTimes(5); // settings get, ime enable, ime set, broadcast, hide
+      expect(exec).toHaveBeenCalledTimes(6); // pm list, settings get, ime enable, ime set, broadcast, hide
 
       exec.mockClear();
       await backend.inputText("R58N90ABCDE", "반가워");
@@ -454,6 +461,7 @@ describe("AdbBackend", () => {
       const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
       const exec = vi
         .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("package:com.android.adbkeyboard\n")) // pm list packages (already installed)
         .mockResolvedValueOnce(ok(`${originalIme}\n`)) // settings get
         .mockResolvedValueOnce(ok("")) // ime enable
         .mockResolvedValueOnce(ok("")) // ime set ADBKeyBoard
@@ -463,8 +471,8 @@ describe("AdbBackend", () => {
 
       await expect(backend.inputText("R58N90ABCDE", "안녕")).rejects.toThrow(/broadcast failed/);
 
-      // No 5th call: no restore, no keyboard-hide attempted after a failed send.
-      expect(exec).toHaveBeenCalledTimes(4);
+      // No 6th call: no restore, no keyboard-hide attempted after a failed send.
+      expect(exec).toHaveBeenCalledTimes(5);
       // The switch itself succeeded, so the session remains tracked as
       // active — a retry on this serial will skip re-switching.
       expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBe(originalIme);
@@ -473,6 +481,7 @@ describe("AdbBackend", () => {
     it("does not mark the session active when the IME switch itself fails (safe to retry the switch on the next call)", async () => {
       const exec = vi
         .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("package:com.android.adbkeyboard\n")) // pm list packages (already installed)
         .mockResolvedValueOnce(ok("com.example/.Original\n")) // settings get
         .mockResolvedValueOnce(fail("adb: ime enable rejected", 1)); // ime enable FAILS
 
@@ -480,13 +489,14 @@ describe("AdbBackend", () => {
 
       await expect(backend.inputText("R58N90ABCDE", "안녕")).rejects.toThrow(/ime enable rejected/);
 
-      expect(exec).toHaveBeenCalledTimes(2);
+      expect(exec).toHaveBeenCalledTimes(3);
       expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBeUndefined();
     });
 
     it("switches IME and sends even when the original IME could not be determined, tracking an empty (unknown) entry instead of throwing (acceptance.md §D.1 edge case)", async () => {
       const exec = vi
         .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("package:com.android.adbkeyboard\n")) // pm list packages (already installed)
         .mockResolvedValueOnce(ok("null\n")) // settings get returns literal "null" (unset/unknown)
         .mockResolvedValueOnce(ok("")) // ime enable
         .mockResolvedValueOnce(ok("")) // ime set ADBKeyBoard
@@ -497,10 +507,131 @@ describe("AdbBackend", () => {
 
       await expect(backend.inputText("R58N90ABCDE", "안녕")).resolves.toBeUndefined();
 
-      expect(exec).toHaveBeenCalledTimes(5);
+      expect(exec).toHaveBeenCalledTimes(6);
       // Tracked as an active session with an unknown (empty) original id —
       // `getTrackedOriginalIme` returns "" (defined, but empty), not undefined.
       expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBe("");
+    });
+  });
+
+  describe("inputText — ADBKeyBoard self-heal install (REQ-INPUT-003 revised)", () => {
+    // `reset` uninstalls ADBKeyBoard as part of restoring the device to its
+    // pre-`doctor` state (doctor.test.ts / real-device finding); a
+    // subsequent non-ASCII `text` call must re-install it on demand rather
+    // than fail with "Unknown input method ... cannot be enabled".
+
+    it("auto-installs ADBKeyBoard via the shared install helper when 'pm list packages' shows it missing, then proceeds with the IME switch + broadcast", async () => {
+      const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("package:com.android.settings\n")) // pm list packages (ADBKeyBoard NOT present)
+        .mockResolvedValueOnce(ok("Success")) // adb install <downloaded apk path>
+        .mockResolvedValueOnce(ok(`${originalIme}\n`)) // settings get secure default_input_method
+        .mockResolvedValueOnce(ok("")) // ime enable ADBKeyBoard
+        .mockResolvedValueOnce(ok("")) // ime set ADBKeyBoard
+        .mockResolvedValueOnce(ok("")) // am broadcast ADB_INPUT_B64
+        .mockResolvedValueOnce(ok("")); // keyevent 111 (keyboard hide)
+      const acquireApk = vi.fn<ApkAcquirer>().mockResolvedValue({
+        path: "/home/user/.cache/explore-mobile/ADBKeyBoard-v2.4-dev.apk",
+        fromCache: false,
+        sourceUrl: "https://github.com/senzhk/ADBKeyBoard/releases/download/v2.4-dev/ADBKeyboard.apk",
+      });
+
+      const backend = new AdbBackend(exec, acquireApk);
+      await backend.inputText("R58N90ABCDE", "안녕하세요");
+
+      expect(acquireApk).toHaveBeenCalledTimes(1);
+      expect(exec).toHaveBeenNthCalledWith(1, ["-s", "R58N90ABCDE", "shell", "pm", "list", "packages"]);
+      expect(exec).toHaveBeenNthCalledWith(2, [
+        "-s",
+        "R58N90ABCDE",
+        "install",
+        "/home/user/.cache/explore-mobile/ADBKeyBoard-v2.4-dev.apk",
+      ]);
+      expect(exec).toHaveBeenNthCalledWith(3, [
+        "-s",
+        "R58N90ABCDE",
+        "shell",
+        "settings",
+        "get",
+        "secure",
+        "default_input_method",
+      ]);
+      expect(exec).toHaveBeenNthCalledWith(4, [
+        "-s",
+        "R58N90ABCDE",
+        "shell",
+        "ime",
+        "enable",
+        "com.android.adbkeyboard/.AdbIME",
+      ]);
+      expect(exec).toHaveBeenNthCalledWith(5, [
+        "-s",
+        "R58N90ABCDE",
+        "shell",
+        "ime",
+        "set",
+        "com.android.adbkeyboard/.AdbIME",
+      ]);
+      expect(exec).toHaveBeenCalledTimes(7);
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBe(originalIme);
+    });
+
+    it("skips the install step (fast path) when ADBKeyBoard is already present, still switching the IME and sending", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("package:com.android.adbkeyboard\n")) // pm list packages (already present)
+        .mockResolvedValueOnce(ok("")) // settings get
+        .mockResolvedValueOnce(ok("")) // ime enable
+        .mockResolvedValueOnce(ok("")) // ime set
+        .mockResolvedValueOnce(ok("")) // am broadcast
+        .mockResolvedValueOnce(ok("")); // keyevent hide
+      const acquireApk = vi.fn<ApkAcquirer>();
+
+      const backend = new AdbBackend(exec, acquireApk);
+      await backend.inputText("R58N90ABCDE", "안녕");
+
+      expect(acquireApk).not.toHaveBeenCalled();
+      expect(exec).toHaveBeenCalledTimes(6);
+    });
+
+    it("throws AdbKeyboardInstallFailedError with the APK_DOWNLOAD_FAILED code and attempts no IME switch when the runtime download fails (device left unchanged)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("package:com.android.settings\n")); // pm list — not present
+      const acquireApk = vi
+        .fn<ApkAcquirer>()
+        .mockRejectedValue(new Error("Failed to download a valid ADBKeyBoard APK from ... . Install manually: ..."));
+
+      const backend = new AdbBackend(exec, acquireApk);
+
+      const thrown: unknown = await backend.inputText("R58N90ABCDE", "안녕").catch((err: unknown) => err);
+
+      expect(thrown).toBeInstanceOf(AdbKeyboardInstallFailedError);
+      expect((thrown as AdbKeyboardInstallFailedError).code).toBe("APK_DOWNLOAD_FAILED");
+
+      // Only the pm-list query happened — no settings get / ime enable /
+      // ime set / broadcast: the device is left in its pre-call state.
+      expect(exec).toHaveBeenCalledTimes(1);
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBeUndefined();
+    });
+
+    it("throws AdbKeyboardInstallFailedError with the APK_INSTALL_FAILED code when 'adb install' itself fails after a successful download", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("package:com.android.settings\n")) // pm list — not present
+        .mockResolvedValueOnce(fail("INSTALL_FAILED_OLDER_SDK", 1)); // adb install fails
+      const acquireApk = vi
+        .fn<ApkAcquirer>()
+        .mockResolvedValue({ path: "/fake/cache/ADBKeyBoard.apk", fromCache: false, sourceUrl: "https://example.test/apk" });
+
+      const backend = new AdbBackend(exec, acquireApk);
+
+      await expect(backend.inputText("R58N90ABCDE", "안녕")).rejects.toMatchObject({
+        name: "AdbKeyboardInstallFailedError",
+        code: "APK_INSTALL_FAILED",
+      });
+
+      expect(exec).toHaveBeenCalledTimes(2);
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBeUndefined();
     });
   });
 
@@ -514,6 +645,7 @@ describe("AdbBackend", () => {
     it("clearTrackedOriginalIme clears an active session so the next non-ASCII call switches again", async () => {
       const originalIme = "com.example/.OriginalIme";
       const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        if (args[3] === "pm") return ok("package:com.android.adbkeyboard\n"); // self-heal check: already installed
         if (args[3] === "settings") return ok(`${originalIme}\n`);
         return ok("");
       });
@@ -540,6 +672,7 @@ describe("AdbBackend", () => {
         B: "com.example/.KeyboardB",
       };
       const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        if (args[3] === "pm") return ok("package:com.android.adbkeyboard\n"); // self-heal check: already installed
         const serial = args[1] as string;
         if (args[3] === "settings") return ok(`${originalImeFor[serial]}\n`);
         return ok("");
@@ -561,6 +694,7 @@ describe("AdbBackend", () => {
       };
 
       const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        if (args[3] === "pm") return ok("package:com.android.adbkeyboard\n"); // self-heal check: already installed
         const serial = args[1] as string;
         if (args[3] === "settings") {
           return ok(`${originalImeFor[serial]}\n`);
@@ -591,6 +725,7 @@ describe("AdbBackend", () => {
     it("does not re-switch or accumulate state across repeated non-ASCII calls for the same serial (REQ-IDEMP-001, session-based)", async () => {
       const originalIme = "com.example/.OriginalIme";
       const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        if (args[3] === "pm") return ok("package:com.android.adbkeyboard\n"); // self-heal check: already installed
         if (args[3] === "settings") return ok(`${originalIme}\n`);
         return ok("");
       });

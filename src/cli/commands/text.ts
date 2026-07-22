@@ -9,7 +9,7 @@
  * generic adb failure) into the standard JSON envelope.
  */
 
-import { ImeRestoreFailedError } from "../../backend/ime-errors.js";
+import { AdbKeyboardInstallFailedError, ImeRestoreFailedError } from "../../backend/ime-errors.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { errorMessage, type CommandHandler } from "./types.js";
@@ -33,6 +33,13 @@ export const textCommand: CommandHandler = async (args, backend) => {
       return failure("text", "IME_RESTORE_FAILED", err.message, {
         originalImeId: err.originalImeId ?? null,
       });
+    }
+    if (err instanceof AdbKeyboardInstallFailedError) {
+      // REQ-INPUT-003 revised (self-heal): reuse the identical error code
+      // AdbDoctor.ensureAdbKeyboard() already surfaces for the same
+      // failure classes (PM_LIST_FAILED / APK_DOWNLOAD_FAILED /
+      // APK_INSTALL_FAILED) instead of degrading to ADB_COMMAND_FAILED.
+      return failure("text", err.code, err.message);
     }
     return failure("text", "ADB_COMMAND_FAILED", errorMessage(err));
   }

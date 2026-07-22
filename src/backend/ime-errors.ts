@@ -26,3 +26,29 @@ export class ImeRestoreFailedError extends Error {
     this.name = "ImeRestoreFailedError";
   }
 }
+
+/**
+ * Thrown when the ADBKeyBoard self-heal install — triggered from a
+ * non-ASCII `AdbBackend.inputText()` call (REQ-INPUT-003 revised: `reset`
+ * uninstalls ADBKeyBoard as part of restoring the device, so a fresh
+ * device or a post-`reset` device is missing it and `text` must re-install
+ * it on demand) — fails: the package-presence query, the runtime APK
+ * download, or the `adb install` itself.
+ *
+ * Carries the same `code` values `AdbDoctor.ensureAdbKeyboard()` already
+ * surfaces for the identical failure classes (`PM_LIST_FAILED` /
+ * `APK_DOWNLOAD_FAILED` / `APK_INSTALL_FAILED`), so the CLI layer can
+ * reuse doctor's existing, already-documented error codes instead of
+ * degrading to the generic `ADB_COMMAND_FAILED`. No IME switch is
+ * attempted when this is thrown — the device is left in its pre-call
+ * state (REQ-ERR-002 graceful degradation).
+ */
+export class AdbKeyboardInstallFailedError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+  ) {
+    super(message);
+    this.name = "AdbKeyboardInstallFailedError";
+  }
+}

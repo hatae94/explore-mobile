@@ -7,7 +7,7 @@ import { AdbBackend } from "../backend/adb-backend.js";
 import type { AdbExecResult, AdbExecutor } from "../backend/adb-executor.js";
 import type { ApkAcquirer } from "../backend/apk-downloader.js";
 import { AdbDoctor } from "../backend/doctor.js";
-import { ImeRestoreFailedError } from "../backend/ime-errors.js";
+import { AdbKeyboardInstallFailedError, ImeRestoreFailedError } from "../backend/ime-errors.js";
 import type { ProcessExecutor } from "../backend/process-executor.js";
 import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
 import { runCli } from "./router.js";
@@ -427,6 +427,24 @@ describe("runCli", () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+    });
+
+    it("surfaces an AdbKeyboardInstallFailedError using its own code, reusing doctor's error codes (REQ-INPUT-003 revised self-heal)", async () => {
+      const backend = createMockBackend();
+      (backend.inputText as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new AdbKeyboardInstallFailedError(
+          "Failed to download a valid ADBKeyBoard APK from ... . Install manually: ...",
+          "APK_DOWNLOAD_FAILED",
+        ),
+      );
+
+      const result = await runCli(["text", "안녕"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("APK_DOWNLOAD_FAILED");
+        expect(result.error.message).toMatch(/download/i);
+      }
     });
 
     it("returns a graceful device-targeting error (not ADB_COMMAND_FAILED) when the device is ambiguous", async () => {

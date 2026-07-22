@@ -14,11 +14,15 @@
 import { randomBytes } from "node:crypto";
 
 import { ADBKEYBOARD_BROADCAST_ACTION, ADBKEYBOARD_IME_ID } from "./adbkeyboard.js";
+import { ensureAdbKeyboardInstalled } from "./adbkeyboard-installer.js";
 import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
 import { isKeyAlias } from "../schema/key-alias.js";
 import type { AdbExecResult, AdbExecutor } from "./adb-executor.js";
 import { spawnAdb } from "./adb-executor.js";
+import type { ApkAcquirer } from "./apk-downloader.js";
+import { createApkAcquirer } from "./apk-downloader.js";
 import { parseAdbDevicesList } from "./device-list-parser.js";
+import { AdbKeyboardInstallFailedError } from "./ime-errors.js";
 import { ANDROID_KEYCODE, KEYCODE_ESCAPE } from "./keycodes.js";
 import { PerSerialState } from "./per-serial-state.js";
 
@@ -90,7 +94,10 @@ export class AdbBackend implements DeviceBackend {
    */
   private readonly originalImeBySerial = new PerSerialState<string>();
 
-  constructor(private readonly exec: AdbExecutor = spawnAdb) {}
+  constructor(
+    private readonly exec: AdbExecutor = spawnAdb,
+    private readonly acquireApk: ApkAcquirer = createApkAcquirer(),
+  ) {}
 
   /**
    * Accessor (REQ-MULTIDEV-003): the original IME tracked for `serial`,
@@ -189,13 +196,15 @@ export class AdbBackend implements DeviceBackend {
   }
 
   /**
-   * @MX:WARN — switches the device's active IME to ADBKeyBoard for
-   * non-ASCII input, SESSION-scoped per serial: the switch happens only
-   * once per serial (tracked via `originalImeBySerial`) and is never
-   * restored per-call. Restore happens ONLY via `reset`/`doctor --clean`
-   * (see `getTrackedOriginalIme()` / `clearTrackedOriginalIme()`). A
-   * best-effort keyboard-hide (KEYCODE_ESCAPE) runs after every send
-   * unless `options.hideKeyboardAfter` is `false`.
+   * @MX:WARN — self-heals a missing ADBKeyBoard install (below) and
+   * switches the device's active IME to ADBKeyBoard for non-ASCII input,
+   * SESSION-scoped per serial: the install check and the switch happen
+   * only once per serial (tracked via `originalImeBySerial`) and the
+   * switch is never restored per-call. Restore happens ONLY via
+   * `reset`/`doctor --clean` (see `getTrackedOriginalIme()` /
+   * `clearTrackedOriginalIme()`). A best-effort keyboard-hide
+   * (KEYCODE_ESCAPE) runs after every send unless
+   * `options.hideKeyboardAfter` is `false`.
    * @MX:REASON — REQ-INPUT-004 (revised, real-device UX fix): a per-call
    * IME restore causes visible soft-keyboard flicker and prevents the
    * app's keyboard-avoiding layout from re-triggering on a real device.
@@ -203,7 +212,12 @@ export class AdbBackend implements DeviceBackend {
    * the user-approved fix; `reset` remains the single place restore is
    * guaranteed to be attempted, keeping REQ-IDEMP-004's "always
    * eventually restored" guarantee intact at the session boundary
-   * instead of the per-call boundary.
+   * instead of the per-call boundary. Separately, REQ-INPUT-003 revised:
+   * `reset` uninstalls ADBKeyBoard, so a device that was just reset (or a
+   * fresh device) is missing it — `ime enable` on a missing package fails
+   * with "Unknown input method" — so `text` self-heals by installing it
+   * on demand via the same shared helper `doctor` uses, before attempting
+   * the switch.
    */
   async inputText(serial: string, text: string, options?: { hideKeyboardAfter?: boolean }): Promise<void> {
     const hideKeyboardAfter = options?.hideKeyboardAfter ?? true;
@@ -226,9 +240,21 @@ export class AdbBackend implements DeviceBackend {
     }
 
     // Non-ASCII path (REQ-INPUT-003): ADBKeyBoard base64 broadcast, with a
-    // SESSION-scoped IME switch (REQ-INPUT-004 revised) — only switch when
-    // ADBKeyBoard is not already the tracked active IME for this serial.
+    // SESSION-scoped self-heal install + IME switch (REQ-INPUT-004
+    // revised) — only checked/switched when ADBKeyBoard is not already the
+    // tracked active IME for this serial.
     if (!this.originalImeBySerial.has(serial)) {
+      // Self-heal (REQ-INPUT-003 revised): install ADBKeyBoard first when
+      // missing (idempotent fast path when already installed — REQ-IDEMP-002),
+      // reusing the identical runtime-download + `adb install` logic
+      // `AdbDoctor.ensureAdbKeyboard()` uses. A failure here degrades
+      // gracefully (REQ-ERR-002): no IME switch is attempted and the
+      // device is left in its pre-call state.
+      const installResult = await ensureAdbKeyboardInstalled(serial, this.exec, this.acquireApk);
+      if (installResult.error) {
+        throw new AdbKeyboardInstallFailedError(installResult.error.message, installResult.error.code);
+      }
+
       const originalIme = await this.getCurrentIme(serial);
       // Switch first; only record the session as active once the switch
       // itself has actually succeeded (a failed switch must not make a

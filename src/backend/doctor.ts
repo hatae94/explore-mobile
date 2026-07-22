@@ -23,6 +23,7 @@
  */
 
 import { ADBKEYBOARD_IME_ID, ADBKEYBOARD_PACKAGE_ID } from "./adbkeyboard.js";
+import { ensureAdbKeyboardInstalled } from "./adbkeyboard-installer.js";
 import type { AdbExecutor } from "./adb-executor.js";
 import { spawnAdb } from "./adb-executor.js";
 import type { ApkAcquirer } from "./apk-downloader.js";
@@ -164,75 +165,32 @@ export class AdbDoctor {
   }
 
   /**
-   * Installs (if not already present — REQ-IDEMP-002) and enables the
-   * ADBKeyBoard IME (REQ-DOCTOR-003), downloading it at runtime from its
-   * official GitHub release (see apk-downloader.ts — GPL-2.0, never
-   * bundled/redistributed by this MIT package). Download failure
-   * (network error / 404 / invalid file) or install failure degrades
-   * gracefully without further changing device state (REQ-ERR-002,
-   * AC-ANDROID-016).
+   * Installs (if not already present — REQ-IDEMP-002, via the shared
+   * `ensureAdbKeyboardInstalled()` helper also used by `AdbBackend.inputText()`'s
+   * self-heal path) and enables the ADBKeyBoard IME (REQ-DOCTOR-003),
+   * downloading it at runtime from its official GitHub release (see
+   * apk-downloader.ts — GPL-2.0, never bundled/redistributed by this MIT
+   * package). Download failure (network error / 404 / invalid file) or
+   * install failure degrades gracefully without further changing device
+   * state (REQ-ERR-002, AC-ANDROID-016).
    */
   async ensureAdbKeyboard(serial: string): Promise<AdbKeyboardResult> {
-    const listResult = await this.adbExec(["-s", serial, "shell", "pm", "list", "packages"]);
-    if (listResult.exitCode !== 0) {
-      const stderrText = listResult.stderr.toString("utf-8").trim();
+    const installResult = await ensureAdbKeyboardInstalled(serial, this.adbExec, this.acquireApk);
+    if (installResult.error) {
       return {
-        alreadyInstalled: false,
-        installed: false,
+        alreadyInstalled: installResult.alreadyInstalled,
+        installed: installResult.installed,
         enabled: false,
-        error: {
-          code: "PM_LIST_FAILED",
-          message: `Could not query installed packages: ${stderrText.length > 0 ? stderrText : "unknown error"}`,
-        },
+        error: installResult.error,
       };
-    }
-
-    const alreadyInstalled = listResult.stdout
-      .toString("utf-8")
-      .includes(`package:${ADBKEYBOARD_PACKAGE_ID}`);
-
-    let apkSource: AdbKeyboardResult["apkSource"];
-
-    if (!alreadyInstalled) {
-      let acquisition;
-      try {
-        acquisition = await this.acquireApk();
-      } catch (err) {
-        return {
-          alreadyInstalled: false,
-          installed: false,
-          enabled: false,
-          error: {
-            code: "APK_DOWNLOAD_FAILED",
-            message: errorMessage(err),
-          },
-        };
-      }
-      apkSource = acquisition.sourceUrl
-        ? { cached: acquisition.fromCache, url: acquisition.sourceUrl }
-        : { cached: acquisition.fromCache };
-
-      const installResult = await this.adbExec(["-s", serial, "install", acquisition.path]);
-      if (installResult.exitCode !== 0) {
-        const stderrText = installResult.stderr.toString("utf-8").trim();
-        return {
-          alreadyInstalled: false,
-          installed: false,
-          enabled: false,
-          error: {
-            code: "APK_INSTALL_FAILED",
-            message: `ADBKeyBoard install failed: ${stderrText.length > 0 ? stderrText : "unknown adb install error"}. Try manually: adb -s ${serial} install ${acquisition.path}`,
-          },
-        };
-      }
     }
 
     const enableResult = await this.adbExec(["-s", serial, "shell", "ime", "enable", ADBKEYBOARD_IME_ID]);
     if (enableResult.exitCode !== 0) {
       const stderrText = enableResult.stderr.toString("utf-8").trim();
       return {
-        alreadyInstalled,
-        installed: !alreadyInstalled,
+        alreadyInstalled: installResult.alreadyInstalled,
+        installed: installResult.installed,
         enabled: false,
         error: {
           code: "IME_ENABLE_FAILED",
@@ -242,10 +200,10 @@ export class AdbDoctor {
     }
 
     return {
-      alreadyInstalled,
-      installed: !alreadyInstalled,
+      alreadyInstalled: installResult.alreadyInstalled,
+      installed: installResult.installed,
       enabled: true,
-      ...(apkSource ? { apkSource } : {}),
+      ...(installResult.apkSource ? { apkSource: installResult.apkSource } : {}),
     };
   }
 
