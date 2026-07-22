@@ -23,6 +23,9 @@
 
 import type { KeyAlias } from "../schema/key-alias.js";
 
+// @MX:TODO — confirm these HID usage values against a real `idb ui key`
+// invocation (run-phase DEFER item, plan.md §B.0 / research.md §3.2). A
+// mismatch only requires adjusting the numeric values below.
 export const IOS_HID_KEYCODE: Partial<Record<KeyAlias, number>> = {
   enter: 40, // Keyboard Return (Enter)
   del: 42, // Keyboard Delete (Backspace)

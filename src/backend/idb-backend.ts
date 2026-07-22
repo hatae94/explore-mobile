@@ -86,6 +86,13 @@ function assertSuccess(result: IdbExecResult, context: string): void {
 export class IdbBackend implements DeviceBackend {
   constructor(private readonly exec: IdbExecutor = spawnIdb) {}
 
+  /**
+   * @MX:TODO — `list-targets --json` field names (udid/name/os_version/
+   * state/target_type) are a documented Run-phase DEFER assumption
+   * (research.md §3.1, plan.md §B.0 gate decision) pending confirmation
+   * against a real `idb list-targets --json` invocation. A mismatch only
+   * requires adjusting `toDeviceInfo`'s field reads, isolated here.
+   */
   async listDevices(): Promise<DeviceInfo[]> {
     const result = await this.exec(["list-targets", "--json"]);
     assertSuccess(result, "list-targets --json");
@@ -112,6 +119,12 @@ export class IdbBackend implements DeviceBackend {
    * it already normalized to CommonElement[] via the idb normalizer —
    * mirrors AdbBackend.dumpUiHierarchy's internal-normalization contract
    * (REQ-IOS-SCHEMA-002/003).
+   *
+   * @MX:TODO — the `--udid <serial>` target flag and describe-all's exact
+   * argument/output shape are a documented Run-phase DEFER assumption
+   * (research.md §3.3, plan.md §B.0 gate decision) pending confirmation
+   * against a real idb CLI. A mismatch only requires adjusting this
+   * method's argv construction, isolated here.
    */
   async dumpUiHierarchy(serial: string): Promise<CommonElement[]> {
     const result = await this.exec(["ui", "describe-all", "--udid", serial, "--json"]);
