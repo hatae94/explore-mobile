@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.example.app" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2280]">
+    <node index="0" text="" resource-id="cb_agree" class="android.widget.CheckBox" package="com.example.app" content-desc="Agree checkbox" checkable="true" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[40,120][120,200]" />
+    <node index="1" text="" resource-id="et_name" class="android.widget.EditText" package="com.example.app" content-desc="Name field" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[40,220][1040,320]" />
+  </node>
+</hierarchy>
