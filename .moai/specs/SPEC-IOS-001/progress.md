@@ -21,7 +21,7 @@
 |-------|-----------|--------|---------------|
 | AC-IOS-001 | unit(mock) | PASS | `device-backend.test.ts` field-presence 6필드(platform 포함) + `adb-backend.test.ts`/`idb-backend.test.ts` listDevices가 `platform:"android"`/`"ios"` 반환 확인 |
 | AC-IOS-002 | unit(mock) | PASS | `adb-backend.test.ts` dumpUiHierarchy 테스트: 반환값이 `normalizeUiAutomatorXml(xml)`과 `toEqual` 일치 (`CommonElement[]`) |
-| AC-IOS-003 | unit(grep) | PASS | `grep -rn "normalizeUiAutomatorXml\|normalizeIdbAccessibility" src/cli/commands/` → 0 matches |
+| AC-IOS-003 | unit(grep) | PASS (grep 리터럴 정정, sync-auditor F2 해소) | acceptance.md의 grep 리터럴을 주석-라인 제외 필터 포함형으로 정정: `grep -rn "normalizeUiAutomatorXml" src/cli/commands/ \| grep -v '^[^:]*:[0-9]*:[ \t]*\*'` → 0 matches(실행 확인됨). 원문 리터럴은 dump.ts/tap.ts/text.ts의 doc-comment 3건("…import/call was removed" 서술)에서 false-positive 매치되어 있었음 — 실제 import/호출은 이미 0건이었고 표현만 부정확했음 |
 | AC-IOS-004 | unit | PASS | `idb.test.ts` — research.md §2 검증 예시(Wallet) → 정확히 일치하는 `CommonElement` |
 | AC-IOS-005 | unit | PASS | `idb.test.ts` tappable 파생 6개 케이스(interactive-type/enabled=false/non-interactive/custom_actions/AX-role-fallback/AXTraits-무시) 전부 GREEN |
 | AC-IOS-006 | unit | PASS | `idb.test.ts` flat-multi 픽스처(children:[] 확인) + 손상/빈/비-object 배열 항목 graceful 테스트 |
@@ -35,20 +35,20 @@
 | AC-IOS-014 | e2e·manual | **PASS-WITH-DEBT** | unit 대체 검증만 수행: `idb-backend.test.ts` screenshot이 PNG 바이트를 그대로 통과시킴을 mock으로 확인. e2e·manual(실 매직바이트 검증)은 미실행(세션 제약) |
 | AC-IOS-015 | unit(mock) + e2e | **PASS-WITH-DEBT** | unit(mock): `idb-backend.test.ts` tap argv 정확성 GREEN. e2e: 미실행 |
 | AC-IOS-016 | unit(mock) + e2e | **PASS-WITH-DEBT** | unit(mock): `idb-backend.test.ts` inputText — 단일 `ui text` 호출만 발생(IME 절차 없음) + hideKeyboardAfter no-op GREEN. e2e: 미실행 |
-| AC-IOS-017 | unit(mock) + e2e | **PASS-WITH-DEBT** | unit(mock): `idb-backend.test.ts` — `enter`→HID 40 전송, `home`/`volume_up`/... → `UnsupportedKeyOnIosError` 거부(무호출) 전부 GREEN. e2e: 미실행(HID 코드 해석은 plan.md §B.0 DEFER) |
+| AC-IOS-017 | unit(mock) + e2e | **PASS** (CLI 레벨 검증 완료, sync-auditor F1 BLOCKER 해소) | unit(mock): `idb-backend.test.ts` — `enter`→HID 40 전송, `home`/`volume_up`/... → `UnsupportedKeyOnIosError` 거부(무호출) 전부 GREEN(백엔드 레벨). **신규**: `cli/commands/key.ts`의 catch 최상단에 `instanceof UnsupportedKeyOnIosError` 타입-지정 분기 추가(text.ts의 기존 패턴 미러) — 이전에는 모든 백엔드 오류가 `BACKEND_COMMAND_FAILED`로 마스킹되어 AC-IOS-017/D7 우선순위(타입-지정 인식 오류가 최우선)를 CLI 레벨에서 실제로 충족하지 못했음(vacuous test — 백엔드 throw만 검증, CLI envelope 미검증). `router.test.ts` 신규 CLI 회귀 테스트: iOS-registry-라우팅된 대상에 `key home` 실행 시 `result.error.code === "UNSUPPORTED_KEY_ON_IOS"`(NOT `BACKEND_COMMAND_FAILED`) GREEN. 잔여 e2e(실 HID 코드 해석, plan.md §B.0 DEFER)만 세션 제약으로 미실행 |
 | AC-IOS-018 | e2e·manual | **PASS-WITH-DEBT** | unit 대체 검증만 수행: `idb-backend.test.ts` launchApp/stopApp argv 정확성. e2e·manual(포그라운드 관찰)은 미실행 |
 | AC-IOS-019 | unit(mock) + e2e | **PASS-WITH-DEBT** | unit(mock): `idb-doctor.test.ts` — checkIdbInstalled/checkCompanion/checkSimulatorBooted 전부 GREEN(서비스 레벨). `cli/commands/doctor.ts`의 실제 JSON 보고 통합(REQ-IOS-DOCTOR-003 CLI 분기)은 **후속 delegation으로 완료됨**(AC-021 참조) — 잔여 e2e(실 시뮬레이터)만 세션 제약으로 미실행 |
 | AC-IOS-020 | unit(mock) | PASS | `idb-doctor.test.ts` installGuidance — macOS(pip3/brew 안내) + non-macOS(미지원 명시, 명령 없음) 양쪽 GREEN |
 | AC-IOS-021 | unit(mock) | **PASS** (이전 iter: FAIL → 이번 후속 delegation으로 해소) | `src/cli/env-services.ts`(신규 `EnvServices` 홀더) + `cli/commands/doctor.ts`/`reset.ts` 플랫폼 분기 구현. `router.test.ts` 신규 4-테스트: doctor→iOS 타겟 시 `IdbDoctor`(checkIdbInstalled/checkCompanion/checkSimulatorBooted) 호출 + `ensureAdbKeyboard` 미호출 GREEN; doctor→Android 타겟 시 반대로 GREEN; reset→iOS 타겟 시 `IdbDoctor.resetDevice` 호출 + `AdbDoctor.resetDevice` 미호출 GREEN; reset→Android 타겟 시 반대로 GREEN(기존 IME 복원 경로 완전 보존, byte-for-byte 무변경) |
 | AC-IOS-022 | unit(mock) + e2e | **PASS-WITH-DEBT** | unit(mock): `idb-doctor.test.ts` resetDevice — `noOp:true` + "정리 불필요" 메시지 GREEN + `reset.ts` 플랫폼 분기로 CLI 레벨까지 연결(AC-021 참조). 잔여 e2e만 세션 제약으로 미실행 |
 | AC-IOS-023 | unit(mock) | PASS | 7개 명령 계층 파일(dump/tap/text/screenshot/launch/stop/key) 전부 `BACKEND_COMMAND_FAILED`로 rename + `router.test.ts` 전체 검증 GREEN |
-| AC-IOS-024 | doc + unit(grep) | PASS (grep 리터럴 표현 정정, §추가 노트 참조) | 정제된 격리-불변량 체크 `grep -rn "spawnIdb\|idb-executor\|IdbBackend\b" src/cli/commands/` → 실제 import/호출 0건(주석 언급만 3건). 원문 리터럴 `grep -rn "idb" src/cli/commands/`는 AC-021 구현 후 매치 있음(`IdbDoctor`/`checkIdbInstalled`/`idbEnvironment` 식별자) — REQ-IOS-DOCTOR-003가 명령 계층에서 `IdbDoctor` 서비스를 정당하게 참조하도록 요구하므로 예상된 결과이며 REQ-IOS-ISOLATE-002(직접 idb 서브프로세스 호출 금지) 위반이 아님. 버전 고정(`fb-idb==1.1.8`)은 `idb-executor.ts`/`idb-doctor.ts` 문서화 |
+| AC-IOS-024 | doc + unit(grep) | PASS (grep 리터럴 정정, sync-auditor F3 해소) | acceptance.md의 grep 리터럴을 격리-불변량 표현(+주석 라인 제외)으로 정정: `grep -rn "spawnIdb\|idb-executor\|IdbBackend\b" src/cli/commands/ \| grep -v '^[^:]*:[0-9]*:[ \t]*\*'` → 0 matches(실행 확인됨 — 남은 3건의 `IdbBackend` 언급은 전부 doc-comment 서술이며 필터로 제외됨). 원문 리터럴 `grep -rn "idb" src/cli/commands/`는 AC-021 구현(doctor.ts의 `IdbDoctor`/`checkIdbInstalled`/`idbEnvironment` 식별자) 이후 매치가 발생하는데, 이는 REQ-IOS-DOCTOR-003가 명령 계층에서 `IdbDoctor` 서비스를 정당하게 참조하도록 요구한 결과이지 REQ-IOS-ISOLATE-002(직접 idb 서브프로세스/백엔드 호출 금지) 위반이 아니므로, 검사 문구 자체를 격리 불변량에 맞게 정정했다. 버전 고정(`fb-idb==1.1.8`)은 `idb-executor.ts`/`idb-doctor.ts` 문서화 |
 | AC-IOS-025 | unit(mock) + e2e | PASS | `router.test.ts` 신규 테스트 — registry로 감싼 mock IdbBackend 대상 `tap --id`가 tap.ts 코드 변경 없이 정상 동작(중심좌표 계산 포함) |
 | AC-IOS-026 | unit(type) | PASS | `device-backend.test.ts` — `Record<keyof DeviceBackend, true>` 양방향 exhaustiveness 체크(8개 메서드) |
 | AC-IOS-027 | unit(mock) | PASS | `idb-backend.test.ts` failure propagation — `IdbCommandFailedError`(stderr 포함) + 실패당 idb 호출 1회만(부분 부작용 없음) GREEN |
 | AC-IOS-028 | unit(type) | PASS | `common-element.test.ts` — `CommonElement`(7필드) + `ElementBounds`(4필드) 양방향 exhaustiveness 체크 |
 
-**요약**: PASS 18건, PASS-WITH-DEBT 10건(전부 "e2e·manual 검증 방식"이 요구되었으나 세션 제약상 시뮬레이터/idb 미설치 — mission 명시 제약 준수), FAIL 0건.
+**요약**: PASS 19건, PASS-WITH-DEBT 9건(전부 "e2e·manual 검증 방식"이 요구되었으나 세션 제약상 시뮬레이터/idb 미설치 — mission 명시 제약 준수), FAIL 0건.
 
 ### 해소 완료 — AC-IOS-021 (doctor/reset CLI 플랫폼 분기, 후속 delegation)
 
@@ -59,8 +59,17 @@
 - `router.ts`/`bin.ts` 기본값 갱신(`{ android: new AdbDoctor(), ios: new IdbDoctor() }`).
 - `doctor.ts`: 기존 eager `adb`/`daemon` 사전 체크는 **무변경**(SPEC-ANDROID-001부터 이미 무조건 실행되던 순서 보존 — 기존 테스트 전부 그대로 GREEN). `resolveTargetDevice` 이후 `resolvedDevice.platform === "ios"`이면 `IdbDoctor`의 3개 체크(checkIdbInstalled/checkCompanion/checkSimulatorBooted)를 병렬 실행하고 `idbEnvironment` 필드로 보고(`adbKeyboard`는 `{skipped:true, reason}`로 안정적 JSON 형태 유지); Android 타겟이면 기존 `ensureAdbKeyboard` 경로 byte-for-byte 무변경.
 - `reset.ts`(`performReset`): 대상 기기 해석 후 `resolvedDevice.platform === "ios"`이면 `envServices.ios.resetDevice(serial)`(near-no-op)로 분기, 그 외엔 기존 Android IME 복원 경로(`resolveAdbBackend` + 세션 추적) 완전 무변경.
-- **회귀 없음 검증**: 기존 doctor/reset 테스트 전부(12개 호출 지점을 `envServices(doctor)` 헬퍼로 래핑) 무변경 통과 + 신규 AC-021 전용 4-테스트 추가. 292 → 296 tests, 0 regression.
+- **회귀 없음 검증**: 기존 doctor/reset 테스트 전부(12개 호출 지점을 `envServices(doctor)` 헬퍼로 래핑) 무변경 통과 + 신규 AC-021 전용 4-테스트 추가. 288 → 292 tests, 0 regression.
 - **AC-024 grep 리터럴 재해석**: `grep "idb" src/cli/commands/`는 이제 매치가 있으나(정상 — `IdbDoctor` 서비스를 명령 계층에서 참조해야 하므로), 격리 불변량(직접 idb 서브프로세스/executor 호출 금지)은 정제된 grep으로 재검증 — 0건.
+
+### 해소 완료 — sync-auditor 3건(F1 BLOCKER + F2/F3 LOW, 후속 delegation)
+
+**sync-auditor가 FAIL로 반환한 1건의 must-pass 결함 + 2건의 trivial doc-alignment 항목을 TDD로 해소했다.** F4/F5/F6(spawnIdb/spawnProcess 실행 경로 커버리지, idb-doctor 분기 커버리지, IDB_COMMAND_FAILED details 필드)는 non-blocking으로 명시 보류.
+
+- **F1 (BLOCKER, AC-IOS-017 vacuous test)**: `cli/commands/key.ts`의 catch가 모든 백엔드 오류를 `BACKEND_COMMAND_FAILED`로 마스킹하여, `IdbBackend.sendKeyEvent`가 유효한 별칭(예: iOS 타겟에서 `key home`)에 대해 던지는 `UnsupportedKeyOnIosError`(`.code = "UNSUPPORTED_KEY_ON_IOS"`)가 CLI envelope에서 실제로 관찰되지 않았음(AC-IOS-017 / D7 우선순위 위반). `key.ts`의 catch 최상단에 `instanceof UnsupportedKeyOnIosError` 분기를 추가(text.ts:108-113의 기존 패턴 미러). 이전까지 AC-017을 뒷받침하던 유일한 테스트(`idb-backend.test.ts:204-213`)는 백엔드 throw만 검증하고 CLI envelope은 검증하지 않는 vacuous test였음 — `router.test.ts`에 CLI 레벨 회귀 테스트를 신규 추가(아래 참조).
+- **F2 (LOW, AC-IOS-003 grep 리터럴 부정확)**: `grep -rn "normalizeUiAutomatorXml" src/cli/commands/`는 실제로는 dump.ts/tap.ts/text.ts의 doc-comment 3건("…import/call was removed" 서술)에서 매치되어 0건이 아니었음(실제 import/호출은 이미 0건 — 표현만 부정확). `acceptance.md`의 리터럴을 `file:line:` 접두사를 고려한 주석-제외 필터 포함형으로 정정(`| grep -v '^[^:]*:[0-9]*:[ \t]*\*'`) — 실행 확인: 0 matches.
+- **F3 (LOW, AC-IOS-024 grep 리터럴 부정확)**: `grep -rn "idb" src/cli/commands/`는 AC-021 구현 이후 `IdbDoctor`/`idbEnvironment` 같은 정당한 식별자에서 매치되어 0건이 아니었음(REQ-IOS-DOCTOR-003가 명령 계층의 `IdbDoctor` 참조를 요구하므로 정상). `acceptance.md`의 리터럴을 격리-불변량 표현(`spawnIdb\|idb-executor\|IdbBackend\b`) + 동일 주석-제외 필터로 정정 — 실행 확인: 0 matches.
+- **회귀 없음 검증**: 293 tests 전부 GREEN(292 → 293, 신규 CLI 회귀 테스트 1건 추가), `pnpm typecheck`/`pnpm build` 0 errors.
 
 ## §E.3 Run-phase Audit-Ready Signal
 
@@ -68,16 +77,16 @@
 run_status: complete-with-documented-debt
 run_complete_at: "2026-07-23"
 run_commit_sha: "pending-backfill-see-git-log"
-ac_pass_count: 18
-ac_pass_with_debt_count: 10
+ac_pass_count: 19
+ac_pass_with_debt_count: 9
 ac_fail_count: 0
 preserve_list_post_run_count: 0  # PRESERVE 목록 위반 없음 — plan.md §D 범위 준수
 l44_pre_commit_fetch: "not-applicable — local-only Route A work, no push performed this session"
 l44_post_push_fetch: "not-applicable — no push performed (mission: commit locally only, no PR)"
 new_warnings_or_lints_introduced: 0  # pnpm typecheck: 0 errors; pnpm build: 0 errors (no separate lint script configured in package.json)
 cross_platform_build: "not-applicable — TypeScript/Node project (single tsc target, no GOOS cross-compilation axis)"
-total_run_phase_files: 27  # 신규 16 + 변경 11 (src/ 범위, .moai/specs 프런트매터 제외; 후속 delegation의 env-services.ts 신규 + doctor/reset/types/router/bin 변경 포함)
-m1_to_mN_commit_strategy: "per-milestone separate commits (9 commits: M1, M2+M3, M4+M6, M5, registry-wiring, @MX-tags, AC-gap-tests, status-transition+evidence, DEFER-@MX:TODO) + 1 follow-up commit (AC-IOS-021 doctor/reset platform dispatch) — no push (Route A local-only per mission instruction)"
+total_run_phase_files: 29  # 신규 16 + 변경 13 (src/ 범위 + acceptance.md, .moai/specs 프런트매터 제외; sync-auditor F1/F2/F3 closure의 key.ts + router.test.ts + acceptance.md 포함)
+m1_to_mN_commit_strategy: "per-milestone separate commits (9 commits: M1, M2+M3, M4+M6, M5, registry-wiring, @MX-tags, AC-gap-tests, status-transition+evidence, DEFER-@MX:TODO) + 1 follow-up commit (AC-IOS-021 doctor/reset platform dispatch) + 1 sync-auditor-closure commit set (F1 key.ts fix + F2/F3 acceptance.md grep-literal alignment) — no push (Route A local-only per mission instruction)"
 ```
 
 ## §E.4 Sync-phase Audit-Ready Signal

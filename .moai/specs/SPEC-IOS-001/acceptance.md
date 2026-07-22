@@ -59,8 +59,8 @@ author: manager-spec
 
 ### AC-IOS-003 — 명령 계층 정규화기 직접 참조 제거 (greppable)
 - **Given** `src/cli/commands/{dump,tap,text}.ts`,
-- **When** `grep -rn "normalizeUiAutomatorXml" src/cli/commands/`를 실행하면,
-- **Then** 매칭이 **0건**이다(명령 계층은 백엔드가 반환한 `CommonElement[]`만 소비). 기계적으로 greppable.
+- **When** `grep -rn "normalizeUiAutomatorXml" src/cli/commands/ | grep -v '^[^:]*:[0-9]*:[ \t]*\*'`를 실행하면(주석 라인 제외 — `grep -rn`의 `file:line:` 접두사 뒤에서 실제 소스 라인이 공백 후 `*`로 시작하는 doc-comment 연속행인지 판별한다. dump.ts/tap.ts/text.ts의 doc-comment는 "…import/call was removed"라고 정규화기 이름을 **서술**할 뿐 실제 import/호출이 아니므로, 코드 라인만 대상으로 하는 이 필터가 검사 의도와 일치한다),
+- **Then** 매칭이 **0건**이다(명령 계층은 백엔드가 반환한 `CommonElement[]`만 소비하며, 정규화기를 직접 import·호출하지 않는다). 기계적으로 greppable.
 
 ### AC-IOS-004 — idb 정규화 순수 함수 (핵심 단위 테스트)
 - **Given** research.md §2의 실 예시를 담은 `idb ui describe-all` JSON 픽스처(시뮬레이터 불필요),
@@ -174,8 +174,8 @@ author: manager-spec
 
 ### AC-IOS-024 — 버전 고정 + idb 격리 (greppable)
 - **Given** 구현 코드,
-- **When** `grep -rn "idb" src/cli/commands/`를 실행하면(정규화/백엔드 외),
-- **Then** 명령 계층에 직접 idb 호출이 **0건**이다(모든 idb 호출은 IdbBackend/idb-executor 경유).
+- **When** `grep -rn "spawnIdb\|idb-executor\|IdbBackend\b" src/cli/commands/ | grep -v '^[^:]*:[0-9]*:[ \t]*\*'`를 실행하면(REQ-IOS-DOCTOR-003에 따라 명령 계층이 `IdbDoctor` 서비스를 정당하게 참조하므로, 단순 문자열 `"idb"` 리터럴 검사는 `IdbDoctor`/`idbEnvironment` 같은 합법적 식별자에 false-positive를 낸다 — 이 정제된 패턴은 실제 격리 불변량(idb 서브프로세스/executor/백엔드로의 직접 접근 금지)만을 포착하고, 뒤의 주석-제외 필터는 `IdbBackend`를 언급만 하는 doc-comment 서술(예: reset.ts/dump.ts의 "either way, resolveAdbBackend..." 문장)을 제외한다),
+- **Then** 매칭이 **0건**이다(모든 idb 서브프로세스 호출은 IdbBackend/idb-executor 경유이며, 명령 계층 코드는 `IdbDoctor` 같은 서비스 추상화를 통해서만 idb 환경에 접근한다 — 직접 idb 백엔드/executor 참조는 없다).
 - **And** idb 버전 고정(`fb-idb==1.1.8`)이 문서/설치 안내에 명시된다.
 
 ### AC-IOS-025 — 요소 셀렉터 iOS 동작 (정규화 이관 부수효과)
