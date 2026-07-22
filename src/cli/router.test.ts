@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ImeRestoreFailedError } from "../backend/ime-errors.js";
 import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
 import { runCli } from "./router.js";
 
@@ -378,21 +379,89 @@ describe("runCli", () => {
     });
   });
 
-  describe("text / doctor / reset (M5/M6 — not yet implemented)", () => {
-    it("text reports NOT_IMPLEMENTED without touching the backend", async () => {
+  describe("text (M5 — REQ-INPUT-002/003/004)", () => {
+    it("dispatches to backend.inputText with the resolved serial and returns success", async () => {
       const backend = createMockBackend();
 
       const result = await runCli(["text", "hello"], backend);
 
+      expect(result).toEqual({ ok: true, command: "text", data: { serial: "R58N90ABCDE" } });
+      expect(backend.inputText).toHaveBeenCalledWith("R58N90ABCDE", "hello");
+    });
+
+    it("rejects a missing text positional gracefully without calling the backend", async () => {
+      const backend = createMockBackend();
+
+      const result = await runCli(["text"], backend);
+
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("NOT_IMPLEMENTED");
+      if (!result.ok) expect(result.error.code).toBe("MISSING_TEXT");
       expect(backend.inputText).not.toHaveBeenCalled();
     });
 
+    it("surfaces an ImeRestoreFailedError as a dedicated IME_RESTORE_FAILED envelope carrying originalImeId (REQ-ERR-001, AC-ANDROID-015)", async () => {
+      const backend = createMockBackend();
+      (backend.inputText as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ImeRestoreFailedError("restore failed, please recover manually", "com.example/.OriginalIme"),
+      );
+
+      const result = await runCli(["text", "안녕"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("IME_RESTORE_FAILED");
+        expect(result.error.details?.["originalImeId"]).toBe("com.example/.OriginalIme");
+      }
+    });
+
+    it("degrades a generic inputText rejection to ADB_COMMAND_FAILED", async () => {
+      const backend = createMockBackend();
+      (backend.inputText as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("adb: device offline"));
+
+      const result = await runCli(["text", "hello"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+    });
+
+    it("returns a graceful device-targeting error (not ADB_COMMAND_FAILED) when the device is ambiguous", async () => {
+      const devices = [device({ serial: "A" }), device({ serial: "B" })];
+      const backend = createMockBackend(devices);
+
+      const result = await runCli(["text", "hello"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("AMBIGUOUS_DEVICE");
+      expect(backend.inputText).not.toHaveBeenCalled();
+    });
+
+    it("reports originalImeId as null when the ImeRestoreFailedError carries no known id", async () => {
+      const backend = createMockBackend();
+      (backend.inputText as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ImeRestoreFailedError("original IME unknown; manual recovery required", undefined),
+      );
+
+      const result = await runCli(["text", "안녕"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.details?.["originalImeId"]).toBeNull();
+    });
+  });
+
+  describe("doctor / reset (M6 — not yet implemented)", () => {
     it("doctor reports NOT_IMPLEMENTED", async () => {
       const backend = createMockBackend();
 
       const result = await runCli(["doctor"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("NOT_IMPLEMENTED");
+    });
+
+    it("reset reports NOT_IMPLEMENTED", async () => {
+      const backend = createMockBackend();
+
+      const result = await runCli(["reset"], backend);
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe("NOT_IMPLEMENTED");

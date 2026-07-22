@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * CLI entry point (M3/M4).
+ * CLI entry point (M3/M4/M5).
  *
- * Wires the command router (M3) to the real `AdbBackend` (M4) and prints
- * exactly one JSON document to stdout per invocation (REQ-ARCH-001).
- * `text`/`doctor`/`reset` are wired but report NOT_IMPLEMENTED — those
- * land in milestones M5/M6 of SPEC-ANDROID-001.
+ * Wires the command router (M3) to the real `AdbBackend` (M4/M5) and
+ * prints exactly one JSON document to stdout per invocation
+ * (REQ-ARCH-001). `doctor`/`reset` are wired but report NOT_IMPLEMENTED —
+ * those land in milestone M6 of SPEC-ANDROID-001.
  */
 
 import { AdbBackend } from "../backend/adb-backend.js";

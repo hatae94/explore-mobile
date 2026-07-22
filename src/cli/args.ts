@@ -11,14 +11,20 @@ export interface ParsedCommandArgs {
   positionals: string[];
   device: string | undefined;
   out: string | undefined;
+  /** Explicit consent for `doctor`'s auto-install step (REQ-DOCTOR-002) — true if `--yes` or `--install` was given. */
+  yes: boolean;
+  /** `doctor --clean` == `reset` (REQ-DOCTOR-004). */
+  clean: boolean;
 }
 
 /**
  * Parses a subcommand's argv (everything after the command word) into
- * positionals plus the shared `--device <serial>` (REQ-MULTIDEV-001) and
- * `--out <path>` (screenshot host-file option). Throws on unrecognized
- * flags; callers (the router) convert that into a graceful JSON error
- * rather than letting it crash the process.
+ * positionals plus the shared `--device <serial>` (REQ-MULTIDEV-001),
+ * `--out <path>` (screenshot host-file option), `--yes`/`--install`
+ * (doctor auto-install consent), and `--clean` (doctor --clean == reset)
+ * options. Throws on unrecognized flags; callers (the router) convert
+ * that into a graceful JSON error rather than letting it crash the
+ * process.
  */
 export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
   const { values, positionals } = parseArgs({
@@ -26,6 +32,9 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
     options: {
       device: { type: "string" },
       out: { type: "string" },
+      yes: { type: "boolean" },
+      install: { type: "boolean" },
+      clean: { type: "boolean" },
     },
     allowPositionals: true,
   });
@@ -34,5 +43,7 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
     positionals,
     device: typeof values.device === "string" ? values.device : undefined,
     out: typeof values.out === "string" ? values.out : undefined,
+    yes: values.yes === true || values.install === true,
+    clean: values.clean === true,
   };
 }
