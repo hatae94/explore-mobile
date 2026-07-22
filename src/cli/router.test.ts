@@ -8,6 +8,7 @@ import type { AdbExecResult, AdbExecutor } from "../backend/adb-executor.js";
 import type { ApkAcquirer } from "../backend/apk-downloader.js";
 import { AdbDoctor } from "../backend/doctor.js";
 import { AdbKeyboardInstallFailedError, ImeRestoreFailedError } from "../backend/ime-errors.js";
+import { ImeSessionStore } from "../backend/ime-session-store.js";
 import type { ProcessExecutor } from "../backend/process-executor.js";
 import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
 import { runCli } from "./router.js";
@@ -867,7 +868,7 @@ describe("runCli", () => {
       expect(adbExec).not.toHaveBeenCalled();
     });
 
-    describe("session-based IME restore integration (REQ-INPUT-004 revised, real AdbBackend)", () => {
+    describe("session-based IME restore integration (REQ-INPUT-004 disk-persistence fix, real AdbBackend)", () => {
       function devicesListResult(serial: string): AdbExecResult {
         return {
           stdout: Buffer.from(
@@ -878,6 +879,20 @@ describe("runCli", () => {
           exitCode: 0,
         };
       }
+
+      // The on-disk `ImeSessionStore` must never touch the real
+      // `~/.cache/explore-mobile` directory during tests.
+      let imeStoreDir: string;
+      let imeStorePath: string;
+
+      beforeEach(async () => {
+        imeStoreDir = await mkdtemp(join(tmpdir(), "explore-mobile-router-ime-"));
+        imeStorePath = join(imeStoreDir, "ime-sessions.json");
+      });
+
+      afterEach(async () => {
+        await rm(imeStoreDir, { recursive: true, force: true });
+      });
 
       it("restores the per-serial original IME tracked from a prior non-ASCII `text` session, then clears it", async () => {
         const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
@@ -894,12 +909,12 @@ describe("runCli", () => {
           return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 };
         });
 
-        const backend = new AdbBackend(adbExec);
+        const backend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeStorePath));
         const doctor = new AdbDoctor(adbExec);
 
         // A prior non-ASCII `text` call switches this serial's session IME.
         await backend.inputText(serial, "안녕");
-        expect(backend.getTrackedOriginalIme(serial)).toBe(originalIme);
+        await expect(backend.getTrackedOriginalIme(serial)).resolves.toBe(originalIme);
 
         const result = await runCli(["reset"], backend, doctor);
 
@@ -920,7 +935,53 @@ describe("runCli", () => {
         expect(restoreCallExists).toBe(true);
 
         // The session is cleared once `reset` has restored it.
-        expect(backend.getTrackedOriginalIme(serial)).toBeUndefined();
+        await expect(backend.getTrackedOriginalIme(serial)).resolves.toBeUndefined();
+      });
+
+      it("restores the per-serial original IME even when the `text` call and the `reset` call use SEPARATE AdbBackend instances (the reported cross-process bug)", async () => {
+        const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
+        const serial = "R58N90ABCDE";
+
+        const adbExec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+          if (args[0] === "devices") return devicesListResult(serial);
+          if (args[0] === "-s" && args[2] === "shell" && args[3] === "getprop") {
+            return { stdout: Buffer.from("14\n", "utf-8"), stderr: Buffer.alloc(0), exitCode: 0 };
+          }
+          if (args[3] === "settings") {
+            return { stdout: Buffer.from(`${originalIme}\n`, "utf-8"), stderr: Buffer.alloc(0), exitCode: 0 };
+          }
+          return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 };
+        });
+
+        // "Process 1" (`text` invocation): a fresh `AdbBackend` +
+        // `ImeSessionStore` pair, exactly as `bin.ts` constructs on every
+        // CLI invocation.
+        const textProcessBackend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeStorePath));
+        await textProcessBackend.inputText(serial, "안녕");
+
+        // "Process 2" (`reset` invocation): a BRAND-NEW `AdbBackend` +
+        // `ImeSessionStore` pair pointed at the SAME on-disk file — no
+        // in-memory state is shared with `textProcessBackend`.
+        const resetProcessBackend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeStorePath));
+        const doctor = new AdbDoctor(adbExec);
+
+        const result = await runCli(["reset"], resetProcessBackend, doctor);
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          const data = result.data as { originalImeRestored?: boolean };
+          expect(data.originalImeRestored).toBe(true);
+        }
+
+        const restoreCallExists = adbExec.mock.calls.some(
+          ([callArgs]) =>
+            callArgs[1] === serial &&
+            callArgs[2] === "shell" &&
+            callArgs[3] === "ime" &&
+            callArgs[4] === "set" &&
+            callArgs[5] === originalIme,
+        );
+        expect(restoreCallExists).toBe(true);
       });
 
       it("retains the session-tracked IME when the reset's precise restore fails (audit / manual recovery)", async () => {
@@ -941,7 +1002,7 @@ describe("runCli", () => {
           return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 };
         });
 
-        const backend = new AdbBackend(adbExec);
+        const backend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeStorePath));
         const doctor = new AdbDoctor(adbExec);
 
         await backend.inputText(serial, "안녕");
@@ -956,7 +1017,7 @@ describe("runCli", () => {
         }
 
         // Retained for audit / manual recovery — the session is NOT cleared.
-        expect(backend.getTrackedOriginalIme(serial)).toBe(originalIme);
+        await expect(backend.getTrackedOriginalIme(serial)).resolves.toBe(originalIme);
       });
     });
   });

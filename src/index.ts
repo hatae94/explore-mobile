@@ -26,6 +26,13 @@ export { AdbBackend } from "./backend/adb-backend.js";
 export type { AdbExecResult, AdbExecutor } from "./backend/adb-executor.js";
 export { parseAdbDevicesList } from "./backend/device-list-parser.js";
 export { PerSerialState } from "./backend/per-serial-state.js";
+export {
+  ImeSessionStore,
+  resolveImeSessionStorePath,
+  type ImeSessionRecord,
+  type ImeSessionMap,
+  type ImeSessionStoreIO,
+} from "./backend/ime-session-store.js";
 export { AdbKeyboardInstallFailedError, ImeRestoreFailedError } from "./backend/ime-errors.js";
 export {
   ADBKEYBOARD_PACKAGE_ID,

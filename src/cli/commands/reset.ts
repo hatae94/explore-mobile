@@ -36,7 +36,7 @@ export async function performReset(
   if (!target.ok) return failure(commandName, target.code, target.message, target.details);
 
   const trackedOriginalIme =
-    backend instanceof AdbBackend ? backend.getTrackedOriginalIme(target.serial) : undefined;
+    backend instanceof AdbBackend ? await backend.getTrackedOriginalIme(target.serial) : undefined;
 
   const result = await doctor.resetDevice(target.serial, trackedOriginalIme);
 
@@ -46,7 +46,7 @@ export async function performReset(
   // for audit / manual recovery (mirrors the prior per-call retain-on-
   // failure behavior, now scoped to the session boundary).
   if (backend instanceof AdbBackend && trackedOriginalIme !== undefined && result.originalImeRestored !== false) {
-    backend.clearTrackedOriginalIme(target.serial);
+    await backend.clearTrackedOriginalIme(target.serial);
   }
 
   return success(commandName, { serial: target.serial, ...result });
