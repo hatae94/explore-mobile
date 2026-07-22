@@ -323,6 +323,44 @@ describe("runCli", () => {
     });
   });
 
+  describe("tap --id/--text works transparently on iOS via the registry (AC-IOS-025 — normalization-relocation side effect)", () => {
+    it("routes 'tap --id' through a registry-wrapped IdbBackend with zero changes to this command's code", async () => {
+      const iosDevice = device({ serial: "00008030-IOS", platform: "ios" });
+      const idbBackend: DeviceBackend = {
+        listDevices: vi.fn().mockResolvedValue([iosDevice]),
+        dumpUiHierarchy: vi.fn().mockResolvedValue([
+          {
+            role: "Button",
+            text: "Wallet",
+            id: "btn_wallet",
+            bounds: { x: 100, y: 100, w: 50, h: 50 },
+            tappable: true,
+            enabled: true,
+            children: [],
+          },
+        ]),
+        screenshot: vi.fn().mockResolvedValue(new Uint8Array()),
+        tap: vi.fn().mockResolvedValue(undefined),
+        inputText: vi.fn().mockResolvedValue(undefined),
+        sendKeyEvent: vi.fn().mockResolvedValue(undefined),
+        launchApp: vi.fn().mockResolvedValue(undefined),
+        stopApp: vi.fn().mockResolvedValue(undefined),
+      };
+      const registry: DeviceBackend = new BackendRegistry([
+        { platform: "ios", backend: idbBackend, isAvailable: async () => true },
+      ]);
+
+      const result = await runCli(["tap", "--id", "btn_wallet"], registry);
+
+      expect(result).toEqual({
+        ok: true,
+        command: "tap",
+        data: { serial: "00008030-IOS", x: 125, y: 125, selector: { id: "btn_wallet" } },
+      });
+      expect(idbBackend.tap).toHaveBeenCalledWith("00008030-IOS", 125, 125);
+    });
+  });
+
   describe("key", () => {
     it("invokes the backend for a supported alias", async () => {
       const backend = createMockBackend();
