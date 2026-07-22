@@ -3,8 +3,10 @@
  *
  * Exposes the common element schema (M1), the device-backend interface
  * (M1), the uiautomator normalization pure function (M2), the CLI router
- * (M3), and the adb backend implementation incl. the M5 Unicode/IME text
- * path (M4/M5). `doctor`/`reset` (M6) land in the next chunk.
+ * (M3), the adb backend implementation incl. the M5 Unicode/IME text path
+ * (M4/M5), and the doctor/reset environment-bootstrap service (M6). Full
+ * command surface is live except multi-device STATE isolation (M7) and
+ * the Claude skill wrapper (M8).
  */
 
 export type { CommonElement, ElementBounds } from "./schema/common-element.js";
@@ -26,6 +28,15 @@ export {
   ADBKEYBOARD_PINNED_VERSION,
   resolveBundledApkPath,
 } from "./backend/adbkeyboard.js";
+export {
+  AdbDoctor,
+  type AdbInstalledCheck,
+  type DaemonHealthCheck,
+  type InstallAttemptResult,
+  type AdbKeyboardResult,
+  type ResetResult,
+} from "./backend/doctor.js";
+export type { ProcessExecResult, ProcessExecutor } from "./backend/process-executor.js";
 export {
   success,
   failure,

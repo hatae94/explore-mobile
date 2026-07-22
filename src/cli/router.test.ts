@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { AdbExecResult, AdbExecutor } from "../backend/adb-executor.js";
+import { AdbDoctor } from "../backend/doctor.js";
 import { ImeRestoreFailedError } from "../backend/ime-errors.js";
+import type { ProcessExecutor } from "../backend/process-executor.js";
 import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
 import { runCli } from "./router.js";
 
@@ -448,23 +451,179 @@ describe("runCli", () => {
     });
   });
 
-  describe("doctor / reset (M6 — not yet implemented)", () => {
-    it("doctor reports NOT_IMPLEMENTED", async () => {
+  describe("doctor (M6 — REQ-DOCTOR-001~005)", () => {
+    async function makeDoctor(overrides: {
+      adbExec?: AdbExecutor;
+      processExec?: ProcessExecutor;
+      fileExists?: (path: string) => Promise<boolean>;
+      platform?: NodeJS.Platform;
+    }) {
+      return new AdbDoctor(overrides.adbExec, overrides.processExec, overrides.fileExists, overrides.platform);
+    }
+
+    function adbOk(stdout = ""): AdbExecResult {
+      return { stdout: Buffer.from(stdout, "utf-8"), stderr: Buffer.alloc(0), exitCode: 0 };
+    }
+
+    function adbFail(stderr: string): AdbExecResult {
+      return { stdout: Buffer.alloc(0), stderr: Buffer.from(stderr, "utf-8"), exitCode: 1 };
+    }
+
+    it("reports adb missing + install guidance without touching device listing (macOS, no consent)", async () => {
       const backend = createMockBackend();
+      const adbExec = vi.fn<AdbExecutor>().mockRejectedValueOnce(new Error("spawn adb ENOENT"));
+      const doctor = await makeDoctor({ adbExec, platform: "darwin" });
 
-      const result = await runCli(["doctor"], backend);
+      const result = await runCli(["doctor"], backend, doctor);
 
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("NOT_IMPLEMENTED");
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        const data = result.data as {
+          adb: { installed: boolean };
+          installAttempt: { attempted: boolean; manualCommand: string };
+          adbKeyboard: { skipped: boolean };
+        };
+        expect(data.adb.installed).toBe(false);
+        expect(data.installAttempt.attempted).toBe(false);
+        expect(data.installAttempt.manualCommand).toBe("brew install android-platform-tools");
+        expect(data.adbKeyboard.skipped).toBe(true);
+      }
+      expect(backend.listDevices).not.toHaveBeenCalled();
     });
 
-    it("reset reports NOT_IMPLEMENTED", async () => {
+    it("reports daemon-unhealthy without querying devices (REQ-ERR-004, AC-ANDROID-018)", async () => {
       const backend = createMockBackend();
+      const adbExec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(adbOk("Android Debug Bridge version 1.0.41")) // version
+        .mockResolvedValueOnce(adbFail("cannot bind to 127.0.0.1:5037")); // start-server
+      const doctor = await makeDoctor({ adbExec });
 
-      const result = await runCli(["reset"], backend);
+      const result = await runCli(["doctor"], backend, doctor);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        const data = result.data as { daemon: { healthy: boolean } };
+        expect(data.daemon.healthy).toBe(false);
+      }
+      expect(backend.listDevices).not.toHaveBeenCalled();
+    });
+
+    it("installs + enables ADBKeyBoard on the resolved device when adb and daemon are healthy", async () => {
+      const backend = createMockBackend();
+      const adbExec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(adbOk("Android Debug Bridge version 1.0.41")) // version
+        .mockResolvedValueOnce(adbOk("")) // start-server
+        .mockResolvedValueOnce(adbOk("package:com.android.adbkeyboard\n")) // pm list packages (already present)
+        .mockResolvedValueOnce(adbOk("")); // ime enable
+      const doctor = await makeDoctor({ adbExec });
+
+      const result = await runCli(["doctor"], backend, doctor);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        const data = result.data as { adbKeyboard: { skipped: boolean; alreadyInstalled: boolean; enabled: boolean } };
+        expect(data.adbKeyboard).toEqual({ skipped: false, alreadyInstalled: true, installed: false, enabled: true });
+      }
+    });
+
+    it("reports APK_NOT_BUNDLED gracefully when the vendor APK is absent (REQ-ERR-002, AC-ANDROID-016)", async () => {
+      const backend = createMockBackend();
+      const adbExec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(adbOk("Android Debug Bridge version 1.0.41"))
+        .mockResolvedValueOnce(adbOk(""))
+        .mockResolvedValueOnce(adbOk("package:com.android.settings\n")); // ADBKeyBoard not present
+      const fileExists = vi.fn().mockResolvedValue(false);
+      const doctor = await makeDoctor({ adbExec, fileExists });
+
+      const result = await runCli(["doctor"], backend, doctor);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        const data = result.data as { adbKeyboard: { error?: { code: string } } };
+        expect(data.adbKeyboard.error?.code).toBe("APK_NOT_BUNDLED");
+      }
+    });
+
+    it("reports adbKeyboard as skipped (not a hard failure) when the target device is ambiguous", async () => {
+      const devices = [device({ serial: "A" }), device({ serial: "B" })];
+      const backend = createMockBackend(devices);
+      const adbExec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(adbOk("Android Debug Bridge version 1.0.41"))
+        .mockResolvedValueOnce(adbOk(""));
+      const doctor = await makeDoctor({ adbExec });
+
+      const result = await runCli(["doctor"], backend, doctor);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        const data = result.data as { adbKeyboard: { skipped: boolean; reason: string } };
+        expect(data.adbKeyboard.skipped).toBe(true);
+        expect(data.adbKeyboard.reason).toMatch(/devices connected/);
+      }
+      // adb/daemon checks still ran (2 calls); no per-device ensureAdbKeyboard call attempted.
+      expect(adbExec).toHaveBeenCalledTimes(2);
+    });
+
+    it("doctor --clean delegates to the same reset logic under the 'doctor' command name", async () => {
+      const backend = createMockBackend();
+      const adbExec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(adbOk("")) // ime disable
+        .mockResolvedValueOnce(adbOk("")) // ime reset
+        .mockResolvedValueOnce(adbOk("Success")); // uninstall
+      const doctor = await makeDoctor({ adbExec });
+
+      const result = await runCli(["doctor", "--clean"], backend, doctor);
+
+      expect(result.ok).toBe(true);
+      expect(result.command).toBe("doctor");
+      if (result.ok) {
+        const data = result.data as { imeReset: boolean };
+        expect(data.imeReset).toBe(true);
+      }
+    });
+  });
+
+  describe("reset (M6 — REQ-DOCTOR-004)", () => {
+    it("resolves the target device then reports the reset outcome", async () => {
+      const backend = createMockBackend();
+      const adbExec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce({ stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 })
+        .mockResolvedValueOnce({ stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 })
+        .mockResolvedValueOnce({ stdout: Buffer.from("Success"), stderr: Buffer.alloc(0), exitCode: 0 });
+      const doctor = new AdbDoctor(adbExec);
+
+      const result = await runCli(["reset"], backend, doctor);
+
+      expect(result.ok).toBe(true);
+      expect(result.command).toBe("reset");
+      if (result.ok) {
+        expect(result.data).toEqual({
+          serial: "R58N90ABCDE",
+          imeReset: true,
+          adbKeyboardDisabled: true,
+          adbKeyboardUninstalled: true,
+          warnings: [],
+        });
+      }
+    });
+
+    it("returns a graceful device-targeting error without touching the doctor service when ambiguous", async () => {
+      const devices = [device({ serial: "A" }), device({ serial: "B" })];
+      const backend = createMockBackend(devices);
+      const adbExec = vi.fn<AdbExecutor>();
+      const doctor = new AdbDoctor(adbExec);
+
+      const result = await runCli(["reset"], backend, doctor);
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("NOT_IMPLEMENTED");
+      if (!result.ok) expect(result.error.code).toBe("AMBIGUOUS_DEVICE");
+      expect(adbExec).not.toHaveBeenCalled();
     });
   });
 

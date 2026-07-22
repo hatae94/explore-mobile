@@ -15,9 +15,10 @@ export default defineConfig({
         // intentionally NOT excluded here.
         "src/cli/bin.ts",
         // Real child_process.spawn wiring; exercised through AdbBackend's
-        // injected-mock unit tests, not directly (would require a real
-        // adb binary / real subprocess).
+        // and AdbDoctor's injected-mock unit tests, not directly (would
+        // require a real adb/brew binary / real subprocess).
         "src/backend/adb-executor.ts",
+        "src/backend/process-executor.ts",
       ],
     },
   },

@@ -9,13 +9,15 @@
  * wrapper layering (spec.md §A.4).
  */
 
+import { AdbDoctor } from "../backend/doctor.js";
 import type { DeviceBackend } from "../schema/device-backend.js";
 import { parseCommandArgs } from "./args.js";
 import { devicesCommand } from "./commands/devices.js";
+import { doctorCommand } from "./commands/doctor.js";
 import { dumpCommand } from "./commands/dump.js";
 import { keyCommand } from "./commands/key.js";
 import { launchCommand } from "./commands/launch.js";
-import { doctorCommand, resetCommand } from "./commands/not-implemented.js";
+import { resetCommand } from "./commands/reset.js";
 import { screenshotCommand } from "./commands/screenshot.js";
 import { stopCommand } from "./commands/stop.js";
 import { tapCommand } from "./commands/tap.js";
@@ -46,8 +48,17 @@ function errorMessage(err: unknown): string {
  * (e.g. `process.argv.slice(2)`) — the first element is the command word.
  * Always resolves (never rejects): parse errors, unknown commands, and
  * handler-thrown exceptions all degrade to a graceful {@link CommandError}.
+ *
+ * `doctor` defaults to a real `AdbDoctor()` when not provided, so every
+ * pre-M6 call site (`runCli(argv, backend)`, used throughout the M3 test
+ * suite) keeps working unchanged — only `doctor`/`reset` command handlers
+ * ever touch this parameter.
  */
-export async function runCli(argv: string[], backend: DeviceBackend): Promise<CommandResult> {
+export async function runCli(
+  argv: string[],
+  backend: DeviceBackend,
+  doctor: AdbDoctor = new AdbDoctor(),
+): Promise<CommandResult> {
   const [commandName, ...rest] = argv;
   const supported = Object.keys(COMMANDS).join(", ");
 
@@ -68,7 +79,7 @@ export async function runCli(argv: string[], backend: DeviceBackend): Promise<Co
   }
 
   try {
-    return await handler(args, backend);
+    return await handler(args, backend, doctor);
   } catch (err) {
     // Defense in depth: a handler bug still degrades to graceful JSON,
     // never an uncaught exception / non-JSON stack trace.
