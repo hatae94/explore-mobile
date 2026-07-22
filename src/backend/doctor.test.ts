@@ -167,6 +167,27 @@ describe("AdbDoctor", () => {
       expect(result).toEqual({ alreadyInstalled: true, installed: false, enabled: true });
     });
 
+    it("stays idempotent across repeated calls (M7, REQ-IDEMP-001) — AdbDoctor holds no cached/accumulating state, each call re-derives from the device", async () => {
+      // A fresh `pm list packages` query on every call, never a memoized
+      // result: AdbDoctor has no instance-level mutable state to go stale
+      // or accumulate across repeated invocations.
+      const adbExec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        if (args.includes("list")) return ok("package:com.android.adbkeyboard\n");
+        return ok(""); // ime enable
+      });
+      const doctor = new AdbDoctor(adbExec);
+
+      const first = await doctor.ensureAdbKeyboard("R58N90ABCDE");
+      const second = await doctor.ensureAdbKeyboard("R58N90ABCDE");
+      const third = await doctor.ensureAdbKeyboard("R58N90ABCDE");
+
+      expect(first).toEqual(second);
+      expect(second).toEqual(third);
+      // Each call independently re-queried pm list packages (2 adb calls
+      // per invocation x 3 invocations = 6), never skipped via a cache.
+      expect(adbExec).toHaveBeenCalledTimes(6);
+    });
+
     it("reports APK_NOT_BUNDLED gracefully when not installed and the bundled APK file is absent (REQ-ERR-002, AC-ANDROID-016)", async () => {
       const adbExec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("package:com.android.settings\n"));
       const fileExists = vi.fn().mockResolvedValue(false);

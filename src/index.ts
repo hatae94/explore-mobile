@@ -4,9 +4,10 @@
  * Exposes the common element schema (M1), the device-backend interface
  * (M1), the uiautomator normalization pure function (M2), the CLI router
  * (M3), the adb backend implementation incl. the M5 Unicode/IME text path
- * (M4/M5), and the doctor/reset environment-bootstrap service (M6). Full
- * command surface is live except multi-device STATE isolation (M7) and
- * the Claude skill wrapper (M8).
+ * and M7 per-serial state isolation (M4/M5/M7), and the doctor/reset
+ * environment-bootstrap service (M6). All 8 milestones are implemented;
+ * the M8 Claude skill wrapper lives at `.claude/skills/explore-mobile/`
+ * (not part of this library's runtime exports).
  */
 
 export type { CommonElement, ElementBounds } from "./schema/common-element.js";
@@ -20,6 +21,7 @@ export { normalizeUiAutomatorXml } from "./normalize/uiautomator.js";
 export { AdbBackend } from "./backend/adb-backend.js";
 export type { AdbExecResult, AdbExecutor } from "./backend/adb-executor.js";
 export { parseAdbDevicesList } from "./backend/device-list-parser.js";
+export { PerSerialState } from "./backend/per-serial-state.js";
 export { ImeRestoreFailedError } from "./backend/ime-errors.js";
 export {
   ADBKEYBOARD_PACKAGE_ID,

@@ -11,6 +11,8 @@
  * proving the interface is thin enough to be backend-swappable.
  */
 
+import { randomBytes } from "node:crypto";
+
 import { ADBKEYBOARD_BROADCAST_ACTION, ADBKEYBOARD_IME_ID } from "./adbkeyboard.js";
 import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
 import { isKeyAlias } from "../schema/key-alias.js";
@@ -19,9 +21,24 @@ import { spawnAdb } from "./adb-executor.js";
 import { parseAdbDevicesList } from "./device-list-parser.js";
 import { ImeRestoreFailedError } from "./ime-errors.js";
 import { ANDROID_KEYCODE } from "./keycodes.js";
+import { PerSerialState } from "./per-serial-state.js";
 
-const UI_DUMP_DEVICE_PATH = "/sdcard/window_dump.xml";
 const CONNECTED_STATES = new Set(["device", "offline", "unauthorized"]);
+
+/**
+ * Computes a device-side temp path for `dump`, namespaced by serial
+ * (REQ-MULTIDEV-004) plus a random suffix so even concurrent `dump`
+ * invocations targeting the SAME serial from separate CLI processes
+ * never race on the same device-side file. Different devices have
+ * independent filesystems, so serial-namespacing here is primarily for
+ * traceability/debugging; the random suffix is what actually prevents a
+ * same-serial concurrent collision.
+ */
+function deviceDumpPath(serial: string): string {
+  const safeSerial = serial.replace(/[^A-Za-z0-9_-]/g, "_");
+  const suffix = randomBytes(4).toString("hex");
+  return `/sdcard/window_dump-${safeSerial}-${suffix}.xml`;
+}
 
 /** Throws with a message built from adb's stderr when the invocation failed. */
 function assertSuccess(result: AdbExecResult, context: string): void {
@@ -61,7 +78,29 @@ function shellSingleQuoteForDevice(text: string): string {
 }
 
 export class AdbBackend implements DeviceBackend {
+  /**
+   * Per-serial audit/diagnostic record of the most recently observed
+   * original IME for a non-ASCII `inputText()` call that is either
+   * currently mid-flight or whose restore step failed (REQ-MULTIDEV-003).
+   * Restore CORRECTNESS never depends on this map — each `inputText()`
+   * call independently fetches and restores within itself, so it is safe
+   * by construction even without this map; this exists purely so
+   * per-serial state is explicit, testable, and available for audit/
+   * future manual-recovery tooling rather than living only as an
+   * implicit local variable.
+   */
+  private readonly originalImeBySerial = new PerSerialState<string>();
+
   constructor(private readonly exec: AdbExecutor = spawnAdb) {}
+
+  /**
+   * Diagnostic accessor (REQ-MULTIDEV-003): the original IME tracked for
+   * `serial`, if a non-ASCII `inputText()` call is mid-flight or its
+   * restore failed. `undefined` once idle / after a successful restore.
+   */
+  getTrackedOriginalIme(serial: string): string | undefined {
+    return this.originalImeBySerial.get(serial);
+  }
 
   async listDevices(): Promise<DeviceInfo[]> {
     const listResult = await this.exec(["devices", "-l"]);
@@ -101,24 +140,22 @@ export class AdbBackend implements DeviceBackend {
   }
 
   async dumpUiHierarchy(serial: string): Promise<string> {
-    const dumpResult = await this.exec([
-      "-s",
-      serial,
-      "shell",
-      "uiautomator",
-      "dump",
-      UI_DUMP_DEVICE_PATH,
-    ]);
+    // Freshly generated per call (REQ-MULTIDEV-004): namespaced by serial
+    // and made unique so concurrent same-serial dumps from separate CLI
+    // processes never race on the same device-side path.
+    const devicePath = deviceDumpPath(serial);
+
+    const dumpResult = await this.exec(["-s", serial, "shell", "uiautomator", "dump", devicePath]);
     assertSuccess(dumpResult, "uiautomator dump");
 
-    const catResult = await this.exec(["-s", serial, "exec-out", "cat", UI_DUMP_DEVICE_PATH]);
+    const catResult = await this.exec(["-s", serial, "exec-out", "cat", devicePath]);
     assertSuccess(catResult, "exec-out cat window_dump.xml");
 
     // Best-effort device-side cleanup (REQ-IDEMP-003 — no residual files).
     // A cleanup failure does not fail the dump itself: the caller already
     // has the XML content it needs.
     try {
-      await this.exec(["-s", serial, "shell", "rm", "-f", UI_DUMP_DEVICE_PATH]);
+      await this.exec(["-s", serial, "shell", "rm", "-f", devicePath]);
     } catch {
       // Intentionally swallowed: cleanup is best-effort.
     }
@@ -167,6 +204,12 @@ export class AdbBackend implements DeviceBackend {
     // Non-ASCII path (REQ-INPUT-003): ADBKeyBoard base64 broadcast, with a
     // guaranteed-attempted IME restore (REQ-INPUT-004/REQ-IDEMP-004).
     const originalIme = await this.getCurrentIme(serial);
+    if (originalIme) {
+      // Tracked per-serial (REQ-MULTIDEV-003) for audit/manual-recovery
+      // visibility; cleared below on successful restore. A `.set()` on an
+      // existing key overwrites rather than accumulates (REQ-IDEMP-001).
+      this.originalImeBySerial.set(serial, originalIme);
+    }
 
     let sendError: Error | undefined;
     try {
@@ -193,7 +236,12 @@ export class AdbBackend implements DeviceBackend {
 
     try {
       await this.restoreIme(serial, originalIme);
+      // Restore succeeded — clear the tracked entry (no accumulation,
+      // REQ-IDEMP-001; this serial is no longer in a mid-flight/failed state).
+      this.originalImeBySerial.delete(serial);
     } catch (restoreErr) {
+      // Leave the entry in originalImeBySerial: still useful for audit /
+      // future manual-recovery tooling to consult per REQ-MULTIDEV-003.
       const restoreMessage = errorMessage(restoreErr);
       const combinedMessage = sendError
         ? `IME restore failed after a failed text send (send error: ${sendError.message}; restore error: ${restoreMessage})`

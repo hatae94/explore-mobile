@@ -98,7 +98,7 @@ describe("AdbBackend", () => {
   });
 
   describe("dumpUiHierarchy", () => {
-    it("writes, streams via exec-out cat, then removes the device-side temp file (REQ-DUMP-001, REQ-IDEMP-003)", async () => {
+    it("writes, streams via exec-out cat, then removes the device-side temp file, using the SAME path across all three calls (REQ-DUMP-001, REQ-IDEMP-003)", async () => {
       const xml = "<hierarchy><node class=\"a\" /></hierarchy>";
       const exec = vi
         .fn<AdbExecutor>()
@@ -109,30 +109,70 @@ describe("AdbBackend", () => {
       const backend = new AdbBackend(exec);
       const result = await backend.dumpUiHierarchy("R58N90ABCDE");
 
+      const dumpPath = exec.mock.calls[0]?.[0][5] as string;
+      expect(dumpPath).toMatch(/^\/sdcard\/window_dump-R58N90ABCDE-[0-9a-f]+\.xml$/);
+
       expect(exec).toHaveBeenNthCalledWith(1, [
         "-s",
         "R58N90ABCDE",
         "shell",
         "uiautomator",
         "dump",
-        "/sdcard/window_dump.xml",
+        dumpPath,
       ]);
-      expect(exec).toHaveBeenNthCalledWith(2, [
-        "-s",
-        "R58N90ABCDE",
-        "exec-out",
-        "cat",
-        "/sdcard/window_dump.xml",
-      ]);
-      expect(exec).toHaveBeenNthCalledWith(3, [
-        "-s",
-        "R58N90ABCDE",
-        "shell",
-        "rm",
-        "-f",
-        "/sdcard/window_dump.xml",
-      ]);
+      expect(exec).toHaveBeenNthCalledWith(2, ["-s", "R58N90ABCDE", "exec-out", "cat", dumpPath]);
+      expect(exec).toHaveBeenNthCalledWith(3, ["-s", "R58N90ABCDE", "shell", "rm", "-f", dumpPath]);
       expect(result).toBe(xml);
+    });
+
+    it("namespaces the device-side temp path by serial (REQ-MULTIDEV-004)", async () => {
+      const execA = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok(""))
+        .mockResolvedValueOnce(ok("<hierarchy/>"))
+        .mockResolvedValueOnce(ok(""));
+      const execB = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok(""))
+        .mockResolvedValueOnce(ok("<hierarchy/>"))
+        .mockResolvedValueOnce(ok(""));
+
+      await new AdbBackend(execA).dumpUiHierarchy("emulator-5554");
+      await new AdbBackend(execB).dumpUiHierarchy("R58N90ABCDE");
+
+      const pathA = execA.mock.calls[0]?.[0][5] as string;
+      const pathB = execB.mock.calls[0]?.[0][5] as string;
+
+      expect(pathA).toContain("emulator-5554");
+      expect(pathB).toContain("R58N90ABCDE");
+      expect(pathA).not.toContain("R58N90ABCDE");
+      expect(pathB).not.toContain("emulator-5554");
+    });
+
+    it("generates a unique path per call, even for the same serial (concurrent same-serial invocations do not collide)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValue(ok(""));
+      const backend = new AdbBackend(exec);
+
+      await backend.dumpUiHierarchy("R58N90ABCDE");
+      const firstPath = exec.mock.calls[0]?.[0][5] as string;
+
+      exec.mockClear();
+      await backend.dumpUiHierarchy("R58N90ABCDE");
+      const secondPath = exec.mock.calls[0]?.[0][5] as string;
+
+      expect(firstPath).not.toBe(secondPath);
+    });
+
+    it("sanitizes a serial containing filesystem-unsafe characters before embedding it in the path", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValue(ok(""));
+      const backend = new AdbBackend(exec);
+
+      // Serials are normally alnum+dash, but defend against unexpected input anyway (Secured).
+      await backend.dumpUiHierarchy("weird/serial:name");
+
+      const dumpPath = exec.mock.calls[0]?.[0][5] as string;
+      expect(dumpPath).not.toContain("/serial:"); // no embedded path separator or colon
+      expect(dumpPath).toMatch(/^\/sdcard\/window_dump-[A-Za-z0-9_-]+-[0-9a-f]+\.xml$/);
     });
   });
 
@@ -422,6 +462,111 @@ describe("AdbBackend", () => {
       expect((error as ImeRestoreFailedError).originalImeId).toBeUndefined();
       // No 5th call: no blind `ime set ""` attempted against the device.
       expect(exec).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  describe("per-serial IME tracking (M7, REQ-MULTIDEV-003)", () => {
+    it("getTrackedOriginalIme returns undefined before any non-ASCII inputText call", () => {
+      const backend = new AdbBackend(vi.fn<AdbExecutor>());
+
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBeUndefined();
+    });
+
+    it("clears the tracked entry after a successful restore", async () => {
+      const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok(`${originalIme}\n`))
+        .mockResolvedValueOnce(ok(""))
+        .mockResolvedValueOnce(ok(""))
+        .mockResolvedValueOnce(ok(""))
+        .mockResolvedValueOnce(ok(""));
+      const backend = new AdbBackend(exec);
+
+      await backend.inputText("R58N90ABCDE", "안녕");
+
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBeUndefined();
+    });
+
+    it("retains the tracked entry when restore fails (for audit / manual recovery)", async () => {
+      const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok(`${originalIme}\n`))
+        .mockResolvedValueOnce(ok(""))
+        .mockResolvedValueOnce(ok(""))
+        .mockResolvedValueOnce(ok(""))
+        .mockResolvedValueOnce(fail("restore failed", 1));
+      const backend = new AdbBackend(exec);
+
+      await backend.inputText("R58N90ABCDE", "안녕").catch(() => undefined);
+
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBe(originalIme);
+    });
+
+    it("does not clobber per-serial IME state when two devices are operated on concurrently (REQ-MULTIDEV-003, AC-ANDROID-004)", async () => {
+      const originalImeFor: Record<string, string> = {
+        A: "com.example/.KeyboardA",
+        B: "com.example/.KeyboardB",
+      };
+
+      const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        const serial = args[1] as string;
+        if (args[3] === "settings") {
+          return ok(`${originalImeFor[serial]}\n`);
+        }
+        return ok("");
+      });
+
+      const backend = new AdbBackend(exec);
+
+      await Promise.all([backend.inputText("A", "안녕"), backend.inputText("B", "반가워")]);
+
+      // Each serial's restore call ("ime" "set" <original>) must use ITS OWN
+      // original IME, never the other serial's.
+      const crossContaminated = exec.mock.calls.some(([callArgs]) => {
+        const serial = callArgs[1] as string;
+        const lastArg = callArgs[callArgs.length - 1] as string;
+        return (
+          (serial === "A" && lastArg === originalImeFor.B) ||
+          (serial === "B" && lastArg === originalImeFor.A)
+        );
+      });
+      expect(crossContaminated).toBe(false);
+
+      const restoreCallExists = (serial: string, expectedIme: string) =>
+        exec.mock.calls.some(
+          ([callArgs]) =>
+            callArgs[1] === serial &&
+            callArgs[2] === "shell" &&
+            callArgs[3] === "ime" &&
+            callArgs[4] === "set" &&
+            callArgs[5] === expectedIme,
+        );
+
+      expect(restoreCallExists("A", originalImeFor.A!)).toBe(true);
+      expect(restoreCallExists("B", originalImeFor.B!)).toBe(true);
+
+      // Both tracked entries are cleared after their own successful restores.
+      expect(backend.getTrackedOriginalIme("A")).toBeUndefined();
+      expect(backend.getTrackedOriginalIme("B")).toBeUndefined();
+    });
+
+    it("does not accumulate state across repeated successful calls for the same serial (REQ-IDEMP-001)", async () => {
+      const originalIme = "com.example/.OriginalIme";
+      const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        if (args[3] === "settings") return ok(`${originalIme}\n`);
+        return ok("");
+      });
+      const backend = new AdbBackend(exec);
+
+      await backend.inputText("R58N90ABCDE", "안녕");
+      await backend.inputText("R58N90ABCDE", "반가워");
+      await backend.inputText("R58N90ABCDE", "😸");
+
+      // Tracked state never grew beyond one entry for this serial, and is
+      // cleared after each successful cycle.
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBeUndefined();
     });
   });
 });
