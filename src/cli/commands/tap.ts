@@ -7,6 +7,11 @@
  * Coordinate mode and selector mode are mutually exclusive: a caller
  * supplying both a coordinate positional AND a selector flag receives a
  * graceful `TARGET_CONFLICT` error rather than an ambiguous silent choice.
+ *
+ * @MX:NOTE — platform-agnostic as of SPEC-IOS-001: `tapBySelector`'s prior
+ * direct `normalizeUiAutomatorXml` import/call was removed (normalization
+ * moved into each backend, spec.md §F) — element-selector tap now works on
+ * iOS with zero changes to this file (AC-IOS-025).
  */
 
 import { elementCenter, findElement, type ElementSelector } from "../../normalize/element-query.js";

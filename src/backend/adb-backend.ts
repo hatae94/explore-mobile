@@ -177,11 +177,12 @@ export class AdbBackend implements DeviceBackend {
   }
 
   /**
-   * REQ-IOS-SCHEMA-003 (SPEC-IOS-001): normalization now happens INSIDE the
-   * backend — this method internally calls `normalizeUiAutomatorXml` on the
-   * collected XML before returning, rather than handing raw XML back to the
-   * caller. Behavior is preserved from SPEC-ANDROID-001 (same dump -> cat ->
-   * cleanup sequence); only the final return value changed shape.
+   * @MX:NOTE — REQ-IOS-SCHEMA-003 (SPEC-IOS-001): normalization now
+   * happens INSIDE the backend — this method internally calls
+   * `normalizeUiAutomatorXml` on the collected XML before returning,
+   * rather than handing raw XML back to the caller. Behavior is preserved
+   * from SPEC-ANDROID-001 (same dump -> cat -> cleanup sequence); only the
+   * final return value changed shape (layer moved, no behavior change).
    */
   async dumpUiHierarchy(serial: string): Promise<CommonElement[]> {
     // Freshly generated per call (REQ-MULTIDEV-004): namespaced by serial

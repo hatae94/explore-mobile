@@ -15,6 +15,11 @@
  * envelope. When a focus selector is given but not found, the input is
  * NOT sent — the caller gets a graceful `ELEMENT_NOT_FOUND` instead of
  * typing into whatever happened to be focused already.
+ *
+ * @MX:NOTE — platform-agnostic as of SPEC-IOS-001: `focusElementBySelector`'s
+ * prior direct `normalizeUiAutomatorXml` import/call was removed
+ * (normalization moved into each backend, spec.md §F) — focus-before-type
+ * now works on iOS with zero changes to this file (AC-IOS-025).
  */
 
 import { elementCenter, findElement, type ElementSelector } from "../../normalize/element-query.js";

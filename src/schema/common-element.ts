@@ -32,6 +32,13 @@ export interface ElementBounds {
  *   class -> role, resource-id -> id, text/content-desc -> text,
  *   bounds -> bounds, (clickable AND enabled) -> tappable.
  *
+ * @MX:NOTE — the iOS mapping doc-comment below was corrected (D5,
+ * spec.md §F) against idb's real `describe-all` JSON output: the original
+ * SPEC-ANDROID-001 assumptions (`AXTraits`-based tappable, `isEnabled`
+ * field name, `AC-ANDROID-006 design-only` reference) were wrong and are
+ * replaced with the verified mapping below. The `CommonElement` shape
+ * itself is unchanged (REQ-IOS-SCHEMA-005) — only this comment is fixed.
+ *
  * iOS (idb accessibility) mapping — implemented, SPEC-IOS-001 plan.md
  * §F.9/§F.9.1 (verified against idb's real `describe-all` JSON output;
  * corrects the original design-only assumptions):
