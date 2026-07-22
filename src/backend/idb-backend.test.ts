@@ -1,0 +1,281 @@
+import { describe, expect, it, vi } from "vitest";
+
+import type { DeviceBackend } from "../schema/device-backend.js";
+import type { IdbExecResult, IdbExecutor } from "./idb-executor.js";
+import { IdbBackend } from "./idb-backend.js";
+import { IdbCommandFailedError, UnsupportedKeyOnIosError } from "./idb-errors.js";
+
+function ok(stdout: string, stderr = ""): IdbExecResult {
+  return { stdout: Buffer.from(stdout, "utf-8"), stderr: Buffer.from(stderr, "utf-8"), exitCode: 0 };
+}
+
+function okBinary(bytes: Buffer): IdbExecResult {
+  return { stdout: bytes, stderr: Buffer.alloc(0), exitCode: 0 };
+}
+
+function fail(stderr: string, exitCode = 1): IdbExecResult {
+  return { stdout: Buffer.alloc(0), stderr: Buffer.from(stderr, "utf-8"), exitCode };
+}
+
+describe("IdbBackend", () => {
+  it("implements the DeviceBackend interface (AC-IOS-011, AC-IOS-026 — type-level, compiles iff true)", () => {
+    const backend: DeviceBackend = new IdbBackend(vi.fn<IdbExecutor>());
+    expect(backend).toBeInstanceOf(IdbBackend);
+  });
+
+  describe("listDevices (AC-IOS-012)", () => {
+    it("calls 'idb list-targets --json' and maps udid/name/os_version/state/target_type to DeviceInfo with platform:ios", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(
+        ok(
+          JSON.stringify([
+            { udid: "00008030-0011ABCDEF", name: "iPhone 15", os_version: "17.5", state: "Booted", target_type: "simulator" },
+          ]),
+        ),
+      );
+
+      const backend = new IdbBackend(exec);
+      const devices = await backend.listDevices();
+
+      expect(exec).toHaveBeenCalledWith(["list-targets", "--json"]);
+      expect(devices).toEqual([
+        {
+          serial: "00008030-0011ABCDEF",
+          model: "iPhone 15",
+          osVersion: "17.5",
+          connectionState: "device",
+          isEmulator: true,
+          platform: "ios",
+        },
+      ]);
+    });
+
+    it("maps a non-Booted state to connectionState 'offline'", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(
+        ok(JSON.stringify([{ udid: "X", name: "iPad", os_version: "17.0", state: "Shutdown", target_type: "simulator" }])),
+      );
+
+      const backend = new IdbBackend(exec);
+      const devices = await backend.listDevices();
+
+      expect(devices[0]?.connectionState).toBe("offline");
+    });
+
+    it("marks a physical device (target_type: device) as isEmulator: false", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(
+        ok(JSON.stringify([{ udid: "PHYS-1", name: "iPhone", os_version: "17.5", state: "Booted", target_type: "device" }])),
+      );
+
+      const backend = new IdbBackend(exec);
+      const devices = await backend.listDevices();
+
+      expect(devices[0]?.isEmulator).toBe(false);
+    });
+
+    it("returns an empty array for empty stdout, without throwing", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));
+      const backend = new IdbBackend(exec);
+
+      await expect(backend.listDevices()).resolves.toEqual([]);
+    });
+
+    it("returns an empty array for malformed (non-JSON) stdout, without throwing (Secured — external tool output)", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok("not json{{{"));
+      const backend = new IdbBackend(exec);
+
+      await expect(backend.listDevices()).resolves.toEqual([]);
+    });
+
+    it("throws IdbCommandFailedError when the idb invocation exits non-zero", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(fail("idb_companion not running"));
+      const backend = new IdbBackend(exec);
+
+      await expect(backend.listDevices()).rejects.toBeInstanceOf(IdbCommandFailedError);
+    });
+  });
+
+  describe("dumpUiHierarchy (AC-IOS-013)", () => {
+    it("calls 'idb ui describe-all --udid <serial> --json' and returns CommonElement[] via the idb normalizer", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(
+        ok(
+          JSON.stringify([
+            {
+              AXUniqueId: "Wallet",
+              AXLabel: "Wallet",
+              frame: { x: 199, y: 116, width: 64, height: 87.5 },
+              type: "Button",
+              role: "AXButton",
+              custom_actions: [],
+              enabled: true,
+            },
+          ]),
+        ),
+      );
+
+      const backend = new IdbBackend(exec);
+      const elements = await backend.dumpUiHierarchy("SIM-1");
+
+      expect(exec).toHaveBeenCalledWith(["ui", "describe-all", "--udid", "SIM-1", "--json"]);
+      expect(elements).toEqual([
+        {
+          role: "Button",
+          text: "Wallet",
+          id: "Wallet",
+          bounds: { x: 199, y: 116, w: 64, h: 87.5 },
+          tappable: true,
+          enabled: true,
+          children: [],
+        },
+      ]);
+    });
+
+    it("returns an empty array for empty/malformed stdout, without throwing", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));
+      const backend = new IdbBackend(exec);
+
+      await expect(backend.dumpUiHierarchy("SIM-1")).resolves.toEqual([]);
+    });
+
+    it("propagates a failed idb invocation as IdbCommandFailedError", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(fail("Simulator not booted"));
+      const backend = new IdbBackend(exec);
+
+      await expect(backend.dumpUiHierarchy("SIM-1")).rejects.toThrow(/Simulator not booted/);
+    });
+  });
+
+  describe("screenshot (AC-IOS-014)", () => {
+    it("calls 'idb screenshot --udid <serial>' and returns raw PNG bytes from stdout", async () => {
+      const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(okBinary(pngBytes));
+
+      const backend = new IdbBackend(exec);
+      const result = await backend.screenshot("SIM-1");
+
+      expect(exec).toHaveBeenCalledWith(["screenshot", "--udid", "SIM-1"]);
+      expect(Buffer.from(result)).toEqual(pngBytes);
+    });
+  });
+
+  describe("tap (AC-IOS-015)", () => {
+    it("calls 'idb ui tap --udid <serial> <x> <y>'", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));
+
+      const backend = new IdbBackend(exec);
+      await backend.tap("SIM-1", 100, 200);
+
+      expect(exec).toHaveBeenCalledWith(["ui", "tap", "--udid", "SIM-1", "100", "200"]);
+    });
+  });
+
+  describe("inputText (AC-IOS-016 — Unicode-native, no IME procedure)", () => {
+    it("calls 'idb ui text --udid <serial> <text>' directly, with no self-heal / IME / broadcast steps", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));
+
+      const backend = new IdbBackend(exec);
+      await backend.inputText("SIM-1", "안녕 😸");
+
+      expect(exec).toHaveBeenCalledTimes(1);
+      expect(exec).toHaveBeenCalledWith(["ui", "text", "--udid", "SIM-1", "안녕 😸"]);
+    });
+
+    it("accepts options.hideKeyboardAfter as a harmless no-op — it changes nothing about the single idb call issued", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValue(ok(""));
+      const backend = new IdbBackend(exec);
+
+      await backend.inputText("SIM-1", "hello", { hideKeyboardAfter: true });
+      await expect(backend.inputText("SIM-1", "hello", { hideKeyboardAfter: false })).resolves.toBeUndefined();
+
+      expect(exec).toHaveBeenCalledTimes(2);
+      expect(exec).toHaveBeenNthCalledWith(1, ["ui", "text", "--udid", "SIM-1", "hello"]);
+      expect(exec).toHaveBeenNthCalledWith(2, ["ui", "text", "--udid", "SIM-1", "hello"]);
+    });
+  });
+
+  describe("sendKeyEvent (AC-IOS-017)", () => {
+    it("maps a supported alias (enter) to its iOS HID keycode and sends 'idb ui key --udid <serial> <code>'", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));
+
+      const backend = new IdbBackend(exec);
+      await backend.sendKeyEvent("SIM-1", "enter");
+
+      expect(exec).toHaveBeenCalledWith(["ui", "key", "--udid", "SIM-1", "40"]);
+    });
+
+    it("rejects an alias with no iOS HID mapping (home) with UnsupportedKeyOnIosError, without calling idb", async () => {
+      const exec = vi.fn<IdbExecutor>();
+      const backend = new IdbBackend(exec);
+
+      const thrown: unknown = await backend.sendKeyEvent("SIM-1", "home").catch((err: unknown) => err);
+
+      expect(thrown).toBeInstanceOf(UnsupportedKeyOnIosError);
+      expect((thrown as UnsupportedKeyOnIosError).code).toBe("UNSUPPORTED_KEY_ON_IOS");
+      expect(exec).not.toHaveBeenCalled();
+    });
+
+    it("rejects volume_up/volume_down/back/menu/app_switch/power the same way (no HID hardware-keyboard equivalent)", async () => {
+      const exec = vi.fn<IdbExecutor>();
+      const backend = new IdbBackend(exec);
+
+      for (const alias of ["volume_up", "volume_down", "back", "menu", "app_switch", "power"] as const) {
+        await expect(backend.sendKeyEvent("SIM-1", alias)).rejects.toBeInstanceOf(UnsupportedKeyOnIosError);
+      }
+      expect(exec).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unrecognized alias without calling idb (defense in depth, mirrors AdbBackend)", async () => {
+      const exec = vi.fn<IdbExecutor>();
+      const backend = new IdbBackend(exec);
+
+      await expect(backend.sendKeyEvent("SIM-1", "not-a-real-alias")).rejects.toThrow();
+      expect(exec).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("launchApp / stopApp (AC-IOS-018)", () => {
+    it("launches a bundle id via 'idb launch --udid <serial> <bundleId>'", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));
+
+      const backend = new IdbBackend(exec);
+      await backend.launchApp("SIM-1", "com.apple.Preferences");
+
+      expect(exec).toHaveBeenCalledWith(["launch", "--udid", "SIM-1", "com.apple.Preferences"]);
+    });
+
+    it("terminates a bundle id via 'idb terminate --udid <serial> <bundleId>'", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));
+
+      const backend = new IdbBackend(exec);
+      await backend.stopApp("SIM-1", "com.apple.Preferences");
+
+      expect(exec).toHaveBeenCalledWith(["terminate", "--udid", "SIM-1", "com.apple.Preferences"]);
+    });
+  });
+
+  describe("failure propagation (AC-IOS-027, REQ-IOS-ERR-002)", () => {
+    it("throws IdbCommandFailedError carrying stderr when the underlying idb invocation exits non-zero", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValue(fail("idb: no booted simulator found", 1));
+
+      const backend = new IdbBackend(exec);
+
+      await expect(backend.tap("missing-sim", 1, 1)).rejects.toThrow(/no booted simulator found/);
+      const thrown: unknown = await backend.tap("missing-sim", 1, 1).catch((e: unknown) => e);
+      expect(thrown).toBeInstanceOf(IdbCommandFailedError);
+    });
+
+    it("throws a generic exit-code message when stderr is empty", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(fail("", 1));
+
+      const backend = new IdbBackend(exec);
+
+      await expect(backend.tap("missing-sim", 1, 1)).rejects.toThrow(/failed \(exit 1\)\)?$/);
+    });
+
+    it("attempts only ONE idb call per method — no partial side effects on failure", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(fail("boom"));
+      const backend = new IdbBackend(exec);
+
+      await expect(backend.launchApp("SIM-1", "com.example.app")).rejects.toThrow();
+      expect(exec).toHaveBeenCalledTimes(1);
+    });
+  });
+});
