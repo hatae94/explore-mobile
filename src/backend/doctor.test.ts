@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { AdbExecResult, AdbExecutor } from "./adb-executor.js";
+import type { ApkAcquirer } from "./apk-downloader.js";
 import { AdbDoctor } from "./doctor.js";
 import type { ProcessExecResult, ProcessExecutor } from "./process-executor.js";
 
@@ -144,17 +145,23 @@ describe("AdbDoctor", () => {
     });
   });
 
-  describe("ensureAdbKeyboard — install + enable from bundled APK (REQ-DOCTOR-003, REQ-IDEMP-002)", () => {
-    it("skips install (idempotent) when 'pm list packages' already shows ADBKeyBoard, still enables the IME", async () => {
+  describe("ensureAdbKeyboard — install + enable via runtime download (REQ-DOCTOR-003, REQ-IDEMP-002, GPL-2.0 no-redistribution)", () => {
+    function okAcquirer(path = "/fake/cache/ADBKeyBoard.apk"): ApkAcquirer {
+      return vi.fn<ApkAcquirer>().mockResolvedValue({ path, fromCache: false, sourceUrl: "https://example.test/apk" });
+    }
+
+    it("skips install AND download (idempotent) when 'pm list packages' already shows ADBKeyBoard, still enables the IME", async () => {
       const adbExec = vi
         .fn<AdbExecutor>()
         .mockResolvedValueOnce(ok("package:com.android.adbkeyboard\npackage:com.android.settings\n")) // pm list packages
         .mockResolvedValueOnce(ok("")); // ime enable
-      const doctor = new AdbDoctor(adbExec);
+      const acquireApk = vi.fn<ApkAcquirer>();
+      const doctor = new AdbDoctor(adbExec, undefined, acquireApk);
 
       const result = await doctor.ensureAdbKeyboard("R58N90ABCDE");
 
       expect(adbExec).toHaveBeenCalledTimes(2); // no install call
+      expect(acquireApk).not.toHaveBeenCalled(); // no download attempted when already installed
       expect(adbExec).toHaveBeenNthCalledWith(1, ["-s", "R58N90ABCDE", "shell", "pm", "list", "packages"]);
       expect(adbExec).toHaveBeenNthCalledWith(2, [
         "-s",
@@ -175,7 +182,7 @@ describe("AdbDoctor", () => {
         if (args.includes("list")) return ok("package:com.android.adbkeyboard\n");
         return ok(""); // ime enable
       });
-      const doctor = new AdbDoctor(adbExec);
+      const doctor = new AdbDoctor(adbExec, undefined, vi.fn<ApkAcquirer>());
 
       const first = await doctor.ensureAdbKeyboard("R58N90ABCDE");
       const second = await doctor.ensureAdbKeyboard("R58N90ABCDE");
@@ -188,33 +195,64 @@ describe("AdbDoctor", () => {
       expect(adbExec).toHaveBeenCalledTimes(6);
     });
 
-    it("reports APK_NOT_BUNDLED gracefully when not installed and the bundled APK file is absent (REQ-ERR-002, AC-ANDROID-016)", async () => {
+    it("reports APK_DOWNLOAD_FAILED gracefully when the runtime download fails (REQ-ERR-002, AC-ANDROID-016) — replaces the old bundled-APK error", async () => {
       const adbExec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("package:com.android.settings\n"));
-      const fileExists = vi.fn().mockResolvedValue(false);
-      const doctor = new AdbDoctor(adbExec, undefined, fileExists);
+      const acquireApk = vi
+        .fn<ApkAcquirer>()
+        .mockRejectedValue(new Error("Failed to download a valid ADBKeyBoard APK from ... . Install manually: ..."));
+      const doctor = new AdbDoctor(adbExec, undefined, acquireApk);
 
       const result = await doctor.ensureAdbKeyboard("R58N90ABCDE");
 
       expect(adbExec).toHaveBeenCalledTimes(1); // no install attempt, no enable attempt — device state unchanged
+      expect(acquireApk).toHaveBeenCalledTimes(1);
       expect(result.installed).toBe(false);
       expect(result.enabled).toBe(false);
-      expect(result.error?.code).toBe("APK_NOT_BUNDLED");
+      expect(result.error?.code).toBe("APK_DOWNLOAD_FAILED");
+      expect(result.error?.message).toMatch(/manually/i);
     });
 
-    it("installs from the bundled APK when present and not already installed, then enables", async () => {
+    it("downloads (or reuses cache), installs, and enables when not already installed", async () => {
       const adbExec = vi
         .fn<AdbExecutor>()
         .mockResolvedValueOnce(ok("package:com.android.settings\n")) // pm list packages (not present)
-        .mockResolvedValueOnce(ok("Success")) // adb install <apk>
+        .mockResolvedValueOnce(ok("Success")) // adb install <downloaded apk path>
         .mockResolvedValueOnce(ok("")); // ime enable
-      const fileExists = vi.fn().mockResolvedValue(true);
-      const doctor = new AdbDoctor(adbExec, undefined, fileExists);
+      const acquireApk = vi
+        .fn<ApkAcquirer>()
+        .mockResolvedValue({ path: "/home/user/.cache/explore-mobile/ADBKeyBoard-v2.4-dev.apk", fromCache: false, sourceUrl: "https://github.com/senzhk/ADBKeyBoard/releases/download/v2.4-dev/ADBKeyboard.apk" });
+      const doctor = new AdbDoctor(adbExec, undefined, acquireApk);
 
       const result = await doctor.ensureAdbKeyboard("R58N90ABCDE");
 
+      expect(acquireApk).toHaveBeenCalledTimes(1);
       expect(adbExec).toHaveBeenCalledTimes(3);
-      expect(adbExec.mock.calls[1]?.[0]).toEqual(["-s", "R58N90ABCDE", "install", expect.stringContaining("ADBKeyBoard")]);
-      expect(result).toEqual({ alreadyInstalled: false, installed: true, enabled: true });
+      expect(adbExec.mock.calls[1]?.[0]).toEqual([
+        "-s",
+        "R58N90ABCDE",
+        "install",
+        "/home/user/.cache/explore-mobile/ADBKeyBoard-v2.4-dev.apk",
+      ]);
+      expect(result).toEqual({
+        alreadyInstalled: false,
+        installed: true,
+        enabled: true,
+        apkSource: { cached: false, url: "https://github.com/senzhk/ADBKeyBoard/releases/download/v2.4-dev/ADBKeyboard.apk" },
+      });
+    });
+
+    it("surfaces apkSource.cached=true and no url when the acquirer reused a cached file", async () => {
+      const adbExec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("package:com.android.settings\n"))
+        .mockResolvedValueOnce(ok("Success"))
+        .mockResolvedValueOnce(ok(""));
+      const acquireApk = vi.fn<ApkAcquirer>().mockResolvedValue({ path: "/cached/ADBKeyBoard.apk", fromCache: true });
+      const doctor = new AdbDoctor(adbExec, undefined, acquireApk);
+
+      const result = await doctor.ensureAdbKeyboard("R58N90ABCDE");
+
+      expect(result.apkSource).toEqual({ cached: true });
     });
 
     it("reports APK_INSTALL_FAILED gracefully when adb install fails (REQ-ERR-002, AC-ANDROID-016)", async () => {
@@ -222,8 +260,7 @@ describe("AdbDoctor", () => {
         .fn<AdbExecutor>()
         .mockResolvedValueOnce(ok("package:com.android.settings\n"))
         .mockResolvedValueOnce(fail("INSTALL_FAILED_OLDER_SDK", 1));
-      const fileExists = vi.fn().mockResolvedValue(true);
-      const doctor = new AdbDoctor(adbExec, undefined, fileExists);
+      const doctor = new AdbDoctor(adbExec, undefined, okAcquirer());
 
       const result = await doctor.ensureAdbKeyboard("R58N90ABCDE");
 
@@ -239,8 +276,7 @@ describe("AdbDoctor", () => {
         .mockResolvedValueOnce(ok("package:com.android.settings\n"))
         .mockResolvedValueOnce(ok("Success"))
         .mockResolvedValueOnce(fail("ime enable rejected", 1));
-      const fileExists = vi.fn().mockResolvedValue(true);
-      const doctor = new AdbDoctor(adbExec, undefined, fileExists);
+      const doctor = new AdbDoctor(adbExec, undefined, okAcquirer());
 
       const result = await doctor.ensureAdbKeyboard("R58N90ABCDE");
 

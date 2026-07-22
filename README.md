@@ -7,10 +7,11 @@ through a single, stable **JSON in/out** command surface. The end goal is
 mobile test automation, including multi-device interaction testing.
 
 > **Status**: core Android/adb primitives + environment bootstrap are
-> implemented and unit/mock-tested (139 tests, all green). Real-device /
-> real-host end-to-end verification and the bundled Unicode-IME APK are
-> **not yet done** — see [Status](#status) below before relying on this in
-> production.
+> implemented and unit/mock-tested (150 tests, all green). Real-device /
+> real-host end-to-end verification is **not yet done** — see
+> [Status](#status) below before relying on this in production. The
+> Unicode-IME APK (ADBKeyBoard, GPL-2.0) is never bundled — `doctor`
+> downloads it from its official release on first use.
 
 ## Why
 
@@ -207,9 +208,9 @@ automatically — callers never choose it themselves:
 
 - **ASCII-only** input uses the platform's native fast path directly.
 - **Any non-ASCII** input (Korean, emoji, or mixed) is routed through a
-  bundled Unicode IME ([ADBKeyBoard](https://github.com/senzhk/ADBKeyBoard))
-  via a base64 broadcast. The device's original keyboard is always
-  switched back afterward — even if the send itself fails.
+  Unicode IME ([ADBKeyBoard](https://github.com/senzhk/ADBKeyBoard)) via
+  a base64 broadcast. The device's original keyboard is always switched
+  back afterward — even if the send itself fails.
 - If keyboard restoration itself fails, `text` returns
   `error.code: "IME_RESTORE_FAILED"` with `error.details.originalImeId`
   so you can manually restore it — never a silent failure.
@@ -219,13 +220,16 @@ $ npx explore-mobile text "안녕하세요 😸"
 {"ok":true,"command":"text","data":{"serial":"emulator-5554"}}
 ```
 
-**Caveat — the ADBKeyBoard APK is not bundled yet.** Until it is, a
-non-ASCII `text` call on a fresh environment fails gracefully with
-`APK_NOT_BUNDLED` (never a crash or a silent failure) instead of
-actually landing the text. See
+**ADBKeyBoard is not bundled with this package — by design.** ADBKeyBoard
+is licensed GPL-2.0; this package is MIT, so we do not redistribute it.
+Instead, `doctor` downloads ADBKeyBoard from its official GitHub release
+on first use (a pinned tag, never `master`), validates the download, and
+caches it locally. Run `npx explore-mobile doctor` before your first
+non-ASCII `text` call. A network failure, a 404, or an invalid download
+all fail gracefully with `error.code: "APK_DOWNLOAD_FAILED"` and
+manual-install instructions — never a crash or a silent failure. See
 [`vendor/adbkeyboard/README.md`](vendor/adbkeyboard/README.md) for the
-acquisition checklist (source the APK, verify its license, pin the
-version, add attribution) required before this path works end-to-end.
+full license-compliance rationale.
 
 ## Multi-device
 
@@ -243,14 +247,16 @@ contaminate either device's input-method state.
 ## Status
 
 This is a from-scratch implementation (SPEC-ANDROID-001) with all 8
-planned milestones done and 139 unit/mock tests green, but it has **not
+planned milestones done and 150 unit/mock tests green, but it has **not
 yet been exercised against a real device or a real host environment**.
 Concretely, still pending before this is production-ready:
 
 - Real-emulator/real-device verification of every command (screenshot
   PNG validity, tap/text landing, `launch`/`stop` observed effects,
   multi-device isolation with two physically connected devices).
-- Bundling the pinned ADBKeyBoard APK (see the Unicode caveat above).
+- Verifying the runtime ADBKeyBoard download end-to-end against a real
+  device (the download/cache/validate logic is unit/mock-verified; see
+  the Unicode caveat above and `vendor/adbkeyboard/README.md`).
 - A published npm package (`npx explore-mobile` will work once this
   ships to the registry — today it only runs from a local checkout).
 

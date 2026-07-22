@@ -1,35 +1,32 @@
 /**
  * `AdbDoctor` — environment bootstrap for the `doctor`/`reset` commands
  * (M6): adb presence/daemon health, per-OS install policy, ADBKeyBoard
- * install+enable from a bundled pinned APK, and device reset.
+ * install+enable via a runtime download (license-compliance follow-up —
+ * see apk-downloader.ts), and device reset.
  *
  * This is deliberately NOT part of the `DeviceBackend` (M1) interface:
  * `DeviceBackend` models "control an already-connected device" in a way
  * that must generalize to a future iOS/idb backend, whereas `doctor`'s
- * host-level concerns (is the `adb` binary on PATH, `brew install`, a
- * bundled-APK filesystem check) are inherently Android/adb-tooling
- * specific and have no iOS analogue. Keeping it as a separate service
- * avoids forcing an artificial abstraction onto the iOS-facing interface.
+ * host-level concerns (is the `adb` binary on PATH, `brew install`, an
+ * on-demand APK download) are inherently Android/adb-tooling specific
+ * and have no iOS analogue. Keeping it as a separate service avoids
+ * forcing an artificial abstraction onto the iOS-facing interface.
  *
  * @MX:WARN — `installMissingAdb` can invoke `brew install` (macOS only,
  * and ONLY with explicit consent — REQ-DOCTOR-002). `ensureAdbKeyboard`
- * and `resetDevice` install/uninstall a package and change IME state on
- * the target device.
- * @MX:REASON — these are the SPEC's only host-environment-mutating and
- * package-install/uninstall code paths; every mutation here requires
- * either explicit user consent (adb auto-install) or is itself the
- * user-requested action (`doctor`/`reset`).
+ * downloads a third-party APK (see apk-downloader.ts) and installs it;
+ * `resetDevice` uninstalls it and changes IME state on the target device.
+ * @MX:REASON — these are the SPEC's only host-environment-mutating,
+ * network-fetching, and package-install/uninstall code paths; every
+ * mutation here requires either explicit user consent (adb auto-install)
+ * or is itself the user-requested action (`doctor`/`reset`).
  */
 
-import { access, constants } from "node:fs/promises";
-
-import {
-  ADBKEYBOARD_IME_ID,
-  ADBKEYBOARD_PACKAGE_ID,
-  resolveBundledApkPath,
-} from "./adbkeyboard.js";
+import { ADBKEYBOARD_IME_ID, ADBKEYBOARD_PACKAGE_ID } from "./adbkeyboard.js";
 import type { AdbExecutor } from "./adb-executor.js";
 import { spawnAdb } from "./adb-executor.js";
+import type { ApkAcquirer } from "./apk-downloader.js";
+import { createApkAcquirer } from "./apk-downloader.js";
 import type { ProcessExecutor } from "./process-executor.js";
 import { spawnProcess } from "./process-executor.js";
 
@@ -54,6 +51,8 @@ export interface AdbKeyboardResult {
   alreadyInstalled: boolean;
   installed: boolean;
   enabled: boolean;
+  /** Present when a fresh install occurred this call (installed=true): where the APK came from. */
+  apkSource?: { cached: boolean; url?: string };
   error?: { code: string; message: string };
 }
 
@@ -68,20 +67,11 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-async function defaultFileExists(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export class AdbDoctor {
   constructor(
     private readonly adbExec: AdbExecutor = spawnAdb,
     private readonly processExec: ProcessExecutor = spawnProcess,
-    private readonly fileExists: (path: string) => Promise<boolean> = defaultFileExists,
+    private readonly acquireApk: ApkAcquirer = createApkAcquirer(),
     private readonly platform: NodeJS.Platform = process.platform,
   ) {}
 
@@ -166,9 +156,12 @@ export class AdbDoctor {
 
   /**
    * Installs (if not already present — REQ-IDEMP-002) and enables the
-   * bundled, pinned-version ADBKeyBoard IME (REQ-DOCTOR-003). Missing APK
-   * or install failure degrades gracefully without changing device state
-   * further (REQ-ERR-002, AC-ANDROID-016).
+   * ADBKeyBoard IME (REQ-DOCTOR-003), downloading it at runtime from its
+   * official GitHub release (see apk-downloader.ts — GPL-2.0, never
+   * bundled/redistributed by this MIT package). Download failure
+   * (network error / 404 / invalid file) or install failure degrades
+   * gracefully without further changing device state (REQ-ERR-002,
+   * AC-ANDROID-016).
    */
   async ensureAdbKeyboard(serial: string): Promise<AdbKeyboardResult> {
     const listResult = await this.adbExec(["-s", serial, "shell", "pm", "list", "packages"]);
@@ -189,24 +182,28 @@ export class AdbDoctor {
       .toString("utf-8")
       .includes(`package:${ADBKEYBOARD_PACKAGE_ID}`);
 
+    let apkSource: AdbKeyboardResult["apkSource"];
+
     if (!alreadyInstalled) {
-      const apkPath = resolveBundledApkPath();
-      const exists = await this.fileExists(apkPath);
-      if (!exists) {
+      let acquisition;
+      try {
+        acquisition = await this.acquireApk();
+      } catch (err) {
         return {
           alreadyInstalled: false,
           installed: false,
           enabled: false,
           error: {
-            code: "APK_NOT_BUNDLED",
-            message:
-              `ADBKeyBoard APK not found at ${apkPath}. See vendor/adbkeyboard/README.md to add the ` +
-              `pinned-version APK, or install manually: adb -s ${serial} install <path-to-ADBKeyBoard.apk>`,
+            code: "APK_DOWNLOAD_FAILED",
+            message: errorMessage(err),
           },
         };
       }
+      apkSource = acquisition.sourceUrl
+        ? { cached: acquisition.fromCache, url: acquisition.sourceUrl }
+        : { cached: acquisition.fromCache };
 
-      const installResult = await this.adbExec(["-s", serial, "install", apkPath]);
+      const installResult = await this.adbExec(["-s", serial, "install", acquisition.path]);
       if (installResult.exitCode !== 0) {
         const stderrText = installResult.stderr.toString("utf-8").trim();
         return {
@@ -215,7 +212,7 @@ export class AdbDoctor {
           enabled: false,
           error: {
             code: "APK_INSTALL_FAILED",
-            message: `ADBKeyBoard install failed: ${stderrText.length > 0 ? stderrText : "unknown adb install error"}. Try manually: adb -s ${serial} install ${apkPath}`,
+            message: `ADBKeyBoard install failed: ${stderrText.length > 0 ? stderrText : "unknown adb install error"}. Try manually: adb -s ${serial} install ${acquisition.path}`,
           },
         };
       }
@@ -235,7 +232,12 @@ export class AdbDoctor {
       };
     }
 
-    return { alreadyInstalled, installed: !alreadyInstalled, enabled: true };
+    return {
+      alreadyInstalled,
+      installed: !alreadyInstalled,
+      enabled: true,
+      ...(apkSource ? { apkSource } : {}),
+    };
   }
 
   /**

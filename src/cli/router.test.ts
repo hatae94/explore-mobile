@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AdbExecResult, AdbExecutor } from "../backend/adb-executor.js";
+import type { ApkAcquirer } from "../backend/apk-downloader.js";
 import { AdbDoctor } from "../backend/doctor.js";
 import { ImeRestoreFailedError } from "../backend/ime-errors.js";
 import type { ProcessExecutor } from "../backend/process-executor.js";
@@ -455,10 +456,10 @@ describe("runCli", () => {
     async function makeDoctor(overrides: {
       adbExec?: AdbExecutor;
       processExec?: ProcessExecutor;
-      fileExists?: (path: string) => Promise<boolean>;
+      acquireApk?: ApkAcquirer;
       platform?: NodeJS.Platform;
     }) {
-      return new AdbDoctor(overrides.adbExec, overrides.processExec, overrides.fileExists, overrides.platform);
+      return new AdbDoctor(overrides.adbExec, overrides.processExec, overrides.acquireApk, overrides.platform);
     }
 
     function adbOk(stdout = ""): AdbExecResult {
@@ -528,22 +529,25 @@ describe("runCli", () => {
       }
     });
 
-    it("reports APK_NOT_BUNDLED gracefully when the vendor APK is absent (REQ-ERR-002, AC-ANDROID-016)", async () => {
+    it("reports APK_DOWNLOAD_FAILED gracefully when the runtime download fails (REQ-ERR-002, AC-ANDROID-016)", async () => {
       const backend = createMockBackend();
       const adbExec = vi
         .fn<AdbExecutor>()
         .mockResolvedValueOnce(adbOk("Android Debug Bridge version 1.0.41"))
         .mockResolvedValueOnce(adbOk(""))
         .mockResolvedValueOnce(adbOk("package:com.android.settings\n")); // ADBKeyBoard not present
-      const fileExists = vi.fn().mockResolvedValue(false);
-      const doctor = await makeDoctor({ adbExec, fileExists });
+      const acquireApk = vi
+        .fn<ApkAcquirer>()
+        .mockRejectedValue(new Error("Failed to download a valid ADBKeyBoard APK from ... Install manually: ..."));
+      const doctor = await makeDoctor({ adbExec, acquireApk });
 
       const result = await runCli(["doctor"], backend, doctor);
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        const data = result.data as { adbKeyboard: { error?: { code: string } } };
-        expect(data.adbKeyboard.error?.code).toBe("APK_NOT_BUNDLED");
+        const data = result.data as { adbKeyboard: { error?: { code: string; message: string } } };
+        expect(data.adbKeyboard.error?.code).toBe("APK_DOWNLOAD_FAILED");
+        expect(data.adbKeyboard.error?.message).toMatch(/manually/i);
       }
     });
 

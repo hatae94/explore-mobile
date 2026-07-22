@@ -1,42 +1,36 @@
-# ADBKeyBoard — bundled APK (pending)
+# ADBKeyBoard — NOT bundled (license compliance)
 
-This directory is where the pinned-version ADBKeyBoard APK ships, so
-`doctor` (SPEC-ANDROID-001 REQ-DOCTOR-003) can install and enable a
-Unicode-capable IME **offline and reproducibly**, without downloading
-anything at runtime.
+This directory intentionally does **not** contain the ADBKeyBoard APK.
 
-**Status: no APK is bundled yet.** `doctor` detects this and returns a
-graceful `APK_NOT_BUNDLED` error (REQ-ERR-002 / acceptance.md
-AC-ANDROID-016) with manual-install guidance, rather than failing
-silently or fabricating a binary. See `src/backend/adbkeyboard.ts` for
-the runtime path-resolution logic and the `@MX:TODO` marker tracking
-this gap.
+**ADBKeyBoard is licensed GPL-2.0.** This package (`explore-mobile`) is
+MIT-licensed. Bundling a GPL-2.0 binary inside an MIT-licensed npm
+distribution would be a license violation, so we never redistribute the
+compiled APK — not in this repository, not in the published npm package.
 
-## Acquisition checklist (must be completed by a human before release)
+## How ADBKeyBoard actually gets onto the device
 
-1. **Source the APK.** Obtain the compiled APK from
-   [`senzhk/ADBKeyBoard`](https://github.com/senzhk/ADBKeyBoard) (or a
-   verified release mirror). Pick one specific tagged release or commit —
-   do not track a moving branch.
-2. **Verify the license.** The upstream README states an Apache-2.0
-   license. Confirm this still holds for the exact release chosen, and
-   that redistributing the compiled binary inside this npm package is
-   permitted under those terms.
-3. **Record the version.** Update `ADBKEYBOARD_PINNED_VERSION` in
-   `src/backend/adbkeyboard.ts` to the exact release/version string
-   chosen in step 1.
-4. **Add attribution.** Add a `NOTICE` file in this directory crediting
-   the upstream project and reproducing the required Apache-2.0
-   attribution text.
-5. **Place the binary.** Save the APK as
-   `ADBKeyBoard-<version>.apk` in this directory (filename must match
-   `adbKeyboardApkFilename()` in `src/backend/adbkeyboard.ts`).
-6. **Update `package.json`.** Confirm `"vendor"` is listed in the
-   `files` array (already done as of the M6 commit) so the APK ships
-   with the published npm package.
-7. **Re-verify `doctor`.** Run `doctor` against a real or emulated
-   device and confirm the ADBKeyBoard install + `ime enable` step now
-   succeeds instead of reporting `APK_NOT_BUNDLED`.
+`doctor` downloads ADBKeyBoard **at runtime, on first use**, directly from
+its official GitHub release:
+
+- Primary source: the pinned release's asset on GitHub Releases
+  (`https://github.com/senzhk/ADBKeyBoard/releases/download/<pinned-ref>/ADBKeyboard.apk`).
+- Fallback source: the raw file at the same pinned ref, used if the
+  release-asset path doesn't resolve.
+- The ref is **pinned** (a specific tag, never `master`) for
+  reproducibility — see `ADBKEYBOARD_PINNED_VERSION` in
+  `src/backend/adbkeyboard.ts`.
+- The download is validated (non-empty + ZIP/APK magic bytes) before
+  being passed to `adb install`, and cached locally
+  (`~/.cache/explore-mobile/`) so repeated `doctor` runs don't
+  re-download.
+- Network failure, a 404, or an invalid download all degrade to a
+  graceful `APK_DOWNLOAD_FAILED` JSON error with manual-install
+  instructions — never a crash, never a fabricated binary, never a
+  silent failure.
+
+See `src/backend/apk-downloader.ts` for the download/cache/validation
+implementation and `src/backend/doctor.ts`'s `ensureAdbKeyboard()` for
+how it's wired into the `doctor` command.
 
 ## Runtime contract
 
@@ -48,3 +42,9 @@ this gap.
 These identifiers are defined once in `src/backend/adbkeyboard.ts` and
 consumed by both the `text` command's IME lifecycle (M5) and `doctor`'s
 install/enable flow (M6) — do not duplicate them elsewhere.
+
+## Why this directory still exists
+
+Kept as the documented, discoverable home for this license-compliance
+note and the runtime-contract reference above — not as a binary staging
+area. Do not place an APK file here.

@@ -8,6 +8,10 @@
  * environment-bootstrap service (M6). All 8 milestones are implemented;
  * the M8 Claude skill wrapper lives at `.claude/skills/explore-mobile/`
  * (not part of this library's runtime exports).
+ *
+ * License-compliance follow-up: ADBKeyBoard (GPL-2.0) is never bundled
+ * inside this MIT package — `doctor` downloads it at runtime from its
+ * official GitHub release (see backend/apk-downloader.ts).
  */
 
 export type { CommonElement, ElementBounds } from "./schema/common-element.js";
@@ -28,8 +32,18 @@ export {
   ADBKEYBOARD_IME_ID,
   ADBKEYBOARD_BROADCAST_ACTION,
   ADBKEYBOARD_PINNED_VERSION,
-  resolveBundledApkPath,
+  adbKeyboardReleaseDownloadUrl,
+  adbKeyboardRawFallbackUrl,
 } from "./backend/adbkeyboard.js";
+export {
+  createApkAcquirer,
+  resolveApkCacheDir,
+  resolveApkCachePath,
+  type ApkAcquirer,
+  type ApkAcquisitionResult,
+  type FetchLike,
+  type CacheIO,
+} from "./backend/apk-downloader.js";
 export {
   AdbDoctor,
   type AdbInstalledCheck,
