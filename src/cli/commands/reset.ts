@@ -1,33 +1,42 @@
 /**
  * `reset` command, and the shared implementation behind `doctor --clean`
- * (REQ-DOCTOR-004): both restore the target device to its pre-`doctor`
- * state via the same `AdbDoctor.resetDevice()` call. Exported as a
+ * (REQ-DOCTOR-004, REQ-IOS-DOCTOR-003/004): restores the target device to
+ * its pre-`doctor` state, dispatching by the resolved target's platform —
+ * `envServices.android.resetDevice()` (Android, IME restore) or
+ * `envServices.ios.resetDevice()` (iOS, near-no-op). Exported as a
  * reusable function (not just the `CommandHandler`) so `doctor.ts` can
  * invoke the identical logic under its own command name when `--clean`
  * is passed, rather than duplicating the device-targeting + response
  * shaping.
  *
  * `reset` is also the ONLY place a session-based IME switch (REQ-INPUT-004
- * revised — `AdbBackend.inputText()`) is actually restored: the resolved
- * `AdbBackend` instance is narrowed via `instanceof` (an Android-specific
- * concern kept out of the backend-agnostic `DeviceBackend` interface,
- * consistent with `AdbDoctor` itself already being a concrete,
- * non-abstracted parameter here) to read and clear the per-serial tracked
- * original IME. `backend` may be a plain `AdbBackend` OR a `BackendRegistry`
- * (SPEC-IOS-001, `bin.ts`) wrapping one alongside `IdbBackend` — either way,
- * `resolveAdbBackend` below finds the real `AdbBackend` instance for the
- * resolved serial, if any. A backend with no such concept (`IdbBackend`)
- * simply skips this (near-no-op reset — `IdbDoctor.resetDevice`).
+ * revised — `AdbBackend.inputText()`) is actually restored, and this is
+ * Android-only: the resolved `AdbBackend` instance is narrowed via
+ * `instanceof` (an Android-specific concern kept out of the
+ * backend-agnostic `DeviceBackend` interface) to read and clear the
+ * per-serial tracked original IME. `backend` may be a plain `AdbBackend`
+ * OR a `BackendRegistry` (SPEC-IOS-001, `bin.ts`) wrapping one alongside
+ * `IdbBackend` — either way, `resolveAdbBackend` below finds the real
+ * `AdbBackend` instance for the resolved serial, if any. This entire IME
+ * path is skipped on the iOS branch (`IdbDoctor.resetDevice` — no IME
+ * concept on iOS, idb text input is stateless).
+ *
+ * @MX:NOTE — platform branching (REQ-IOS-DOCTOR-003, SPEC-IOS-001): the
+ * target device is resolved FIRST (unchanged position — `resolveTargetDevice`
+ * already ran here before SPEC-IOS-001), then `resolvedDevice.platform`
+ * decides which of `envServices.{android,ios}` handles the reset. The
+ * Android branch is byte-for-byte the pre-existing logic; only the iOS
+ * branch (near-no-op) is new.
  */
 
 import { AdbBackend } from "../../backend/adb-backend.js";
 import type { DeviceBackend } from "../../schema/device-backend.js";
-import type { AdbDoctor } from "../../backend/doctor.js";
 import { BackendRegistry } from "../../backend/registry.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import type { ParsedCommandArgs } from "../args.js";
 import type { CommandResult } from "../envelope.js";
+import type { EnvServices } from "../env-services.js";
 import type { CommandHandler } from "./types.js";
 
 /**
@@ -50,17 +59,27 @@ async function resolveAdbBackend(backend: DeviceBackend, serial: string): Promis
 export async function performReset(
   args: ParsedCommandArgs,
   backend: DeviceBackend,
-  doctor: AdbDoctor,
+  envServices: EnvServices,
   commandName: string,
 ): Promise<CommandResult> {
   const devices = await backend.listDevices();
   const target = resolveTargetDevice(devices, args.device);
   if (!target.ok) return failure(commandName, target.code, target.message, target.details);
 
+  const resolvedDevice = devices.find((d) => d.serial === target.serial);
+
+  // REQ-IOS-DOCTOR-003/004 (SPEC-IOS-001): iOS has no IME/APK state to
+  // clean, so its reset is a near-no-op reported by IdbDoctor — the
+  // Android-only IME-restore machinery below never runs for this branch.
+  if (resolvedDevice?.platform === "ios") {
+    const result = await envServices.ios.resetDevice(target.serial);
+    return success(commandName, { serial: target.serial, ...result });
+  }
+
   const adbBackend = await resolveAdbBackend(backend, target.serial);
   const trackedOriginalIme = adbBackend ? await adbBackend.getTrackedOriginalIme(target.serial) : undefined;
 
-  const result = await doctor.resetDevice(target.serial, trackedOriginalIme);
+  const result = await envServices.android.resetDevice(target.serial, trackedOriginalIme);
 
   // Clear the session once `resetDevice()` has taken responsibility for
   // restoring it — but only on success (or when there was nothing precise
@@ -74,4 +93,5 @@ export async function performReset(
   return success(commandName, { serial: target.serial, ...result });
 }
 
-export const resetCommand: CommandHandler = (args, backend, doctor) => performReset(args, backend, doctor, "reset");
+export const resetCommand: CommandHandler = (args, backend, envServices) =>
+  performReset(args, backend, envServices, "reset");

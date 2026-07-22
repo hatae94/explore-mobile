@@ -10,6 +10,7 @@
  */
 
 import { AdbDoctor } from "../backend/doctor.js";
+import { IdbDoctor } from "../backend/idb-doctor.js";
 import type { DeviceBackend } from "../schema/device-backend.js";
 import { parseCommandArgs } from "./args.js";
 import { devicesCommand } from "./commands/devices.js";
@@ -23,6 +24,7 @@ import { stopCommand } from "./commands/stop.js";
 import { tapCommand } from "./commands/tap.js";
 import { textCommand } from "./commands/text.js";
 import type { CommandHandler } from "./commands/types.js";
+import type { EnvServices } from "./env-services.js";
 import { failure } from "./envelope.js";
 import type { CommandResult } from "./envelope.js";
 
@@ -49,15 +51,17 @@ function errorMessage(err: unknown): string {
  * Always resolves (never rejects): parse errors, unknown commands, and
  * handler-thrown exceptions all degrade to a graceful {@link CommandError}.
  *
- * `doctor` defaults to a real `AdbDoctor()` when not provided, so every
- * pre-M6 call site (`runCli(argv, backend)`, used throughout the M3 test
- * suite) keeps working unchanged — only `doctor`/`reset` command handlers
- * ever touch this parameter.
+ * `envServices` defaults to real `AdbDoctor()`/`IdbDoctor()` instances when
+ * not provided, so every pre-existing call site (`runCli(argv, backend)`,
+ * used throughout the test suite) keeps working unchanged — only
+ * `doctor`/`reset` command handlers ever touch this parameter
+ * (REQ-IOS-DOCTOR-003, SPEC-IOS-001 — generalized from the original
+ * Android-only `doctor: AdbDoctor` parameter).
  */
 export async function runCli(
   argv: string[],
   backend: DeviceBackend,
-  doctor: AdbDoctor = new AdbDoctor(),
+  envServices: EnvServices = { android: new AdbDoctor(), ios: new IdbDoctor() },
 ): Promise<CommandResult> {
   const [commandName, ...rest] = argv;
   const supported = Object.keys(COMMANDS).join(", ");
@@ -79,7 +83,7 @@ export async function runCli(
   }
 
   try {
-    return await handler(args, backend, doctor);
+    return await handler(args, backend, envServices);
   } catch (err) {
     // Defense in depth: a handler bug still degrades to graceful JSON,
     // never an uncaught exception / non-JSON stack trace.

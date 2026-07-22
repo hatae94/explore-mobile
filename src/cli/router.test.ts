@@ -7,13 +7,28 @@ import { AdbBackend } from "../backend/adb-backend.js";
 import type { AdbExecResult, AdbExecutor } from "../backend/adb-executor.js";
 import type { ApkAcquirer } from "../backend/apk-downloader.js";
 import { AdbDoctor } from "../backend/doctor.js";
+import { IdbDoctor } from "../backend/idb-doctor.js";
 import { AdbKeyboardInstallFailedError, ImeRestoreFailedError } from "../backend/ime-errors.js";
 import { ImeSessionStore } from "../backend/ime-session-store.js";
 import { BackendRegistry } from "../backend/registry.js";
 import type { ProcessExecutor } from "../backend/process-executor.js";
 import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
 import { normalizeUiAutomatorXml } from "../normalize/uiautomator.js";
+import type { EnvServices } from "./env-services.js";
 import { runCli } from "./router.js";
+
+/**
+ * Wraps a test-constructed `AdbDoctor` (and optionally a mock/real
+ * `IdbDoctor`) into the `EnvServices` holder `runCli`'s third parameter
+ * now expects (REQ-IOS-DOCTOR-003, SPEC-IOS-001 — generalized from the
+ * original bare-`AdbDoctor` parameter). Every pre-existing doctor/reset
+ * test in this file is Android-focused, so `ios` defaults to an inert
+ * `new IdbDoctor()` that is never exercised unless a test explicitly
+ * targets an iOS device.
+ */
+function envServices(android: AdbDoctor, ios: IdbDoctor = new IdbDoctor()): EnvServices {
+  return { android, ios };
+}
 
 /** A minimal mock iOS DeviceBackend, used only to populate a BackendRegistry's iOS slot in registry-wrapping regression tests. */
 function createMockIosBackend(): DeviceBackend {
@@ -789,7 +804,7 @@ describe("runCli", () => {
       const adbExec = vi.fn<AdbExecutor>().mockRejectedValueOnce(new Error("spawn adb ENOENT"));
       const doctor = await makeDoctor({ adbExec, platform: "darwin" });
 
-      const result = await runCli(["doctor"], backend, doctor);
+      const result = await runCli(["doctor"], backend, envServices(doctor));
 
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -814,7 +829,7 @@ describe("runCli", () => {
         .mockResolvedValueOnce(adbFail("cannot bind to 127.0.0.1:5037")); // start-server
       const doctor = await makeDoctor({ adbExec });
 
-      const result = await runCli(["doctor"], backend, doctor);
+      const result = await runCli(["doctor"], backend, envServices(doctor));
 
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -834,7 +849,7 @@ describe("runCli", () => {
         .mockResolvedValueOnce(adbOk("")); // ime enable
       const doctor = await makeDoctor({ adbExec });
 
-      const result = await runCli(["doctor"], backend, doctor);
+      const result = await runCli(["doctor"], backend, envServices(doctor));
 
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -855,7 +870,7 @@ describe("runCli", () => {
         .mockRejectedValue(new Error("Failed to download a valid ADBKeyBoard APK from ... Install manually: ..."));
       const doctor = await makeDoctor({ adbExec, acquireApk });
 
-      const result = await runCli(["doctor"], backend, doctor);
+      const result = await runCli(["doctor"], backend, envServices(doctor));
 
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -874,7 +889,7 @@ describe("runCli", () => {
         .mockResolvedValueOnce(adbOk(""));
       const doctor = await makeDoctor({ adbExec });
 
-      const result = await runCli(["doctor"], backend, doctor);
+      const result = await runCli(["doctor"], backend, envServices(doctor));
 
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -895,7 +910,7 @@ describe("runCli", () => {
         .mockResolvedValueOnce(adbOk("Success")); // uninstall
       const doctor = await makeDoctor({ adbExec });
 
-      const result = await runCli(["doctor", "--clean"], backend, doctor);
+      const result = await runCli(["doctor", "--clean"], backend, envServices(doctor));
 
       expect(result.ok).toBe(true);
       expect(result.command).toBe("doctor");
@@ -916,7 +931,7 @@ describe("runCli", () => {
         .mockResolvedValueOnce({ stdout: Buffer.from("Success"), stderr: Buffer.alloc(0), exitCode: 0 });
       const doctor = new AdbDoctor(adbExec);
 
-      const result = await runCli(["reset"], backend, doctor);
+      const result = await runCli(["reset"], backend, envServices(doctor));
 
       expect(result.ok).toBe(true);
       expect(result.command).toBe("reset");
@@ -937,7 +952,7 @@ describe("runCli", () => {
       const adbExec = vi.fn<AdbExecutor>();
       const doctor = new AdbDoctor(adbExec);
 
-      const result = await runCli(["reset"], backend, doctor);
+      const result = await runCli(["reset"], backend, envServices(doctor));
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe("AMBIGUOUS_DEVICE");
@@ -992,7 +1007,7 @@ describe("runCli", () => {
         await backend.inputText(serial, "안녕");
         await expect(backend.getTrackedOriginalIme(serial)).resolves.toBe(originalIme);
 
-        const result = await runCli(["reset"], backend, doctor);
+        const result = await runCli(["reset"], backend, envServices(doctor));
 
         expect(result.ok).toBe(true);
         if (result.ok) {
@@ -1039,7 +1054,7 @@ describe("runCli", () => {
         await adbBackend.inputText(serial, "안녕");
         await expect(adbBackend.getTrackedOriginalIme(serial)).resolves.toBe(originalIme);
 
-        const result = await runCli(["reset"], registry, doctor);
+        const result = await runCli(["reset"], registry, envServices(doctor));
 
         expect(result.ok).toBe(true);
         if (result.ok) {
@@ -1076,7 +1091,7 @@ describe("runCli", () => {
         const resetProcessBackend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeStorePath));
         const doctor = new AdbDoctor(adbExec);
 
-        const result = await runCli(["reset"], resetProcessBackend, doctor);
+        const result = await runCli(["reset"], resetProcessBackend, envServices(doctor));
 
         expect(result.ok).toBe(true);
         if (result.ok) {
@@ -1118,7 +1133,7 @@ describe("runCli", () => {
 
         await backend.inputText(serial, "안녕");
 
-        const result = await runCli(["reset"], backend, doctor);
+        const result = await runCli(["reset"], backend, envServices(doctor));
 
         expect(result.ok).toBe(true);
         if (result.ok) {
@@ -1130,6 +1145,115 @@ describe("runCli", () => {
         // Retained for audit / manual recovery — the session is NOT cleared.
         await expect(backend.getTrackedOriginalIme(serial)).resolves.toBe(originalIme);
       });
+    });
+  });
+
+  describe("doctor/reset platform-branching dispatch (REQ-IOS-DOCTOR-003, AC-IOS-021)", () => {
+    it("routes 'doctor' to IdbDoctor's checks (not AdbDoctor.ensureAdbKeyboard) when the resolved target device is platform:ios", async () => {
+      const iosDeviceInfo = device({ serial: "00008030-IOS", platform: "ios" });
+      const backend = createMockBackend([iosDeviceInfo]);
+      const adbDoctor = new AdbDoctor(vi.fn<AdbExecutor>());
+      const idbDoctor = new IdbDoctor(vi.fn());
+
+      // adb/daemon checks are eager + unconditional (unchanged from
+      // SPEC-ANDROID-001) — mock them healthy so the handler reaches the
+      // platform-branch decision point.
+      vi.spyOn(adbDoctor, "checkAdbInstalled").mockResolvedValue({ installed: true, version: "1.0.41" });
+      vi.spyOn(adbDoctor, "checkDaemonHealth").mockResolvedValue({ healthy: true });
+      const ensureAdbKeyboardSpy = vi.spyOn(adbDoctor, "ensureAdbKeyboard");
+
+      const checkIdbInstalledSpy = vi
+        .spyOn(idbDoctor, "checkIdbInstalled")
+        .mockResolvedValue({ installed: true, version: "1.1.8" });
+      const checkCompanionSpy = vi.spyOn(idbDoctor, "checkCompanion").mockResolvedValue({ present: true });
+      const checkSimulatorBootedSpy = vi
+        .spyOn(idbDoctor, "checkSimulatorBooted")
+        .mockResolvedValue({ booted: true });
+
+      const result = await runCli(
+        ["doctor", "--device", iosDeviceInfo.serial],
+        backend,
+        envServices(adbDoctor, idbDoctor),
+      );
+
+      expect(result.ok).toBe(true);
+      expect(checkIdbInstalledSpy).toHaveBeenCalledTimes(1);
+      expect(checkCompanionSpy).toHaveBeenCalledTimes(1);
+      expect(checkSimulatorBootedSpy).toHaveBeenCalledWith(iosDeviceInfo.serial);
+      expect(ensureAdbKeyboardSpy).not.toHaveBeenCalled();
+      if (result.ok) {
+        const data = result.data as { idbEnvironment?: unknown; adbKeyboard: { skipped: boolean } };
+        expect(data.idbEnvironment).toBeDefined();
+        expect(data.adbKeyboard.skipped).toBe(true);
+      }
+    });
+
+    it("routes 'doctor' to AdbDoctor.ensureAdbKeyboard (not IdbDoctor) when the resolved target device is platform:android", async () => {
+      const androidDeviceInfo = device({ serial: "R58N90ABCDE", platform: "android" });
+      const backend = createMockBackend([androidDeviceInfo]);
+      const adbDoctor = new AdbDoctor(vi.fn<AdbExecutor>());
+      const idbDoctor = new IdbDoctor(vi.fn());
+
+      vi.spyOn(adbDoctor, "checkAdbInstalled").mockResolvedValue({ installed: true, version: "1.0.41" });
+      vi.spyOn(adbDoctor, "checkDaemonHealth").mockResolvedValue({ healthy: true });
+      const ensureAdbKeyboardSpy = vi
+        .spyOn(adbDoctor, "ensureAdbKeyboard")
+        .mockResolvedValue({ alreadyInstalled: true, installed: false, enabled: true });
+      const checkIdbInstalledSpy = vi.spyOn(idbDoctor, "checkIdbInstalled");
+
+      const result = await runCli(["doctor"], backend, envServices(adbDoctor, idbDoctor));
+
+      expect(result.ok).toBe(true);
+      expect(ensureAdbKeyboardSpy).toHaveBeenCalledWith(androidDeviceInfo.serial);
+      expect(checkIdbInstalledSpy).not.toHaveBeenCalled();
+      if (result.ok) {
+        const data = result.data as { adbKeyboard: { skipped: boolean } };
+        expect(data.adbKeyboard.skipped).toBe(false);
+      }
+    });
+
+    it("routes 'reset' to IdbDoctor.resetDevice (near-no-op) for an iOS-platform target, without touching AdbDoctor.resetDevice", async () => {
+      const iosDeviceInfo = device({ serial: "00008030-IOS", platform: "ios" });
+      const backend = createMockBackend([iosDeviceInfo]);
+      const adbDoctor = new AdbDoctor(vi.fn<AdbExecutor>());
+      const idbDoctor = new IdbDoctor(vi.fn());
+
+      const adbResetSpy = vi.spyOn(adbDoctor, "resetDevice");
+      const idbResetSpy = vi.spyOn(idbDoctor, "resetDevice").mockResolvedValue({
+        noOp: true,
+        message: "iOS has no IME/APK state to clean (idb text input is stateless) — nothing to reset.",
+      });
+
+      const result = await runCli(["reset"], backend, envServices(adbDoctor, idbDoctor));
+
+      expect(result.ok).toBe(true);
+      expect(idbResetSpy).toHaveBeenCalledWith(iosDeviceInfo.serial);
+      expect(adbResetSpy).not.toHaveBeenCalled();
+      if (result.ok) {
+        const data = result.data as { noOp?: boolean };
+        expect(data.noOp).toBe(true);
+      }
+    });
+
+    it("routes 'reset' to AdbDoctor.resetDevice for an android-platform target (unchanged path), without touching IdbDoctor.resetDevice", async () => {
+      const androidDeviceInfo = device({ serial: "R58N90ABCDE", platform: "android" });
+      const backend = createMockBackend([androidDeviceInfo]);
+      const adbDoctor = new AdbDoctor(vi.fn<AdbExecutor>());
+      const idbDoctor = new IdbDoctor(vi.fn());
+
+      const adbResetSpy = vi.spyOn(adbDoctor, "resetDevice").mockResolvedValue({
+        imeReset: true,
+        adbKeyboardDisabled: true,
+        adbKeyboardUninstalled: true,
+        warnings: [],
+      });
+      const idbResetSpy = vi.spyOn(idbDoctor, "resetDevice");
+
+      const result = await runCli(["reset"], backend, envServices(adbDoctor, idbDoctor));
+
+      expect(result.ok).toBe(true);
+      expect(adbResetSpy).toHaveBeenCalledWith(androidDeviceInfo.serial, undefined);
+      expect(idbResetSpy).not.toHaveBeenCalled();
     });
   });
 

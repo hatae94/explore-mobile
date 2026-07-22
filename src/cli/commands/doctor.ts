@@ -1,5 +1,5 @@
 /**
- * `doctor` command (REQ-DOCTOR-001~005, M6).
+ * `doctor` command (REQ-DOCTOR-001~005, REQ-IOS-DOCTOR-003).
  *
  * Always emits a single JSON report (REQ-DOCTOR-005) — `doctor`'s job is
  * to diagnose and report, not to itself "fail" the CLI invocation merely
@@ -10,6 +10,17 @@
  *
  * `doctor --clean` delegates to the same reset logic as the standalone
  * `reset` command (REQ-DOCTOR-004) via the shared `performReset` helper.
+ *
+ * @MX:NOTE — platform branching (REQ-IOS-DOCTOR-003, SPEC-IOS-001): the
+ * pre-existing `adb`/`daemon` checks below are eager and unconditional
+ * (unchanged from SPEC-ANDROID-001 — they already ran before any device
+ * was resolved) and stay that way, since they gate the CLI's ability to
+ * even list devices at all. Once a target device IS resolved, this
+ * handler branches on `resolvedDevice.platform`: an Android target keeps
+ * the exact original `ensureAdbKeyboard` flow; an iOS target instead runs
+ * `IdbDoctor`'s checks and reports them under `idbEnvironment`
+ * (`adbKeyboard` stays present as `{skipped:true, ...}` for a stable JSON
+ * shape rather than being replaced/removed).
  */
 
 import { resolveTargetDevice } from "../device-targeting.js";
@@ -17,14 +28,14 @@ import { success } from "../envelope.js";
 import { performReset } from "./reset.js";
 import type { CommandHandler } from "./types.js";
 
-export const doctorCommand: CommandHandler = async (args, backend, doctor) => {
+export const doctorCommand: CommandHandler = async (args, backend, envServices) => {
   if (args.clean) {
-    return performReset(args, backend, doctor, "doctor");
+    return performReset(args, backend, envServices, "doctor");
   }
 
-  const adb = await doctor.checkAdbInstalled();
+  const adb = await envServices.android.checkAdbInstalled();
   if (!adb.installed) {
-    const installAttempt = await doctor.installMissingAdb(args.yes);
+    const installAttempt = await envServices.android.installMissingAdb(args.yes);
     return success("doctor", {
       adb,
       daemon: { healthy: false, message: "adb is not installed; daemon health cannot be checked." },
@@ -34,7 +45,7 @@ export const doctorCommand: CommandHandler = async (args, backend, doctor) => {
     });
   }
 
-  const daemon = await doctor.checkDaemonHealth();
+  const daemon = await envServices.android.checkDaemonHealth();
   if (!daemon.healthy) {
     return success("doctor", {
       adb,
@@ -56,7 +67,24 @@ export const doctorCommand: CommandHandler = async (args, backend, doctor) => {
     });
   }
 
-  const adbKeyboard = await doctor.ensureAdbKeyboard(target.serial);
+  const resolvedDevice = devices.find((d) => d.serial === target.serial);
+
+  if (resolvedDevice?.platform === "ios") {
+    const [idbInstalled, companion, simulatorBooted] = await Promise.all([
+      envServices.ios.checkIdbInstalled(),
+      envServices.ios.checkCompanion(),
+      envServices.ios.checkSimulatorBooted(target.serial),
+    ]);
+    return success("doctor", {
+      adb,
+      daemon,
+      devices,
+      adbKeyboard: { skipped: true, reason: "Target device is iOS; see idbEnvironment instead." },
+      idbEnvironment: { idbInstalled, companion, simulatorBooted },
+    });
+  }
+
+  const adbKeyboard = await envServices.android.ensureAdbKeyboard(target.serial);
 
   return success("doctor", {
     adb,

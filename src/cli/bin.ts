@@ -7,12 +7,12 @@
  * `IdbBackend` (iOS), and prints exactly one JSON document to stdout per
  * invocation (REQ-ARCH-001). The registry itself implements `DeviceBackend`
  * (registry-as-backend adapter, design.md §C.4), so `runCli`'s existing
- * `(argv, backend, doctor)` signature needs no change to gain cross-
+ * `(argv, backend, envServices)` signature needs no change to gain cross-
  * platform `--device <serial>` auto-routing.
  *
- * `doctor` stays a plain `AdbDoctor` for now (`doctor`/`reset` CLI-level
- * platform dispatch to `IdbDoctor` — REQ-IOS-DOCTOR-003 — is out of this
- * pass's scope; see `src/backend/idb-doctor.ts`'s header note).
+ * `doctor`/`reset` receive BOTH environment services via the `EnvServices`
+ * holder (REQ-IOS-DOCTOR-003) and dispatch to the one matching the
+ * resolved target device's platform internally.
  */
 
 import { AdbBackend } from "../backend/adb-backend.js";
@@ -38,7 +38,7 @@ const registry = new BackendRegistry([
   },
 ]);
 
-const result = await runCli(process.argv.slice(2), registry, doctor);
+const result = await runCli(process.argv.slice(2), registry, { android: doctor, ios: idbDoctor });
 
 process.stdout.write(`${JSON.stringify(result)}\n`);
 process.exitCode = result.ok ? 0 : 1;
