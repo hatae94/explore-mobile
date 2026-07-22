@@ -1,11 +1,12 @@
 ---
 id: SPEC-ANDROID-001
 title: "Android(adb) 기기 제어 기본기 + 자동 환경 세팅 CLI 코어 — 구현 계획"
-version: "0.1.2"
-status: completed
+version: "0.2.0"
+status: in-progress
 created: 2026-07-22
 updated: 2026-07-22
 author: manager-spec
+amendment_of: SPEC-ANDROID-001
 ---
 
 # 구현 계획 — SPEC-ANDROID-001
@@ -18,10 +19,20 @@ author: manager-spec
 
 ## §B. 알려진 이슈 / 리스크
 
-- **ADBKeyBoard 의존성**: 유니코드 입력이 외부 APK에 의존. APK 배포 경로/라이선스/버전 고정 필요.
+- **ADBKeyBoard 의존성 + 라이선스**: 유니코드 입력이 외부 APK에 의존. **해소됨(개정 0.2.0)** — ADBKeyBoard가 GPL-2.0이고 본 패키지는 MIT이므로 번들 대신 **런타임 다운로드**(고정 참조, 매직바이트 검증, 로컬 캐시). 미재배포로 라이선스 준수(`backend/apk-downloader.ts`, `backend/adbkeyboard.ts`).
 - **`doctor` 자동 설치의 권한**: adb/platform-tools 자동 설치는 OS별 패키지 매니저·권한 상승이 필요할 수 있어 항상 자동 설치가 가능하다고 가정 불가.
 - **기기 의존 검증**: 스크린샷 유효성/탭·텍스트 효과/한글 입력 착지/다중 기기 격리는 실기기·에뮬레이터가 있어야 검증 가능 → e2e/수동(또는 CI 에뮬레이터).
 - **idb 미유지보수(선반영)**: SPEC-02에서 idb 버전 고정 + interface 격리 필요(본 SPEC 아님).
+
+### 개정(Amendment, 개정 0.2.0) — 실기기 하드닝 후 문서-코드 정합화
+
+SPEC이 `completed`(v0.1.2, `e536e11`)로 닫힌 뒤 실기기 검증에서 구현이 5개 커밋에 걸쳐 진화했다. 본 개정(`completed → in-progress`)은 문서를 실제 코드에 맞춰 정정한다(docs-only, 코드 무변경). 진화 항목:
+
+1. **ADBKeyBoard GPL-2.0 런타임 다운로드**(`488ab87`): 번들 → 미재배포 런타임 다운로드(REQ-DOCTOR-003 / §C 정정).
+2. **세션 기반 IME + 소프트키보드 자동 숨김**(`ad8c41c`): per-call 복원 폐기, 세션 1회 전환, `text` 후 키보드 숨김(`--keep-keyboard` 옵트아웃).
+3. **`text` 자가치유 자동설치**(`d8f1878`): ADBKeyBoard 미설치 시 `text`가 공유 설치기(`backend/adbkeyboard-installer.ts`)로 런타임 설치(REQ-INPUT-003 개정).
+4. **요소 셀렉터 tap + text focus**(`e670a78`): `--id`/`--text`/`--index`로 요소 찾아 중심 탭/포커스(REQ-SELECT 신규, `normalize/element-query.ts`).
+5. **디스크 영속 IME 세션**(`e8a25e2`): 원래 IME를 `~/.cache/explore-mobile/ime-sessions.json`에 `serial`별 영속화 — 별도 CLI 프로세스 간 생존, 복원은 `reset`/`doctor --clean`에서(REQ-INPUT-004 개정, `backend/ime-session-store.ts`).
 
 ### Decisions (해소됨 — 2026-07-22, Implementation Kickoff Approval 전 확정)
 
@@ -29,7 +40,7 @@ author: manager-spec
 
 1. **패키지 매니저 / 배포**: 개발은 **pnpm**을 표준으로 사용하고, **npm 레지스트리**에 배포하여 최종 사용자는 전역 설치 없이 `npx`로 실행한다. 개발용 PM(pnpm)은 최종 사용자 `npx` 실행과 **독립적**(사용자는 pnpm 불필요).
 2. **adb 자동 설치 정책(OS별)**: macOS는 **사용자 명시 동의 후 Homebrew 자동 설치**, Linux/Windows는 **안내만(정확한 수동 설치 단계 출력, 자동 설치 없음)**. 자동 설치는 절대 무음이 아니며 동의 필수 → REQ-DOCTOR-002 반영.
-3. **ADBKeyBoard APK 조달**: 버전 고정된 APK를 패키지에 **번들**(오프라인 재현 가능). 사전 조건 — APK 라이선스가 재배포를 허용함을 검증(예: Apache-2.0)하고 attribution 포함 → REQ-DOCTOR-003 / §C 제약 반영.
+3. **ADBKeyBoard APK 조달**: 버전 고정된 APK를 패키지에 **번들**(오프라인 재현 가능). 사전 조건 — APK 라이선스가 재배포를 허용함을 검증(예: Apache-2.0)하고 attribution 포함 → REQ-DOCTOR-003 / §C 제약 반영. **[SUPERSEDED — 개정 0.2.0]** 실제 ADBKeyBoard 라이선스는 Apache-2.0이 아니라 **GPL-2.0**으로 확인되어(본 패키지는 MIT) 번들 대신 **런타임 다운로드(미재배포)** 로 전환됨. 위 plan-time 결정은 기록 보존용이며 현재 유효 계약은 REQ-DOCTOR-003(개정)·§C·§B 개정 노트를 따른다.
 4. **Node 최소 버전**: **Node 20 LTS 이상**(ESM) → §C 제약 반영.
 
 ## §C. 사전 점검 (Pre-flight)
@@ -75,16 +86,16 @@ author: manager-spec
 - mock 기반 명령 구성 테스트.
 - 관련: REQ-DEVICES-001/002, REQ-APP-001/002, REQ-SCREENSHOT-001/002, REQ-INPUT-001/005.
 
-### M5 — 텍스트 입력 + Unicode IME 경로 + IME 복원 [위험 구역]
+### M5 — 텍스트 입력 + Unicode IME 경로 + 세션 기반 IME [위험 구역]
 - ASCII 빠른 경로(`input text`) / 비-ASCII base64 브로드캐스트(`ADB_INPUT_B64`).
-- `ime enable`/`ime set` → 완료 후 **항상 원래 IME 복원**(오류 경로 포함).
-- 관련: REQ-INPUT-002/003/004, REQ-IDEMP-004. `@MX:WARN` 대상.
+- **세션 기반 IME(개정 0.2.0)**: 기기의 현재 활성 IME 조회 → 아직 ADBKeyBoard가 아니면 1회 전환 + 전환 전 원래 IME를 `serial`별 **디스크 영속화**. 매 호출 복원 아님 — 복원은 `reset`/`doctor --clean`에서만. `text` 후 소프트키보드 자동 숨김(`--keep-keyboard` 옵트아웃). ADBKeyBoard 미설치 시 자가치유 설치.
+- 관련: REQ-INPUT-002/003/004(개정), REQ-IDEMP-004, REQ-ERR-001. `@MX:WARN` 대상.
 
 ### M6 — `doctor` / `reset` 환경 부트스트랩 [부작용 큰 단계]
 - adb/platform-tools 감지 → 자동 설치 또는 정확한 수동 안내.
-- ADBKeyBoard 설치·활성화. `pm list packages`로 중복 설치 방지.
-- `doctor --clean`/`reset`으로 원래 상태 복원.
-- 관련: REQ-DOCTOR-001~005, REQ-IDEMP-002. `@MX:WARN` 대상.
+- ADBKeyBoard **런타임 다운로드**(개정 0.2.0: 번들 아님 — GPL-2.0 미재배포, 고정 참조에서 페치+검증+캐시)·설치·활성화. `pm list packages`로 중복 설치 방지(멱등).
+- `doctor --clean`/`reset`으로 원래 상태 복원(`ime disable`+`ime reset`+`uninstall`, 세션 영속 원래 IME `ime set` 복원).
+- 관련: REQ-DOCTOR-001~005(003 개정), REQ-IDEMP-002, REQ-ERR-002. `@MX:WARN` 대상.
 
 ### M7 — 다중 기기 격리 + 동시성 + 멱등성/위생 [기계적·교차 관심사]
 - serial 키 상태 격리, 임시 리소스 serial 네임스페이스.
@@ -94,6 +105,14 @@ author: manager-spec
 ### M8 — 얇은 Claude 스킬 래퍼 [최소·마지막]
 - `.claude/skills/` 하위 래퍼 1개 — CLI만 호출(adb 직접 실행 금지).
 - 관련: REQ-ARCH-004.
+
+### M9 — 요소 셀렉터 tap/focus [개정 0.2.0, 사용자 대면 흐름]
+- `normalize/element-query.ts`(순수 함수, 기기 없이 단위 테스트) — `findElement`(DFS 프리오더, `id`/`text` 정확 매칭, AND 의미, 0-기반 `--index`), `elementCenter`.
+- `cli/commands/tap.ts`: `tap --id/--text/--index` → 덤프 트리에서 매칭 요소 중심 탭. 좌표 XOR 셀렉터(`TARGET_CONFLICT`).
+- `cli/commands/text.ts`: `text ... --id/--text/--index` → 매칭 요소 포커스 후 타이핑(포커스 실패 시 입력 미전송).
+- `cli/args.ts`: `--id`/`--text`(`selectorText`)/`--index` 플래그 + `--keep-keyboard`. `cli/validators.ts`: `parseIndex`(음이 아닌 정수).
+- 오류 코드: `ELEMENT_NOT_FOUND`, `TARGET_CONFLICT`, `INVALID_INDEX`.
+- 관련: REQ-SELECT-001~005(신규). `@MX:NOTE` 대상(element-query.ts).
 
 ## §F.9 iOS 필드 매핑 표 (iOS-readiness 문서 — AC-ANDROID-006 근거)
 
@@ -120,7 +139,7 @@ idb 참고(SPEC-02 대상): `idb ui describe-all` / `idb ui describe-point`(인�
 ## §G. 안티 패턴 (피할 것)
 
 - adb XML을 정규화 없이 그대로 노출(스키마 계약 위반, iOS 플러그인 불가).
-- IME 변경 후 복원 누락(오류 경로에서 기기 입력 손상).
+- 원래 IME를 프로세스 메모리에만 추적(개정 0.2.0: `text`와 `reset`은 별도 CLI 프로세스이므로 메모리 추적은 복원 불가 → 디스크 영속 필수). ADBKeyBoard 자체를 "원래 IME"로 기록(교차 프로세스 버그).
 - 기기에 임시 파일 잔류(exec-out 스트리밍 미사용).
 - `--device` 미지정 다중 기기에서 임의의 첫 기기로 조용히 대상 선정(graceful failure 위반).
 - 설치 전 `pm list packages` 미확인으로 중복 설치.
