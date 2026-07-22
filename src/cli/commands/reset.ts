@@ -8,22 +8,44 @@
  * shaping.
  *
  * `reset` is also the ONLY place a session-based IME switch (REQ-INPUT-004
- * revised — `AdbBackend.inputText()`) is actually restored: `backend` is
- * narrowed via `instanceof AdbBackend` (an Android-specific concern kept
- * out of the backend-agnostic `DeviceBackend` interface, consistent with
- * `AdbDoctor` itself already being a concrete, non-abstracted parameter
- * here) to read and clear the per-serial tracked original IME. A backend
- * with no such concept (e.g. a future iOS/idb backend) simply skips this.
+ * revised — `AdbBackend.inputText()`) is actually restored: the resolved
+ * `AdbBackend` instance is narrowed via `instanceof` (an Android-specific
+ * concern kept out of the backend-agnostic `DeviceBackend` interface,
+ * consistent with `AdbDoctor` itself already being a concrete,
+ * non-abstracted parameter here) to read and clear the per-serial tracked
+ * original IME. `backend` may be a plain `AdbBackend` OR a `BackendRegistry`
+ * (SPEC-IOS-001, `bin.ts`) wrapping one alongside `IdbBackend` — either way,
+ * `resolveAdbBackend` below finds the real `AdbBackend` instance for the
+ * resolved serial, if any. A backend with no such concept (`IdbBackend`)
+ * simply skips this (near-no-op reset — `IdbDoctor.resetDevice`).
  */
 
 import { AdbBackend } from "../../backend/adb-backend.js";
 import type { DeviceBackend } from "../../schema/device-backend.js";
 import type { AdbDoctor } from "../../backend/doctor.js";
+import { BackendRegistry } from "../../backend/registry.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import type { ParsedCommandArgs } from "../args.js";
 import type { CommandResult } from "../envelope.js";
 import type { CommandHandler } from "./types.js";
+
+/**
+ * Resolves the concrete `AdbBackend` instance actually handling `serial`,
+ * whether `backend` is a bare `AdbBackend` or a `BackendRegistry` wrapping
+ * one (SPEC-IOS-001) — so the session-based IME restore below keeps
+ * working identically through either construction. Returns `undefined`
+ * when `serial` is owned by a non-Android backend (e.g. `IdbBackend`) or
+ * cannot be resolved.
+ */
+async function resolveAdbBackend(backend: DeviceBackend, serial: string): Promise<AdbBackend | undefined> {
+  if (backend instanceof AdbBackend) return backend;
+  if (backend instanceof BackendRegistry) {
+    const resolved = await backend.resolveBackend(serial);
+    if (resolved?.backend instanceof AdbBackend) return resolved.backend;
+  }
+  return undefined;
+}
 
 export async function performReset(
   args: ParsedCommandArgs,
@@ -35,8 +57,8 @@ export async function performReset(
   const target = resolveTargetDevice(devices, args.device);
   if (!target.ok) return failure(commandName, target.code, target.message, target.details);
 
-  const trackedOriginalIme =
-    backend instanceof AdbBackend ? await backend.getTrackedOriginalIme(target.serial) : undefined;
+  const adbBackend = await resolveAdbBackend(backend, target.serial);
+  const trackedOriginalIme = adbBackend ? await adbBackend.getTrackedOriginalIme(target.serial) : undefined;
 
   const result = await doctor.resetDevice(target.serial, trackedOriginalIme);
 
@@ -45,8 +67,8 @@ export async function performReset(
   // to restore to); on a genuine restore failure, retain the tracked entry
   // for audit / manual recovery (mirrors the prior per-call retain-on-
   // failure behavior, now scoped to the session boundary).
-  if (backend instanceof AdbBackend && trackedOriginalIme !== undefined && result.originalImeRestored !== false) {
-    await backend.clearTrackedOriginalIme(target.serial);
+  if (adbBackend && trackedOriginalIme !== undefined && result.originalImeRestored !== false) {
+    await adbBackend.clearTrackedOriginalIme(target.serial);
   }
 
   return success(commandName, { serial: target.serial, ...result });

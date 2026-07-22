@@ -4,6 +4,21 @@
  * `--device <serial>` command to the backend that owns it, so the user
  * never specifies a platform (auto-detection).
  *
+ * `BackendRegistry` ALSO implements `DeviceBackend` itself (a facade — the
+ * registry-as-backend adapter, design.md §C.4's "하위호환" bridging
+ * option): every per-serial method resolves the owning backend via
+ * `resolveBackend` and delegates the call to it. This is what lets
+ * `bin.ts` construct one `BackendRegistry` and pass it anywhere a single
+ * `DeviceBackend` was previously expected (`runCli(argv, registry, doctor)`)
+ * — `cli/router.ts` and the command handlers (which already only see the
+ * `DeviceBackend` interface, and `device-targeting.ts`'s
+ * `resolveTargetDevice`, which already operates generically over
+ * `DeviceInfo[]`) need NO signature changes to gain cross-platform
+ * routing, since by the time a command handler calls e.g.
+ * `backend.tap(target.serial, x, y)`, `target.serial` was already
+ * validated against the registry's own merged `listDevices()` output via
+ * `resolveTargetDevice`.
+ *
  * @MX:ANCHOR — single point of serial->backend routing. Every device
  * command depends on this class resolving the correct backend.
  * @MX:REASON — REQ-IOS-ARCH-002 requires transparent cross-platform
@@ -11,6 +26,7 @@
  * backend or fail to degrade gracefully when a tool (adb/idb) is missing.
  */
 
+import type { CommonElement } from "../schema/common-element.js";
 import type { DeviceBackend, DeviceInfo, DevicePlatform } from "../schema/device-backend.js";
 
 /** One backend registered with the registry, plus its availability check. */
@@ -21,7 +37,7 @@ export interface RegisteredBackend {
   isAvailable(): Promise<boolean>;
 }
 
-export class BackendRegistry {
+export class BackendRegistry implements DeviceBackend {
   constructor(private readonly backends: RegisteredBackend[]) {}
 
   /**
@@ -85,5 +101,64 @@ export class BackendRegistry {
     if (!owner) return null;
 
     return { backend: owner.backend, device };
+  }
+
+  /**
+   * Resolves the owning backend for `serial` or throws — used by the
+   * `DeviceBackend` facade methods below, where the caller (a command
+   * handler) has already validated `serial` via `resolveTargetDevice`
+   * against this registry's own `listDevices()` output, so this should
+   * always succeed in practice. Throwing here (rather than silently
+   * picking a fallback) surfaces a `BACKEND_COMMAND_FAILED` envelope if it
+   * somehow does not, instead of misrouting to the wrong platform.
+   */
+  private async resolveOwningBackend(serial: string): Promise<DeviceBackend> {
+    const resolved = await this.resolveBackend(serial);
+    if (!resolved) {
+      throw new Error(`No backend owns device serial '${serial}'.`);
+    }
+    return resolved.backend;
+  }
+
+  // ---- DeviceBackend facade (registry-as-backend adapter) ----
+
+  /** Facade for `DeviceBackend.listDevices` — identical to `listAllDevices()`. */
+  async listDevices(): Promise<DeviceInfo[]> {
+    return this.listAllDevices();
+  }
+
+  async dumpUiHierarchy(serial: string): Promise<CommonElement[]> {
+    const backend = await this.resolveOwningBackend(serial);
+    return backend.dumpUiHierarchy(serial);
+  }
+
+  async screenshot(serial: string): Promise<Uint8Array> {
+    const backend = await this.resolveOwningBackend(serial);
+    return backend.screenshot(serial);
+  }
+
+  async tap(serial: string, x: number, y: number): Promise<void> {
+    const backend = await this.resolveOwningBackend(serial);
+    return backend.tap(serial, x, y);
+  }
+
+  async inputText(serial: string, text: string, options?: { hideKeyboardAfter?: boolean }): Promise<void> {
+    const backend = await this.resolveOwningBackend(serial);
+    return backend.inputText(serial, text, options);
+  }
+
+  async sendKeyEvent(serial: string, keyName: string): Promise<void> {
+    const backend = await this.resolveOwningBackend(serial);
+    return backend.sendKeyEvent(serial, keyName);
+  }
+
+  async launchApp(serial: string, packageId: string): Promise<void> {
+    const backend = await this.resolveOwningBackend(serial);
+    return backend.launchApp(serial, packageId);
+  }
+
+  async stopApp(serial: string, packageId: string): Promise<void> {
+    const backend = await this.resolveOwningBackend(serial);
+    return backend.stopApp(serial, packageId);
   }
 }

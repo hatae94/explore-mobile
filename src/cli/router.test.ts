@@ -9,10 +9,25 @@ import type { ApkAcquirer } from "../backend/apk-downloader.js";
 import { AdbDoctor } from "../backend/doctor.js";
 import { AdbKeyboardInstallFailedError, ImeRestoreFailedError } from "../backend/ime-errors.js";
 import { ImeSessionStore } from "../backend/ime-session-store.js";
+import { BackendRegistry } from "../backend/registry.js";
 import type { ProcessExecutor } from "../backend/process-executor.js";
 import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
 import { normalizeUiAutomatorXml } from "../normalize/uiautomator.js";
 import { runCli } from "./router.js";
+
+/** A minimal mock iOS DeviceBackend, used only to populate a BackendRegistry's iOS slot in registry-wrapping regression tests. */
+function createMockIosBackend(): DeviceBackend {
+  return {
+    listDevices: vi.fn().mockResolvedValue([]),
+    dumpUiHierarchy: vi.fn().mockResolvedValue([]),
+    screenshot: vi.fn().mockResolvedValue(new Uint8Array()),
+    tap: vi.fn().mockResolvedValue(undefined),
+    inputText: vi.fn().mockResolvedValue(undefined),
+    sendKeyEvent: vi.fn().mockResolvedValue(undefined),
+    launchApp: vi.fn().mockResolvedValue(undefined),
+    stopApp: vi.fn().mockResolvedValue(undefined),
+  };
+}
 
 function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -959,6 +974,41 @@ describe("runCli", () => {
 
         // The session is cleared once `reset` has restored it.
         await expect(backend.getTrackedOriginalIme(serial)).resolves.toBeUndefined();
+      });
+
+      it("still restores the per-serial original IME when `backend` is a BackendRegistry wrapping the AdbBackend (SPEC-IOS-001, bin.ts's real construction — regression guard)", async () => {
+        const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
+        const serial = "R58N90ABCDE";
+
+        const adbExec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+          if (args[0] === "devices") return devicesListResult(serial);
+          if (args[0] === "-s" && args[2] === "shell" && args[3] === "getprop") {
+            return { stdout: Buffer.from("14\n", "utf-8"), stderr: Buffer.alloc(0), exitCode: 0 };
+          }
+          if (args[3] === "settings") {
+            return { stdout: Buffer.from(`${originalIme}\n`, "utf-8"), stderr: Buffer.alloc(0), exitCode: 0 };
+          }
+          return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 };
+        });
+
+        const adbBackend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeStorePath));
+        const registry = new BackendRegistry([
+          { platform: "android", backend: adbBackend, isAvailable: async () => true },
+          { platform: "ios", backend: createMockIosBackend(), isAvailable: async () => false },
+        ]);
+        const doctor = new AdbDoctor(adbExec);
+
+        await adbBackend.inputText(serial, "안녕");
+        await expect(adbBackend.getTrackedOriginalIme(serial)).resolves.toBe(originalIme);
+
+        const result = await runCli(["reset"], registry, doctor);
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          const data = result.data as { originalImeRestored?: boolean };
+          expect(data.originalImeRestored).toBe(true);
+        }
+        await expect(adbBackend.getTrackedOriginalIme(serial)).resolves.toBeUndefined();
       });
 
       it("restores the per-serial original IME even when the `text` call and the `reset` call use SEPARATE AdbBackend instances (the reported cross-process bug)", async () => {

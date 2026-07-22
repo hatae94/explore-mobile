@@ -148,4 +148,62 @@ describe("BackendRegistry", () => {
       await expect(registry.resolveBackend(collidingSerial)).resolves.toBeNull();
     });
   });
+
+  describe("DeviceBackend facade (registry-as-backend adapter, design.md §C.4)", () => {
+    it("listDevices() delegates to listAllDevices()", async () => {
+      const android = registeredBackend("android", [androidDevice()]);
+      const ios = registeredBackend("ios", [iosDevice()]);
+      const registry: DeviceBackend = new BackendRegistry([android, ios]);
+
+      await expect(registry.listDevices()).resolves.toEqual([androidDevice(), iosDevice()]);
+    });
+
+    it("dumpUiHierarchy(serial) routes to the owning backend", async () => {
+      const android = registeredBackend("android", [androidDevice()]);
+      const ios = registeredBackend("ios", [iosDevice()]);
+      const registry: DeviceBackend = new BackendRegistry([android, ios]);
+
+      await registry.dumpUiHierarchy(iosDevice().serial);
+
+      expect(ios.backend.dumpUiHierarchy).toHaveBeenCalledWith(iosDevice().serial);
+      expect(android.backend.dumpUiHierarchy).not.toHaveBeenCalled();
+    });
+
+    it("tap(serial, x, y) routes to the owning backend with the exact arguments", async () => {
+      const android = registeredBackend("android", [androidDevice()]);
+      const ios = registeredBackend("ios", [iosDevice()]);
+      const registry: DeviceBackend = new BackendRegistry([android, ios]);
+
+      await registry.tap(androidDevice().serial, 10, 20);
+
+      expect(android.backend.tap).toHaveBeenCalledWith(androidDevice().serial, 10, 20);
+      expect(ios.backend.tap).not.toHaveBeenCalled();
+    });
+
+    it("screenshot/inputText/sendKeyEvent/launchApp/stopApp all route to the owning backend", async () => {
+      const android = registeredBackend("android", [androidDevice()]);
+      const ios = registeredBackend("ios", [iosDevice()]);
+      const registry: DeviceBackend = new BackendRegistry([android, ios]);
+      const serial = iosDevice().serial;
+
+      await registry.screenshot(serial);
+      await registry.inputText(serial, "hello", { hideKeyboardAfter: true });
+      await registry.sendKeyEvent(serial, "enter");
+      await registry.launchApp(serial, "com.apple.Preferences");
+      await registry.stopApp(serial, "com.apple.Preferences");
+
+      expect(ios.backend.screenshot).toHaveBeenCalledWith(serial);
+      expect(ios.backend.inputText).toHaveBeenCalledWith(serial, "hello", { hideKeyboardAfter: true });
+      expect(ios.backend.sendKeyEvent).toHaveBeenCalledWith(serial, "enter");
+      expect(ios.backend.launchApp).toHaveBeenCalledWith(serial, "com.apple.Preferences");
+      expect(ios.backend.stopApp).toHaveBeenCalledWith(serial, "com.apple.Preferences");
+    });
+
+    it("throws (surfacing as BACKEND_COMMAND_FAILED at the CLI layer) when no backend owns the serial", async () => {
+      const android = registeredBackend("android", [androidDevice()]);
+      const registry: DeviceBackend = new BackendRegistry([android]);
+
+      await expect(registry.tap("does-not-exist", 1, 1)).rejects.toThrow(/No backend owns/);
+    });
+  });
 });
