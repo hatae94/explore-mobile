@@ -166,6 +166,128 @@ describe("runCli", () => {
     });
   });
 
+  describe("tap --id/--text element-selector targeting (new capability)", () => {
+    it("taps the computed center of the element matched by --id, reusing the dump/normalize tree-fetch path", async () => {
+      const backend = createMockBackend();
+
+      const result = await runCli(["tap", "--id", "btn_ok"], backend);
+
+      expect(result).toEqual({
+        ok: true,
+        command: "tap",
+        data: { serial: "R58N90ABCDE", x: 5, y: 5, selector: { id: "btn_ok" } },
+      });
+      expect(backend.tap).toHaveBeenCalledWith("R58N90ABCDE", 5, 5);
+    });
+
+    it("taps the computed center of the element matched by --text", async () => {
+      const backend = createMockBackend();
+      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        '<hierarchy><node class="android.widget.Button" resource-id="btn_submit" text="Submit" clickable="true" enabled="true" bounds="[100,200][140,240]" /></hierarchy>',
+      );
+
+      const result = await runCli(["tap", "--text", "Submit"], backend);
+
+      expect(result).toEqual({
+        ok: true,
+        command: "tap",
+        data: { serial: "R58N90ABCDE", x: 120, y: 220, selector: { text: "Submit" } },
+      });
+      expect(backend.tap).toHaveBeenCalledWith("R58N90ABCDE", 120, 220);
+    });
+
+    it("selects the Nth match (0-based) via --index when multiple elements share the same id", async () => {
+      const backend = createMockBackend();
+      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        "<hierarchy>" +
+          '<node class="a" resource-id="row" clickable="true" enabled="true" bounds="[0,0][10,10]" />' +
+          '<node class="a" resource-id="row" clickable="true" enabled="true" bounds="[0,100][10,110]" />' +
+          "</hierarchy>",
+      );
+
+      const result = await runCli(["tap", "--id", "row", "--index", "1"], backend);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data).toEqual({ serial: "R58N90ABCDE", x: 5, y: 105, selector: { id: "row", index: 1 } });
+      }
+      expect(backend.tap).toHaveBeenCalledWith("R58N90ABCDE", 5, 105);
+    });
+
+    it("still taps a matched but non-tappable element, surfacing a warning instead of refusing", async () => {
+      const backend = createMockBackend();
+      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        '<hierarchy><node class="a" resource-id="disabled_btn" clickable="false" enabled="false" bounds="[0,0][10,10]" /></hierarchy>',
+      );
+
+      const result = await runCli(["tap", "--id", "disabled_btn"], backend);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        const data = result.data as { warnings?: string[] };
+        expect(data.warnings?.[0]).toMatch(/not tappable/i);
+      }
+      expect(backend.tap).toHaveBeenCalledWith("R58N90ABCDE", 5, 5);
+    });
+
+    it("returns a graceful ELEMENT_NOT_FOUND (carrying the selector) and does not tap when no element matches", async () => {
+      const backend = createMockBackend();
+
+      const result = await runCli(["tap", "--id", "does_not_exist"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("ELEMENT_NOT_FOUND");
+        expect(result.error.details?.["selector"]).toEqual({ id: "does_not_exist" });
+      }
+      expect(backend.tap).not.toHaveBeenCalled();
+    });
+
+    it("returns a graceful TARGET_CONFLICT (coords XOR selector) without resolving a device or calling the backend", async () => {
+      const backend = createMockBackend();
+
+      const result = await runCli(["tap", "10", "20", "--id", "btn_ok"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("TARGET_CONFLICT");
+      expect(backend.listDevices).not.toHaveBeenCalled();
+      expect(backend.tap).not.toHaveBeenCalled();
+    });
+
+    it("returns a graceful INVALID_INDEX when --index is not a non-negative integer", async () => {
+      const backend = createMockBackend();
+
+      const result = await runCli(["tap", "--id", "btn_ok", "--index", "abc"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("INVALID_INDEX");
+      expect(backend.tap).not.toHaveBeenCalled();
+    });
+
+    it("degrades a dumpUiHierarchy rejection in selector mode to a graceful ADB_COMMAND_FAILED envelope", async () => {
+      const backend = createMockBackend();
+      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("adb: exec-out cat failed"),
+      );
+
+      const result = await runCli(["tap", "--id", "btn_ok"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+    });
+
+    it("returns a graceful device-targeting error (not ELEMENT_NOT_FOUND) when the device is ambiguous in selector mode", async () => {
+      const devices = [device({ serial: "A" }), device({ serial: "B" })];
+      const backend = createMockBackend(devices);
+
+      const result = await runCli(["tap", "--id", "btn_ok"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("AMBIGUOUS_DEVICE");
+      expect(backend.dumpUiHierarchy).not.toHaveBeenCalled();
+    });
+  });
+
   describe("key", () => {
     it("invokes the backend for a supported alias", async () => {
       const backend = createMockBackend();
@@ -484,6 +606,86 @@ describe("runCli", () => {
       await runCli(["text", "hello", "--keep-keyboard"], backend);
 
       expect(backend.inputText).toHaveBeenCalledWith("R58N90ABCDE", "hello", { hideKeyboardAfter: false });
+    });
+  });
+
+  describe("text --id/--text focus-before-type (new capability)", () => {
+    it("focus-taps the element matched by --id, then sends the input text (tap happens before typing)", async () => {
+      const backend = createMockBackend();
+      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        '<hierarchy><node class="android.widget.EditText" resource-id="et_name" clickable="true" enabled="true" bounds="[40,220][1040,320]" /></hierarchy>',
+      );
+
+      const result = await runCli(["text", "hello", "--id", "et_name"], backend);
+
+      expect(result).toEqual({ ok: true, command: "text", data: { serial: "R58N90ABCDE" } });
+      expect(backend.tap).toHaveBeenCalledWith("R58N90ABCDE", 540, 270);
+      expect(backend.inputText).toHaveBeenCalledWith("R58N90ABCDE", "hello", { hideKeyboardAfter: true });
+
+      const tapOrder = (backend.tap as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!;
+      const inputOrder = (backend.inputText as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!;
+      expect(tapOrder).toBeLessThan(inputOrder);
+    });
+
+    it("focus-taps the element matched by --text (content-desc-derived), then sends the input text", async () => {
+      const backend = createMockBackend();
+      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        '<hierarchy><node class="android.widget.EditText" resource-id="et_search" content-desc="Search field" clickable="true" enabled="true" bounds="[0,0][100,100]" /></hierarchy>',
+      );
+
+      const result = await runCli(["text", "query", "--text", "Search field"], backend);
+
+      expect(result).toEqual({ ok: true, command: "text", data: { serial: "R58N90ABCDE" } });
+      expect(backend.tap).toHaveBeenCalledWith("R58N90ABCDE", 50, 50);
+      expect(backend.inputText).toHaveBeenCalledWith("R58N90ABCDE", "query", { hideKeyboardAfter: true });
+    });
+
+    it("returns a graceful ELEMENT_NOT_FOUND and does NOT tap or type when the focus selector matches nothing", async () => {
+      const backend = createMockBackend();
+
+      const result = await runCli(["text", "hello", "--id", "does_not_exist"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("ELEMENT_NOT_FOUND");
+        expect(result.error.details?.["selector"]).toEqual({ id: "does_not_exist" });
+      }
+      expect(backend.tap).not.toHaveBeenCalled();
+      expect(backend.inputText).not.toHaveBeenCalled();
+    });
+
+    it("preserves bare `text` behavior (types into whatever is already focused) when no selector is given", async () => {
+      const backend = createMockBackend();
+
+      const result = await runCli(["text", "hello"], backend);
+
+      expect(result).toEqual({ ok: true, command: "text", data: { serial: "R58N90ABCDE" } });
+      expect(backend.dumpUiHierarchy).not.toHaveBeenCalled();
+      expect(backend.tap).not.toHaveBeenCalled();
+      expect(backend.inputText).toHaveBeenCalledWith("R58N90ABCDE", "hello", { hideKeyboardAfter: true });
+    });
+
+    it("returns a graceful INVALID_INDEX when --index is not a non-negative integer, without typing", async () => {
+      const backend = createMockBackend();
+
+      const result = await runCli(["text", "hello", "--id", "et_name", "--index", "abc"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("INVALID_INDEX");
+      expect(backend.inputText).not.toHaveBeenCalled();
+    });
+
+    it("degrades a dumpUiHierarchy rejection during focus mode to a graceful ADB_COMMAND_FAILED envelope, without typing", async () => {
+      const backend = createMockBackend();
+      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("adb: exec-out cat failed"),
+      );
+
+      const result = await runCli(["text", "hello", "--id", "et_name"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+      expect(backend.inputText).not.toHaveBeenCalled();
     });
   });
 

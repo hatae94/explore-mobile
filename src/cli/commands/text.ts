@@ -1,18 +1,80 @@
 /**
- * `text <string>` command (REQ-INPUT-002/003/004, M5).
+ * `text <string>` command (REQ-INPUT-002/003/004, M5), plus
+ * `text <string> --id <id>` / `text <string> --text <selector>` (+
+ * optional `--index <n>`) focus-before-type: taps an element by selector
+ * to focus it before typing (new capability beyond SPEC-ANDROID-001's
+ * original coordinate-only primitives — flagged as a spec-scope note
+ * alongside this change).
  *
  * Delegates entirely to `DeviceBackend.inputText()` for the ASCII-vs-
  * Unicode routing and the IME lifecycle — this handler's only job is
- * device targeting, forwarding `--keep-keyboard` (default: hide the
- * keyboard after send, REQ-INPUT-004 revised), and translating the
- * backend's outcome (success, a distinguished IME-restore failure, or a
- * generic adb failure) into the standard JSON envelope.
+ * device targeting, optional selector-based focus, forwarding
+ * `--keep-keyboard` (default: hide the keyboard after send, REQ-INPUT-004
+ * revised), and translating the outcome (success, a distinguished
+ * IME-restore failure, or a generic adb failure) into the standard JSON
+ * envelope. When a focus selector is given but not found, the input is
+ * NOT sent — the caller gets a graceful `ELEMENT_NOT_FOUND` instead of
+ * typing into whatever happened to be focused already.
  */
 
+import { elementCenter, findElement, type ElementSelector } from "../../normalize/element-query.js";
+import { normalizeUiAutomatorXml } from "../../normalize/uiautomator.js";
 import { AdbKeyboardInstallFailedError, ImeRestoreFailedError } from "../../backend/ime-errors.js";
+import type { DeviceBackend } from "../../schema/device-backend.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
+import type { CommandError } from "../envelope.js";
+import { parseIndex } from "../validators.js";
 import { errorMessage, type CommandHandler } from "./types.js";
+import type { ParsedCommandArgs } from "../args.js";
+
+/**
+ * Fetches the current UI tree (reusing the same dump + normalize path
+ * `dump` uses), finds the element matching the given focus selector, and
+ * taps its center to focus it. Returns a `CommandError` when the selector
+ * is invalid or unmatched (caller MUST NOT proceed to type in that case);
+ * returns `null` on a successful focus-tap.
+ */
+async function focusElementBySelector(
+  args: ParsedCommandArgs,
+  backend: DeviceBackend,
+  serial: string,
+): Promise<CommandError | null> {
+  const index = args.index !== undefined ? parseIndex(args.index) : undefined;
+  if (args.index !== undefined && index === undefined) {
+    return failure("text", "INVALID_INDEX", "text --index requires a non-negative integer.", {
+      received: args.index,
+    });
+  }
+
+  const selector: ElementSelector = {
+    ...(args.id !== undefined ? { id: args.id } : {}),
+    ...(args.selectorText !== undefined ? { text: args.selectorText } : {}),
+    ...(index !== undefined ? { index } : {}),
+  };
+
+  let xml: string;
+  try {
+    xml = await backend.dumpUiHierarchy(serial);
+  } catch (err) {
+    return failure("text", "ADB_COMMAND_FAILED", errorMessage(err));
+  }
+
+  const elements = normalizeUiAutomatorXml(xml);
+  const element = findElement(elements, selector);
+  if (element === null) {
+    return failure("text", "ELEMENT_NOT_FOUND", "No element matched the given focus selector.", { selector });
+  }
+
+  const { x, y } = elementCenter(element);
+  try {
+    await backend.tap(serial, x, y);
+  } catch (err) {
+    return failure("text", "ADB_COMMAND_FAILED", errorMessage(err));
+  }
+
+  return null;
+}
 
 export const textCommand: CommandHandler = async (args, backend) => {
   const text = args.positionals[0];
@@ -23,6 +85,12 @@ export const textCommand: CommandHandler = async (args, backend) => {
   const devices = await backend.listDevices();
   const target = resolveTargetDevice(devices, args.device);
   if (!target.ok) return failure("text", target.code, target.message, target.details);
+
+  const hasSelector = args.id !== undefined || args.selectorText !== undefined;
+  if (hasSelector) {
+    const focusError = await focusElementBySelector(args, backend, target.serial);
+    if (focusError !== null) return focusError;
+  }
 
   try {
     await backend.inputText(target.serial, text, { hideKeyboardAfter: !args.keepKeyboard });

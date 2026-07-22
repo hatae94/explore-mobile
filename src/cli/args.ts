@@ -17,14 +17,21 @@ export interface ParsedCommandArgs {
   clean: boolean;
   /** `text --keep-keyboard`: opts out of the default post-send soft-keyboard dismissal (REQ-INPUT-004 revised, real-device UX). */
   keepKeyboard: boolean;
+  /** `tap`/`text --id <resource-id>`: selector-mode element target, matched against `CommonElement.id` (element-selector interaction, new capability — see element-query.ts). */
+  id: string | undefined;
+  /** `tap`/`text --text <label>`: selector-mode element target, matched against `CommonElement.text` (also matches content-desc-derived text). Named `selectorText` (not `text`) to stay unambiguous next to `text`'s own positional "string to type". */
+  selectorText: string | undefined;
+  /** `tap`/`text --index <n>`: 0-based match index when a selector matches more than one element. Kept as a raw string here (parsed by the command handler) to match the existing coordinate-parsing pattern. */
+  index: string | undefined;
 }
 
 /**
  * Parses a subcommand's argv (everything after the command word) into
  * positionals plus the shared `--device <serial>` (REQ-MULTIDEV-001),
  * `--out <path>` (screenshot host-file option), `--yes`/`--install`
- * (doctor auto-install consent), `--clean` (doctor --clean == reset), and
- * `--keep-keyboard` (text: skip the default post-send keyboard dismissal)
+ * (doctor auto-install consent), `--clean` (doctor --clean == reset),
+ * `--keep-keyboard` (text: skip the default post-send keyboard dismissal),
+ * and `--id`/`--text`/`--index` (tap/text: element-selector targeting)
  * options. Throws on unrecognized flags; callers (the router) convert
  * that into a graceful JSON error rather than letting it crash the
  * process.
@@ -39,6 +46,9 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
       install: { type: "boolean" },
       clean: { type: "boolean" },
       "keep-keyboard": { type: "boolean" },
+      id: { type: "string" },
+      text: { type: "string" },
+      index: { type: "string" },
     },
     allowPositionals: true,
   });
@@ -50,5 +60,8 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
     yes: values.yes === true || values.install === true,
     clean: values.clean === true,
     keepKeyboard: values["keep-keyboard"] === true,
+    id: typeof values.id === "string" ? values.id : undefined,
+    selectorText: typeof values.text === "string" ? values.text : undefined,
+    index: typeof values.index === "string" ? values.index : undefined,
   };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isValidPackageName, parseCoordinate } from "./validators.js";
+import { isValidPackageName, parseCoordinate, parseIndex } from "./validators.js";
 
 describe("isValidPackageName", () => {
   it("accepts reverse-DNS-style dotted package names", () => {
@@ -30,5 +30,18 @@ describe("parseCoordinate", () => {
   it("rejects a digit string so large it overflows to a non-finite number", () => {
     const enormous = "9".repeat(400);
     expect(parseCoordinate(enormous)).toBeUndefined();
+  });
+});
+
+describe("parseIndex", () => {
+  it("parses a non-negative integer string", () => {
+    expect(parseIndex("0")).toBe(0);
+    expect(parseIndex("3")).toBe(3);
+  });
+
+  it("rejects non-digit strings", () => {
+    expect(parseIndex("abc")).toBeUndefined();
+    expect(parseIndex("-1")).toBeUndefined();
+    expect(parseIndex("1.5")).toBeUndefined();
   });
 });

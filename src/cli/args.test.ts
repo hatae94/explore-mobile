@@ -12,6 +12,17 @@ describe("parseCommandArgs", () => {
     expect(result.yes).toBe(false);
     expect(result.clean).toBe(false);
     expect(result.keepKeyboard).toBe(false);
+    expect(result.id).toBeUndefined();
+    expect(result.selectorText).toBeUndefined();
+    expect(result.index).toBeUndefined();
+  });
+
+  it("parses --id/--text/--index (element-selector targeting, new capability)", () => {
+    const result = parseCommandArgs(["--id", "btn_ok", "--text", "OK", "--index", "2"]);
+
+    expect(result.id).toBe("btn_ok");
+    expect(result.selectorText).toBe("OK");
+    expect(result.index).toBe("2");
   });
 
   it("recognizes --yes as consent (REQ-DOCTOR-002)", () => {

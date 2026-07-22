@@ -13,9 +13,19 @@ export function isValidPackageName(value: string): boolean {
   return PACKAGE_NAME_PATTERN.test(value);
 }
 
-/** Parses a coordinate string into a non-negative integer, or undefined if invalid. */
-export function parseCoordinate(value: string): number | undefined {
+/** Parses a string as a non-negative integer, or undefined if invalid. */
+function parseNonNegativeInteger(value: string): number | undefined {
   if (!/^\d+$/.test(value)) return undefined;
   const n = Number(value);
   return Number.isInteger(n) && n >= 0 ? n : undefined;
+}
+
+/** Parses a coordinate string into a non-negative integer, or undefined if invalid. */
+export function parseCoordinate(value: string): number | undefined {
+  return parseNonNegativeInteger(value);
+}
+
+/** Parses a `--index` selector-match string into a non-negative integer, or undefined if invalid (element-selector interaction, new capability). */
+export function parseIndex(value: string): number | undefined {
+  return parseNonNegativeInteger(value);
 }
