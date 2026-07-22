@@ -65,8 +65,15 @@ export interface DeviceBackend {
   /** Taps the given device-pixel coordinate (REQ-INPUT-001). */
   tap(serial: string, x: number, y: number): Promise<void>;
 
-  /** Types text into the currently focused input (REQ-INPUT-002/003). */
-  inputText(serial: string, text: string): Promise<void>;
+  /**
+   * Types text into the currently focused input (REQ-INPUT-002/003).
+   *
+   * `options.hideKeyboardAfter` (default true) best-effort dismisses the
+   * soft keyboard after sending, so the app's keyboard-avoiding layout
+   * re-triggers on real devices — pass `false` (CLI: `--keep-keyboard`)
+   * to leave the keyboard open.
+   */
+  inputText(serial: string, text: string, options?: { hideKeyboardAfter?: boolean }): Promise<void>;
 
   /** Sends a named key event, e.g. "back", "home" (REQ-INPUT-005). */
   sendKeyEvent(serial: string, keyName: string): Promise<void>;

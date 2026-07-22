@@ -15,13 +15,16 @@ export interface ParsedCommandArgs {
   yes: boolean;
   /** `doctor --clean` == `reset` (REQ-DOCTOR-004). */
   clean: boolean;
+  /** `text --keep-keyboard`: opts out of the default post-send soft-keyboard dismissal (REQ-INPUT-004 revised, real-device UX). */
+  keepKeyboard: boolean;
 }
 
 /**
  * Parses a subcommand's argv (everything after the command word) into
  * positionals plus the shared `--device <serial>` (REQ-MULTIDEV-001),
  * `--out <path>` (screenshot host-file option), `--yes`/`--install`
- * (doctor auto-install consent), and `--clean` (doctor --clean == reset)
+ * (doctor auto-install consent), `--clean` (doctor --clean == reset), and
+ * `--keep-keyboard` (text: skip the default post-send keyboard dismissal)
  * options. Throws on unrecognized flags; callers (the router) convert
  * that into a graceful JSON error rather than letting it crash the
  * process.
@@ -35,6 +38,7 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
       yes: { type: "boolean" },
       install: { type: "boolean" },
       clean: { type: "boolean" },
+      "keep-keyboard": { type: "boolean" },
     },
     allowPositionals: true,
   });
@@ -45,5 +49,6 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
     out: typeof values.out === "string" ? values.out : undefined,
     yes: values.yes === true || values.install === true,
     clean: values.clean === true,
+    keepKeyboard: values["keep-keyboard"] === true,
   };
 }

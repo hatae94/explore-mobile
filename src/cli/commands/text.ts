@@ -3,9 +3,10 @@
  *
  * Delegates entirely to `DeviceBackend.inputText()` for the ASCII-vs-
  * Unicode routing and the IME lifecycle — this handler's only job is
- * device targeting and translating the backend's outcome (success, a
- * distinguished IME-restore failure, or a generic adb failure) into the
- * standard JSON envelope.
+ * device targeting, forwarding `--keep-keyboard` (default: hide the
+ * keyboard after send, REQ-INPUT-004 revised), and translating the
+ * backend's outcome (success, a distinguished IME-restore failure, or a
+ * generic adb failure) into the standard JSON envelope.
  */
 
 import { ImeRestoreFailedError } from "../../backend/ime-errors.js";
@@ -24,7 +25,7 @@ export const textCommand: CommandHandler = async (args, backend) => {
   if (!target.ok) return failure("text", target.code, target.message, target.details);
 
   try {
-    await backend.inputText(target.serial, text);
+    await backend.inputText(target.serial, text, { hideKeyboardAfter: !args.keepKeyboard });
   } catch (err) {
     if (err instanceof ImeRestoreFailedError) {
       // REQ-ERR-001 / AC-ANDROID-015: never fail silently — surface the

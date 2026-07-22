@@ -19,8 +19,7 @@ import { isKeyAlias } from "../schema/key-alias.js";
 import type { AdbExecResult, AdbExecutor } from "./adb-executor.js";
 import { spawnAdb } from "./adb-executor.js";
 import { parseAdbDevicesList } from "./device-list-parser.js";
-import { ImeRestoreFailedError } from "./ime-errors.js";
-import { ANDROID_KEYCODE } from "./keycodes.js";
+import { ANDROID_KEYCODE, KEYCODE_ESCAPE } from "./keycodes.js";
 import { PerSerialState } from "./per-serial-state.js";
 
 const CONNECTED_STATES = new Set(["device", "offline", "unauthorized"]);
@@ -52,10 +51,6 @@ function assertSuccess(result: AdbExecResult, context: string): void {
   }
 }
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 /** True when `text` requires no IME switch — `adb shell input text` handles ASCII natively (REQ-INPUT-002). */
 function isAsciiOnly(text: string): boolean {
   // eslint-disable-next-line no-control-regex -- intentional 0x00-0x7F ASCII range check
@@ -79,27 +74,46 @@ function shellSingleQuoteForDevice(text: string): string {
 
 export class AdbBackend implements DeviceBackend {
   /**
-   * Per-serial audit/diagnostic record of the most recently observed
-   * original IME for a non-ASCII `inputText()` call that is either
-   * currently mid-flight or whose restore step failed (REQ-MULTIDEV-003).
-   * Restore CORRECTNESS never depends on this map — each `inputText()`
-   * call independently fetches and restores within itself, so it is safe
-   * by construction even without this map; this exists purely so
-   * per-serial state is explicit, testable, and available for audit/
-   * future manual-recovery tooling rather than living only as an
-   * implicit local variable.
+   * Per-serial SESSION state (REQ-MULTIDEV-003, REQ-INPUT-004 revised):
+   * once a non-ASCII `inputText()` call switches a serial's active IME to
+   * ADBKeyBoard, the entry recorded here is the ORIGINAL IME that was
+   * active before the switch (empty string when unknown). Its presence
+   * (via `PerSerialState.has()`) is also the session flag itself — as
+   * long as an entry exists for a serial, ADBKeyBoard is considered the
+   * still-active IME for that serial and subsequent non-ASCII calls skip
+   * re-switching. The entry is intentionally NOT cleared per-call: on a
+   * real device, restoring the IME after every single `text` call causes
+   * visible soft-keyboard flicker and defeats the app's keyboard-avoiding
+   * layout re-trigger. Restore instead happens ONLY via `reset` (see
+   * `getTrackedOriginalIme()` / `clearTrackedOriginalIme()`, consumed by
+   * `cli/commands/reset.ts`).
    */
   private readonly originalImeBySerial = new PerSerialState<string>();
 
   constructor(private readonly exec: AdbExecutor = spawnAdb) {}
 
   /**
-   * Diagnostic accessor (REQ-MULTIDEV-003): the original IME tracked for
-   * `serial`, if a non-ASCII `inputText()` call is mid-flight or its
-   * restore failed. `undefined` once idle / after a successful restore.
+   * Accessor (REQ-MULTIDEV-003): the original IME tracked for `serial`,
+   * i.e. the IME that was active immediately before a non-ASCII
+   * `inputText()` call first switched this serial to ADBKeyBoard this
+   * session. Returns `undefined` when no such session is active (never
+   * switched, or already restored via `clearTrackedOriginalIme()`).
+   * Returns `""` when a session IS active but the original IME could not
+   * be determined (edge case — acceptance.md §D.1).
    */
   getTrackedOriginalIme(serial: string): string | undefined {
     return this.originalImeBySerial.get(serial);
+  }
+
+  /**
+   * Clears the session-tracked original IME for `serial` (REQ-INPUT-004
+   * revised). Called once `reset`/`doctor --clean` has taken
+   * responsibility for restoring the device's IME state — after this
+   * call, the next non-ASCII `inputText()` on this serial will switch to
+   * ADBKeyBoard again (fresh session).
+   */
+  clearTrackedOriginalIme(serial: string): void {
+    this.originalImeBySerial.delete(serial);
   }
 
   async listDevices(): Promise<DeviceInfo[]> {
@@ -176,17 +190,24 @@ export class AdbBackend implements DeviceBackend {
 
   /**
    * @MX:WARN — switches the device's active IME to ADBKeyBoard for
-   * non-ASCII input, then ALWAYS attempts to restore the original IME —
-   * including when the send itself throws. A restore failure leaves the
-   * device's keyboard stuck on ADBKeyBoard; it is surfaced distinctly via
-   * {@link ImeRestoreFailedError} (never silently swallowed) so the caller
-   * can report the original IME id for manual recovery.
-   * @MX:REASON — REQ-INPUT-004 / REQ-IDEMP-004 require restore-on-error as
-   * a hard guarantee, and REQ-ERR-001 requires restore FAILURE to be
-   * reported (not silently ignored) — this method is the single place
-   * that guarantee is implemented.
+   * non-ASCII input, SESSION-scoped per serial: the switch happens only
+   * once per serial (tracked via `originalImeBySerial`) and is never
+   * restored per-call. Restore happens ONLY via `reset`/`doctor --clean`
+   * (see `getTrackedOriginalIme()` / `clearTrackedOriginalIme()`). A
+   * best-effort keyboard-hide (KEYCODE_ESCAPE) runs after every send
+   * unless `options.hideKeyboardAfter` is `false`.
+   * @MX:REASON — REQ-INPUT-004 (revised, real-device UX fix): a per-call
+   * IME restore causes visible soft-keyboard flicker and prevents the
+   * app's keyboard-avoiding layout from re-triggering on a real device.
+   * Session-scoping the switch plus hiding the keyboard after send are
+   * the user-approved fix; `reset` remains the single place restore is
+   * guaranteed to be attempted, keeping REQ-IDEMP-004's "always
+   * eventually restored" guarantee intact at the session boundary
+   * instead of the per-call boundary.
    */
-  async inputText(serial: string, text: string): Promise<void> {
+  async inputText(serial: string, text: string, options?: { hideKeyboardAfter?: boolean }): Promise<void> {
+    const hideKeyboardAfter = options?.hideKeyboardAfter ?? true;
+
     if (isAsciiOnly(text)) {
       // Fast path (REQ-INPUT-002): no IME switch needed at all.
       const result = await this.exec([
@@ -198,62 +219,48 @@ export class AdbBackend implements DeviceBackend {
         shellSingleQuoteForDevice(text),
       ]);
       assertSuccess(result, "shell input text");
+      if (hideKeyboardAfter) {
+        await this.hideKeyboard(serial);
+      }
       return;
     }
 
     // Non-ASCII path (REQ-INPUT-003): ADBKeyBoard base64 broadcast, with a
-    // guaranteed-attempted IME restore (REQ-INPUT-004/REQ-IDEMP-004).
-    const originalIme = await this.getCurrentIme(serial);
-    if (originalIme) {
-      // Tracked per-serial (REQ-MULTIDEV-003) for audit/manual-recovery
-      // visibility; cleared below on successful restore. A `.set()` on an
-      // existing key overwrites rather than accumulates (REQ-IDEMP-001).
+    // SESSION-scoped IME switch (REQ-INPUT-004 revised) — only switch when
+    // ADBKeyBoard is not already the tracked active IME for this serial.
+    if (!this.originalImeBySerial.has(serial)) {
+      const originalIme = await this.getCurrentIme(serial);
+      // Switch first; only record the session as active once the switch
+      // itself has actually succeeded (a failed switch must not make a
+      // later call believe ADBKeyBoard is already active and skip retrying).
+      await this.setImeToAdbKeyboard(serial);
+      // Tracked per-serial (REQ-MULTIDEV-003) even when the original IME
+      // could not be determined (empty string — acceptance.md §D.1 edge
+      // case): the empty entry still marks the session active so
+      // subsequent calls on this serial correctly skip re-switching. A
+      // `.set()` on an existing key overwrites rather than accumulates
+      // (REQ-IDEMP-001).
       this.originalImeBySerial.set(serial, originalIme);
     }
 
-    let sendError: Error | undefined;
+    await this.broadcastBase64Text(serial, text);
+
+    if (hideKeyboardAfter) {
+      await this.hideKeyboard(serial);
+    }
+  }
+
+  /**
+   * Best-effort soft-keyboard dismissal after `text` input (real-device
+   * UX fix): sends KEYCODE_ESCAPE. Never fails the caller — a failure
+   * here is cosmetic, not a functional regression of the text send that
+   * already succeeded.
+   */
+  private async hideKeyboard(serial: string): Promise<void> {
     try {
-      await this.setImeToAdbKeyboard(serial);
-      await this.broadcastBase64Text(serial, text);
-    } catch (err) {
-      sendError = err instanceof Error ? err : new Error(String(err));
-    }
-
-    if (!originalIme) {
-      // Edge case (acceptance.md §D.1): the original IME was never
-      // recorded (unknown at session start). We cannot safely restore to
-      // an unknown value, so we do not attempt a blind `ime set ""` —
-      // instead we report immediately that manual recovery is needed.
-      const reason = sendError
-        ? `text send also failed: ${sendError.message}`
-        : "text send succeeded, but the original IME cannot be restored";
-      throw new ImeRestoreFailedError(
-        `Original IME could not be determined before switching to ADBKeyBoard; manual recovery required (${reason}). ` +
-          "Check 'adb shell ime list -s' and run 'adb shell ime set <id>' manually.",
-        undefined,
-      );
-    }
-
-    try {
-      await this.restoreIme(serial, originalIme);
-      // Restore succeeded — clear the tracked entry (no accumulation,
-      // REQ-IDEMP-001; this serial is no longer in a mid-flight/failed state).
-      this.originalImeBySerial.delete(serial);
-    } catch (restoreErr) {
-      // Leave the entry in originalImeBySerial: still useful for audit /
-      // future manual-recovery tooling to consult per REQ-MULTIDEV-003.
-      const restoreMessage = errorMessage(restoreErr);
-      const combinedMessage = sendError
-        ? `IME restore failed after a failed text send (send error: ${sendError.message}; restore error: ${restoreMessage})`
-        : `Failed to restore original IME after text input: ${restoreMessage}`;
-      throw new ImeRestoreFailedError(
-        `${combinedMessage}. Manually recover with: adb -s ${serial} shell ime set ${originalIme}`,
-        originalIme,
-      );
-    }
-
-    if (sendError) {
-      throw sendError;
+      await this.exec(["-s", serial, "shell", "input", "keyevent", String(KEYCODE_ESCAPE)]);
+    } catch {
+      // Intentionally swallowed: keyboard-hide is best-effort.
     }
   }
 
@@ -297,11 +304,6 @@ export class AdbBackend implements DeviceBackend {
       base64Msg,
     ]);
     assertSuccess(result, `am broadcast ${ADBKEYBOARD_BROADCAST_ACTION}`);
-  }
-
-  private async restoreIme(serial: string, imeId: string): Promise<void> {
-    const result = await this.exec(["-s", serial, "shell", "ime", "set", imeId]);
-    assertSuccess(result, "shell ime set (restore)");
   }
 
   async sendKeyEvent(serial: string, keyName: string): Promise<void> {

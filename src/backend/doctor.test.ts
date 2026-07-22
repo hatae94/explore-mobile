@@ -367,5 +367,81 @@ describe("AdbDoctor", () => {
       expect(result.imeReset).toBe(false);
       expect(result.warnings.some((w) => w.includes("ime reset failed"))).toBe(true);
     });
+
+    describe("session-based original IME restore (REQ-INPUT-004 revised)", () => {
+      it("without a trackedOriginalIme argument, behaves exactly as before (no extra 'ime set' call, no originalImeRestored field)", async () => {
+        const adbExec = vi
+          .fn<AdbExecutor>()
+          .mockResolvedValueOnce(ok(""))
+          .mockResolvedValueOnce(ok(""))
+          .mockResolvedValueOnce(ok("Success"));
+        const doctor = new AdbDoctor(adbExec);
+
+        const result = await doctor.resetDevice("R58N90ABCDE");
+
+        expect(adbExec).toHaveBeenCalledTimes(3);
+        expect(result.originalImeRestored).toBeUndefined();
+      });
+
+      it("with a trackedOriginalIme, restores it precisely via 'ime set <id>' between 'ime reset' and uninstall", async () => {
+        const trackedOriginalIme = "com.google.android.inputmethod.latin/.LatinIME";
+        const adbExec = vi
+          .fn<AdbExecutor>()
+          .mockResolvedValueOnce(ok("")) // ime disable
+          .mockResolvedValueOnce(ok("")) // ime reset
+          .mockResolvedValueOnce(ok("")) // ime set <trackedOriginalIme>
+          .mockResolvedValueOnce(ok("Success")); // uninstall
+        const doctor = new AdbDoctor(adbExec);
+
+        const result = await doctor.resetDevice("R58N90ABCDE", trackedOriginalIme);
+
+        expect(adbExec).toHaveBeenCalledTimes(4);
+        expect(adbExec).toHaveBeenNthCalledWith(3, [
+          "-s",
+          "R58N90ABCDE",
+          "shell",
+          "ime",
+          "set",
+          trackedOriginalIme,
+        ]);
+        expect(adbExec).toHaveBeenNthCalledWith(4, ["-s", "R58N90ABCDE", "uninstall", "com.android.adbkeyboard"]);
+        expect(result.originalImeRestored).toBe(true);
+      });
+
+      it("reports a failure (originalImeRestored=false) + a warning carrying the original IME id when the precise restore fails, but still uninstalls", async () => {
+        const trackedOriginalIme = "com.google.android.inputmethod.latin/.LatinIME";
+        const adbExec = vi
+          .fn<AdbExecutor>()
+          .mockResolvedValueOnce(ok(""))
+          .mockResolvedValueOnce(ok(""))
+          .mockResolvedValueOnce(fail("adb: ime set rejected", 1))
+          .mockResolvedValueOnce(ok("Success"));
+        const doctor = new AdbDoctor(adbExec);
+
+        const result = await doctor.resetDevice("R58N90ABCDE", trackedOriginalIme);
+
+        expect(result.originalImeRestored).toBe(false);
+        expect(result.warnings.some((w) => w.includes(trackedOriginalIme) && w.includes("restore failed"))).toBe(
+          true,
+        );
+        // Uninstall still ran despite the restore failure.
+        expect(adbExec).toHaveBeenCalledTimes(4);
+        expect(result.adbKeyboardUninstalled).toBe(true);
+      });
+
+      it("skips the precise restore call when trackedOriginalIme is an empty string (unknown original — acceptance.md §D.1)", async () => {
+        const adbExec = vi
+          .fn<AdbExecutor>()
+          .mockResolvedValueOnce(ok(""))
+          .mockResolvedValueOnce(ok(""))
+          .mockResolvedValueOnce(ok("Success"));
+        const doctor = new AdbDoctor(adbExec);
+
+        const result = await doctor.resetDevice("R58N90ABCDE", "");
+
+        expect(adbExec).toHaveBeenCalledTimes(3); // no extra 'ime set' call
+        expect(result.originalImeRestored).toBeUndefined();
+      });
+    });
   });
 });

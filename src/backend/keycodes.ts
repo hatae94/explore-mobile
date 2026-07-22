@@ -24,3 +24,13 @@ export const ANDROID_KEYCODE: Record<KeyAlias, number> = {
   volume_up: 24,
   volume_down: 25,
 };
+
+/**
+ * KEYCODE_ESCAPE — used to dismiss the soft keyboard after `text` input
+ * (real-device UX fix: without this, the on-screen keyboard stays up and
+ * the app's keyboard-avoiding layout never re-triggers). Not part of the
+ * public `key` alias vocabulary (schema/key-alias.ts) since it is an
+ * internal implementation detail of `inputText`, not a user-facing key
+ * send.
+ */
+export const KEYCODE_ESCAPE = 111;

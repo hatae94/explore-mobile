@@ -61,6 +61,15 @@ export interface ResetResult {
   adbKeyboardDisabled: boolean;
   adbKeyboardUninstalled: boolean;
   warnings: string[];
+  /**
+   * Present only when a per-serial session-tracked original IME (from a
+   * session-based `text` switch — REQ-INPUT-004 revised) was supplied to
+   * `resetDevice()`: true when restoring it precisely (`ime set <id>`)
+   * succeeded, false when it failed (see `warnings` for the original IME
+   * id and failure detail). Omitted when no such tracked state existed
+   * for this serial.
+   */
+  originalImeRestored?: boolean;
 }
 
 function errorMessage(err: unknown): string {
@@ -243,13 +252,15 @@ export class AdbDoctor {
   /**
    * Restores the device to a pre-`doctor` state (REQ-DOCTOR-004): disables
    * the ADBKeyBoard IME, resets the active IME to the system default via
-   * `adb shell ime reset` (avoids needing to persist "the original IME"
-   * across separate CLI process invocations — full per-serial state
-   * persistence is M7 scope), and uninstalls the ADBKeyBoard package.
-   * Each step is independent; a failure in one is recorded as a warning
-   * rather than aborting the remaining cleanup steps.
+   * `adb shell ime reset`, optionally restores a per-serial SESSION-
+   * tracked original IME precisely (`trackedOriginalIme` — REQ-INPUT-004
+   * revised: `AdbBackend.getTrackedOriginalIme()`, the exact IME active
+   * before a session-based `text` switch, which may differ from the
+   * system default), and uninstalls the ADBKeyBoard package. Each step is
+   * independent; a failure in one is recorded as a warning rather than
+   * aborting the remaining cleanup steps.
    */
-  async resetDevice(serial: string): Promise<ResetResult> {
+  async resetDevice(serial: string, trackedOriginalIme?: string): Promise<ResetResult> {
     const warnings: string[] = [];
 
     const disableResult = await this.adbExec(["-s", serial, "shell", "ime", "disable", ADBKEYBOARD_IME_ID]);
@@ -264,6 +275,24 @@ export class AdbDoctor {
       warnings.push(`ime reset failed: ${imeResetResult.stderr.toString("utf-8").trim() || "unknown error"}`);
     }
 
+    // Precise session restore (REQ-INPUT-004 revised): only attempted when
+    // a non-empty tracked original IME id was supplied — an empty string
+    // means the original was never determined (acceptance.md §D.1 edge
+    // case), so the `ime reset` system-default fallback above already
+    // applies and there is nothing more precise to restore to.
+    let originalImeRestored: boolean | undefined;
+    if (trackedOriginalIme) {
+      const restoreResult = await this.adbExec(["-s", serial, "shell", "ime", "set", trackedOriginalIme]);
+      originalImeRestored = restoreResult.exitCode === 0;
+      if (!originalImeRestored) {
+        const stderrText = restoreResult.stderr.toString("utf-8").trim();
+        warnings.push(
+          `original IME restore failed (id: ${trackedOriginalIme}): ${stderrText || "unknown error"}. ` +
+            `Manually recover with: adb -s ${serial} shell ime set ${trackedOriginalIme}`,
+        );
+      }
+    }
+
     const uninstallResult = await this.adbExec(["-s", serial, "uninstall", ADBKEYBOARD_PACKAGE_ID]);
     const adbKeyboardUninstalled = uninstallResult.exitCode === 0;
     if (!adbKeyboardUninstalled) {
@@ -272,6 +301,12 @@ export class AdbDoctor {
       );
     }
 
-    return { imeReset, adbKeyboardDisabled, adbKeyboardUninstalled, warnings };
+    return {
+      imeReset,
+      adbKeyboardDisabled,
+      adbKeyboardUninstalled,
+      warnings,
+      ...(originalImeRestored !== undefined ? { originalImeRestored } : {}),
+    };
   }
 }

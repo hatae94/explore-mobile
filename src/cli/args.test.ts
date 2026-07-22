@@ -11,6 +11,7 @@ describe("parseCommandArgs", () => {
     expect(result.out).toBe("/tmp/shot.png");
     expect(result.yes).toBe(false);
     expect(result.clean).toBe(false);
+    expect(result.keepKeyboard).toBe(false);
   });
 
   it("recognizes --yes as consent (REQ-DOCTOR-002)", () => {
@@ -23,6 +24,10 @@ describe("parseCommandArgs", () => {
 
   it("recognizes --clean (doctor --clean == reset, REQ-DOCTOR-004)", () => {
     expect(parseCommandArgs(["--clean"]).clean).toBe(true);
+  });
+
+  it("recognizes --keep-keyboard (text: opt out of the default post-send keyboard hide, REQ-INPUT-004 revised)", () => {
+    expect(parseCommandArgs(["--keep-keyboard"]).keepKeyboard).toBe(true);
   });
 
   it("throws on an unrecognized flag (router converts this to a graceful INVALID_ARGS error)", () => {

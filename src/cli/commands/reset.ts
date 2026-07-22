@@ -6,8 +6,17 @@
  * invoke the identical logic under its own command name when `--clean`
  * is passed, rather than duplicating the device-targeting + response
  * shaping.
+ *
+ * `reset` is also the ONLY place a session-based IME switch (REQ-INPUT-004
+ * revised — `AdbBackend.inputText()`) is actually restored: `backend` is
+ * narrowed via `instanceof AdbBackend` (an Android-specific concern kept
+ * out of the backend-agnostic `DeviceBackend` interface, consistent with
+ * `AdbDoctor` itself already being a concrete, non-abstracted parameter
+ * here) to read and clear the per-serial tracked original IME. A backend
+ * with no such concept (e.g. a future iOS/idb backend) simply skips this.
  */
 
+import { AdbBackend } from "../../backend/adb-backend.js";
 import type { DeviceBackend } from "../../schema/device-backend.js";
 import type { AdbDoctor } from "../../backend/doctor.js";
 import { resolveTargetDevice } from "../device-targeting.js";
@@ -26,7 +35,20 @@ export async function performReset(
   const target = resolveTargetDevice(devices, args.device);
   if (!target.ok) return failure(commandName, target.code, target.message, target.details);
 
-  const result = await doctor.resetDevice(target.serial);
+  const trackedOriginalIme =
+    backend instanceof AdbBackend ? backend.getTrackedOriginalIme(target.serial) : undefined;
+
+  const result = await doctor.resetDevice(target.serial, trackedOriginalIme);
+
+  // Clear the session once `resetDevice()` has taken responsibility for
+  // restoring it — but only on success (or when there was nothing precise
+  // to restore to); on a genuine restore failure, retain the tracked entry
+  // for audit / manual recovery (mirrors the prior per-call retain-on-
+  // failure behavior, now scoped to the session boundary).
+  if (backend instanceof AdbBackend && trackedOriginalIme !== undefined && result.originalImeRestored !== false) {
+    backend.clearTrackedOriginalIme(target.serial);
+  }
+
   return success(commandName, { serial: target.serial, ...result });
 }
 

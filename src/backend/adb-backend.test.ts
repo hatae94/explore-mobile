@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AdbExecResult, AdbExecutor } from "./adb-executor.js";
 import { AdbBackend } from "./adb-backend.js";
-import { ImeRestoreFailedError } from "./ime-errors.js";
 
 function ok(stdout: string, stderr = ""): AdbExecResult {
   return { stdout: Buffer.from(stdout, "utf-8"), stderr: Buffer.from(stderr, "utf-8"), exitCode: 0 };
@@ -277,58 +276,82 @@ describe("AdbBackend", () => {
   });
 
   describe("inputText — ASCII fast path (REQ-INPUT-002)", () => {
-    it("sends via 'shell input text' with the string shell-single-quoted, touching no IME state", async () => {
-      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok(""));
+    it("sends via 'shell input text' with the string shell-single-quoted, touching no IME state, then hides the keyboard by default (REQ-INPUT-004 revised)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("")).mockResolvedValueOnce(ok(""));
 
       const backend = new AdbBackend(exec);
       await backend.inputText("R58N90ABCDE", "hello world");
 
-      expect(exec).toHaveBeenCalledTimes(1);
-      expect(exec).toHaveBeenCalledWith(["-s", "R58N90ABCDE", "shell", "input", "text", "'hello world'"]);
+      expect(exec).toHaveBeenCalledTimes(2);
+      expect(exec).toHaveBeenNthCalledWith(1, ["-s", "R58N90ABCDE", "shell", "input", "text", "'hello world'"]);
+      expect(exec).toHaveBeenNthCalledWith(2, ["-s", "R58N90ABCDE", "shell", "input", "keyevent", "111"]);
     });
 
     it("escapes an embedded single quote for the device-side shell", async () => {
-      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok(""));
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("")).mockResolvedValueOnce(ok(""));
 
       const backend = new AdbBackend(exec);
       await backend.inputText("R58N90ABCDE", "it's ok!");
 
-      expect(exec).toHaveBeenCalledWith(["-s", "R58N90ABCDE", "shell", "input", "text", "'it'\\''s ok!'"]);
+      expect(exec).toHaveBeenNthCalledWith(1, ["-s", "R58N90ABCDE", "shell", "input", "text", "'it'\\''s ok!'"]);
     });
 
     it("treats a whitespace-only string as ASCII (acceptance.md §D.1 edge case)", async () => {
-      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok(""));
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("")).mockResolvedValueOnce(ok(""));
 
       const backend = new AdbBackend(exec);
       await backend.inputText("R58N90ABCDE", "   ");
 
-      expect(exec).toHaveBeenCalledTimes(1);
-      expect(exec).toHaveBeenCalledWith(["-s", "R58N90ABCDE", "shell", "input", "text", "'   '"]);
+      expect(exec).toHaveBeenCalledTimes(2);
+      expect(exec).toHaveBeenNthCalledWith(1, ["-s", "R58N90ABCDE", "shell", "input", "text", "'   '"]);
     });
 
-    it("propagates a failed ASCII send as a generic error", async () => {
+    it("propagates a failed ASCII send as a generic error, without attempting the keyboard-hide", async () => {
       const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(fail("adb: device offline", 1));
 
       const backend = new AdbBackend(exec);
 
       await expect(backend.inputText("R58N90ABCDE", "hello")).rejects.toThrow(/device offline/);
+      expect(exec).toHaveBeenCalledTimes(1);
+    });
+
+    it("--keep-keyboard (hideKeyboardAfter: false) skips the post-send keyboard-hide keyevent", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok(""));
+
+      const backend = new AdbBackend(exec);
+      await backend.inputText("R58N90ABCDE", "hello", { hideKeyboardAfter: false });
+
+      expect(exec).toHaveBeenCalledTimes(1);
+      expect(exec).toHaveBeenCalledWith(["-s", "R58N90ABCDE", "shell", "input", "text", "'hello'"]);
+    });
+
+    it("a keyboard-hide failure is swallowed and never fails the text command (best-effort)", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok(""))
+        .mockRejectedValueOnce(new Error("spawn adb ENOENT"));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.inputText("R58N90ABCDE", "hello")).resolves.toBeUndefined();
+      expect(exec).toHaveBeenCalledTimes(2);
     });
   });
 
-  describe("inputText — non-ASCII IME lifecycle (REQ-INPUT-003/004, REQ-IDEMP-004)", () => {
-    function okImeSequence(originalIme = "com.google.android.inputmethod.latin/.LatinIME") {
-      // settings get (original IME) -> ime enable -> ime set (ADBKeyBoard) -> am broadcast -> ime set (restore)
+  describe("inputText — non-ASCII SESSION-based IME lifecycle (REQ-INPUT-003/004 revised, REQ-IDEMP-004)", () => {
+    function okFirstSwitchSequence(originalIme = "com.google.android.inputmethod.latin/.LatinIME") {
+      // settings get (original IME) -> ime enable -> ime set (ADBKeyBoard) -> am broadcast -> keyevent hide
       return vi
         .fn<AdbExecutor>()
         .mockResolvedValueOnce(ok(`${originalIme}\n`)) // settings get secure default_input_method
         .mockResolvedValueOnce(ok("")) // ime enable ADBKeyBoard
         .mockResolvedValueOnce(ok("")) // ime set ADBKeyBoard
         .mockResolvedValueOnce(ok("")) // am broadcast ADB_INPUT_B64
-        .mockResolvedValueOnce(ok("")); // ime set <original> (restore)
+        .mockResolvedValueOnce(ok("")); // keyevent 111 (keyboard hide)
     }
 
     it("treats emoji-only input as non-ASCII (acceptance.md §D.1 edge case)", async () => {
-      const exec = okImeSequence();
+      const exec = okFirstSwitchSequence();
       const backend = new AdbBackend(exec);
 
       await backend.inputText("R58N90ABCDE", "😸");
@@ -336,9 +359,9 @@ describe("AdbBackend", () => {
       expect(exec).toHaveBeenCalledTimes(5);
     });
 
-    it("records the original IME, switches to ADBKeyBoard, broadcasts base64 UTF-8, then restores the original IME", async () => {
+    it("records the original IME, switches to ADBKeyBoard, broadcasts base64 UTF-8, then hides the keyboard — WITHOUT restoring the original IME per-call (REQ-INPUT-004 revised)", async () => {
       const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
-      const exec = okImeSequence(originalIme);
+      const exec = okFirstSwitchSequence(originalIme);
       const backend = new AdbBackend(exec);
 
       const text = "안녕하세요 😸";
@@ -383,128 +406,155 @@ describe("AdbBackend", () => {
         "msg",
         expectedBase64,
       ]);
-      expect(exec).toHaveBeenNthCalledWith(5, ["-s", "R58N90ABCDE", "shell", "ime", "set", originalIme]);
+      // 5th call is the keyboard-hide keyevent — NEVER a restore `ime set`.
+      expect(exec).toHaveBeenNthCalledWith(5, ["-s", "R58N90ABCDE", "shell", "input", "keyevent", "111"]);
+
+      // The session stays active: the original IME is still tracked, ready
+      // to be restored only by `reset` (see reset.ts / doctor.ts tests).
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBe(originalIme);
 
       // Round-trip sanity: decoding the base64 we sent must reproduce the original text exactly.
       expect(Buffer.from(expectedBase64, "base64").toString("utf-8")).toBe(text);
     });
 
-    it("ALWAYS attempts restore even when the broadcast send throws, and re-throws the original send error", async () => {
+    it("a second non-ASCII call on the SAME serial skips the IME switch entirely (session-based, REQ-INPUT-004 revised)", async () => {
+      const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
+      const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        if (args[3] === "settings") return ok(`${originalIme}\n`);
+        return ok("");
+      });
+      const backend = new AdbBackend(exec);
+
+      await backend.inputText("R58N90ABCDE", "안녕");
+      expect(exec).toHaveBeenCalledTimes(5); // settings get, ime enable, ime set, broadcast, hide
+
+      exec.mockClear();
+      await backend.inputText("R58N90ABCDE", "반가워");
+
+      // Second call: only the broadcast + keyboard-hide — no settings get /
+      // ime enable / ime set (ADBKeyBoard is already the active session IME).
+      expect(exec).toHaveBeenCalledTimes(2);
+      expect(exec).toHaveBeenNthCalledWith(1, [
+        "-s",
+        "R58N90ABCDE",
+        "shell",
+        "am",
+        "broadcast",
+        "-a",
+        "ADB_INPUT_B64",
+        "--es",
+        "msg",
+        Buffer.from("반가워", "utf-8").toString("base64"),
+      ]);
+      expect(exec).toHaveBeenNthCalledWith(2, ["-s", "R58N90ABCDE", "shell", "input", "keyevent", "111"]);
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBe(originalIme);
+    });
+
+    it("does NOT attempt any restore when the broadcast send fails, and re-throws the original send error (session stays active for retry)", async () => {
       const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
       const exec = vi
         .fn<AdbExecutor>()
         .mockResolvedValueOnce(ok(`${originalIme}\n`)) // settings get
         .mockResolvedValueOnce(ok("")) // ime enable
         .mockResolvedValueOnce(ok("")) // ime set ADBKeyBoard
-        .mockResolvedValueOnce(fail("adb: broadcast failed", 1)) // am broadcast FAILS
-        .mockResolvedValueOnce(ok("")); // ime set <original> (restore) — must still be attempted
+        .mockResolvedValueOnce(fail("adb: broadcast failed", 1)); // am broadcast FAILS
 
       const backend = new AdbBackend(exec);
 
       await expect(backend.inputText("R58N90ABCDE", "안녕")).rejects.toThrow(/broadcast failed/);
 
-      expect(exec).toHaveBeenCalledTimes(5);
-      expect(exec).toHaveBeenNthCalledWith(5, ["-s", "R58N90ABCDE", "shell", "ime", "set", originalIme]);
+      // No 5th call: no restore, no keyboard-hide attempted after a failed send.
+      expect(exec).toHaveBeenCalledTimes(4);
+      // The switch itself succeeded, so the session remains tracked as
+      // active — a retry on this serial will skip re-switching.
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBe(originalIme);
     });
 
-    it("surfaces a restore FAILURE as ImeRestoreFailedError carrying the original IME id (REQ-ERR-001, AC-ANDROID-015)", async () => {
-      const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
+    it("does not mark the session active when the IME switch itself fails (safe to retry the switch on the next call)", async () => {
       const exec = vi
         .fn<AdbExecutor>()
-        .mockResolvedValueOnce(ok(`${originalIme}\n`)) // settings get
-        .mockResolvedValueOnce(ok("")) // ime enable
-        .mockResolvedValueOnce(ok("")) // ime set ADBKeyBoard
-        .mockResolvedValueOnce(ok("")) // am broadcast succeeds
-        .mockResolvedValueOnce(fail("adb: ime set failed", 1)); // restore FAILS
+        .mockResolvedValueOnce(ok("com.example/.Original\n")) // settings get
+        .mockResolvedValueOnce(fail("adb: ime enable rejected", 1)); // ime enable FAILS
 
       const backend = new AdbBackend(exec);
 
-      const error = await backend.inputText("R58N90ABCDE", "안녕").catch((e: unknown) => e);
+      await expect(backend.inputText("R58N90ABCDE", "안녕")).rejects.toThrow(/ime enable rejected/);
 
-      expect(error).toBeInstanceOf(ImeRestoreFailedError);
-      expect((error as ImeRestoreFailedError).originalImeId).toBe(originalIme);
-      expect((error as Error).message).toMatch(/ime set failed/);
+      expect(exec).toHaveBeenCalledTimes(2);
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBeUndefined();
     });
 
-    it("reports restore failure even when the original send ALSO failed (both errors surfaced)", async () => {
-      const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
-      const exec = vi
-        .fn<AdbExecutor>()
-        .mockResolvedValueOnce(ok(`${originalIme}\n`))
-        .mockResolvedValueOnce(ok(""))
-        .mockResolvedValueOnce(ok(""))
-        .mockResolvedValueOnce(fail("adb: broadcast failed", 1)) // send fails
-        .mockResolvedValueOnce(fail("adb: restore failed", 1)); // restore ALSO fails
-
-      const backend = new AdbBackend(exec);
-
-      const error = await backend.inputText("R58N90ABCDE", "안녕").catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(ImeRestoreFailedError);
-      expect((error as ImeRestoreFailedError).originalImeId).toBe(originalIme);
-      expect((error as Error).message).toMatch(/broadcast failed/);
-      expect((error as Error).message).toMatch(/restore failed/);
-    });
-
-    it("skips the restore attempt and reports manual recovery when the original IME could not be determined (acceptance.md §D.1 edge case)", async () => {
+    it("switches IME and sends even when the original IME could not be determined, tracking an empty (unknown) entry instead of throwing (acceptance.md §D.1 edge case)", async () => {
       const exec = vi
         .fn<AdbExecutor>()
         .mockResolvedValueOnce(ok("null\n")) // settings get returns literal "null" (unset/unknown)
         .mockResolvedValueOnce(ok("")) // ime enable
         .mockResolvedValueOnce(ok("")) // ime set ADBKeyBoard
-        .mockResolvedValueOnce(ok("")); // am broadcast succeeds
+        .mockResolvedValueOnce(ok("")) // am broadcast succeeds
+        .mockResolvedValueOnce(ok("")); // keyevent hide
 
       const backend = new AdbBackend(exec);
 
-      const error = await backend.inputText("R58N90ABCDE", "안녕").catch((e: unknown) => e);
+      await expect(backend.inputText("R58N90ABCDE", "안녕")).resolves.toBeUndefined();
 
-      expect(error).toBeInstanceOf(ImeRestoreFailedError);
-      expect((error as ImeRestoreFailedError).originalImeId).toBeUndefined();
-      // No 5th call: no blind `ime set ""` attempted against the device.
-      expect(exec).toHaveBeenCalledTimes(4);
+      expect(exec).toHaveBeenCalledTimes(5);
+      // Tracked as an active session with an unknown (empty) original id —
+      // `getTrackedOriginalIme` returns "" (defined, but empty), not undefined.
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBe("");
     });
   });
 
-  describe("per-serial IME tracking (M7, REQ-MULTIDEV-003)", () => {
+  describe("per-serial IME session tracking (M7, REQ-MULTIDEV-003, REQ-INPUT-004 revised)", () => {
     it("getTrackedOriginalIme returns undefined before any non-ASCII inputText call", () => {
       const backend = new AdbBackend(vi.fn<AdbExecutor>());
 
       expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBeUndefined();
     });
 
-    it("clears the tracked entry after a successful restore", async () => {
-      const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
-      const exec = vi
-        .fn<AdbExecutor>()
-        .mockResolvedValueOnce(ok(`${originalIme}\n`))
-        .mockResolvedValueOnce(ok(""))
-        .mockResolvedValueOnce(ok(""))
-        .mockResolvedValueOnce(ok(""))
-        .mockResolvedValueOnce(ok(""));
+    it("clearTrackedOriginalIme clears an active session so the next non-ASCII call switches again", async () => {
+      const originalIme = "com.example/.OriginalIme";
+      const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        if (args[3] === "settings") return ok(`${originalIme}\n`);
+        return ok("");
+      });
       const backend = new AdbBackend(exec);
 
       await backend.inputText("R58N90ABCDE", "안녕");
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBe(originalIme);
 
+      backend.clearTrackedOriginalIme("R58N90ABCDE");
       expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBeUndefined();
+
+      exec.mockClear();
+      await backend.inputText("R58N90ABCDE", "다시");
+
+      // Fresh session: the switch sequence (settings get + ime enable + ime
+      // set) runs again since the prior session was cleared.
+      const settingsGetCalls = exec.mock.calls.filter(([callArgs]) => callArgs[3] === "settings");
+      expect(settingsGetCalls).toHaveLength(1);
     });
 
-    it("retains the tracked entry when restore fails (for audit / manual recovery)", async () => {
-      const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
-      const exec = vi
-        .fn<AdbExecutor>()
-        .mockResolvedValueOnce(ok(`${originalIme}\n`))
-        .mockResolvedValueOnce(ok(""))
-        .mockResolvedValueOnce(ok(""))
-        .mockResolvedValueOnce(ok(""))
-        .mockResolvedValueOnce(fail("restore failed", 1));
+    it("clearTrackedOriginalIme only clears the targeted serial, leaving other serials' sessions untouched", async () => {
+      const originalImeFor: Record<string, string> = {
+        A: "com.example/.KeyboardA",
+        B: "com.example/.KeyboardB",
+      };
+      const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        const serial = args[1] as string;
+        if (args[3] === "settings") return ok(`${originalImeFor[serial]}\n`);
+        return ok("");
+      });
       const backend = new AdbBackend(exec);
 
-      await backend.inputText("R58N90ABCDE", "안녕").catch(() => undefined);
+      await Promise.all([backend.inputText("A", "안녕"), backend.inputText("B", "반가워")]);
 
-      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBe(originalIme);
+      backend.clearTrackedOriginalIme("A");
+
+      expect(backend.getTrackedOriginalIme("A")).toBeUndefined();
+      expect(backend.getTrackedOriginalIme("B")).toBe(originalImeFor.B);
     });
 
-    it("does not clobber per-serial IME state when two devices are operated on concurrently (REQ-MULTIDEV-003, AC-ANDROID-004)", async () => {
+    it("tracks per-serial original IME independently when two devices are operated on concurrently, without cross-contamination (REQ-MULTIDEV-003, AC-ANDROID-004)", async () => {
       const originalImeFor: Record<string, string> = {
         A: "com.example/.KeyboardA",
         B: "com.example/.KeyboardB",
@@ -522,37 +572,23 @@ describe("AdbBackend", () => {
 
       await Promise.all([backend.inputText("A", "안녕"), backend.inputText("B", "반가워")]);
 
-      // Each serial's restore call ("ime" "set" <original>) must use ITS OWN
-      // original IME, never the other serial's.
-      const crossContaminated = exec.mock.calls.some(([callArgs]) => {
-        const serial = callArgs[1] as string;
-        const lastArg = callArgs[callArgs.length - 1] as string;
-        return (
-          (serial === "A" && lastArg === originalImeFor.B) ||
-          (serial === "B" && lastArg === originalImeFor.A)
-        );
-      });
-      expect(crossContaminated).toBe(false);
+      // Neither serial's tracked original IME leaked into the other's.
+      expect(backend.getTrackedOriginalIme("A")).toBe(originalImeFor.A);
+      expect(backend.getTrackedOriginalIme("B")).toBe(originalImeFor.B);
 
-      const restoreCallExists = (serial: string, expectedIme: string) =>
-        exec.mock.calls.some(
-          ([callArgs]) =>
-            callArgs[1] === serial &&
-            callArgs[2] === "shell" &&
-            callArgs[3] === "ime" &&
-            callArgs[4] === "set" &&
-            callArgs[5] === expectedIme,
-        );
-
-      expect(restoreCallExists("A", originalImeFor.A!)).toBe(true);
-      expect(restoreCallExists("B", originalImeFor.B!)).toBe(true);
-
-      // Both tracked entries are cleared after their own successful restores.
-      expect(backend.getTrackedOriginalIme("A")).toBeUndefined();
-      expect(backend.getTrackedOriginalIme("B")).toBeUndefined();
+      // No `ime set` call restoring to either serial's ORIGINAL IME happened
+      // at all (session-based — REQ-INPUT-004 revised). The switch-to-
+      // ADBKeyBoard `ime set` calls are expected and excluded from this check.
+      const anyRestoreCall = exec.mock.calls.some(
+        ([callArgs]) =>
+          callArgs[3] === "ime" &&
+          callArgs[4] === "set" &&
+          (callArgs[5] === originalImeFor.A || callArgs[5] === originalImeFor.B),
+      );
+      expect(anyRestoreCall).toBe(false);
     });
 
-    it("does not accumulate state across repeated successful calls for the same serial (REQ-IDEMP-001)", async () => {
+    it("does not re-switch or accumulate state across repeated non-ASCII calls for the same serial (REQ-IDEMP-001, session-based)", async () => {
       const originalIme = "com.example/.OriginalIme";
       const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
         if (args[3] === "settings") return ok(`${originalIme}\n`);
@@ -564,9 +600,13 @@ describe("AdbBackend", () => {
       await backend.inputText("R58N90ABCDE", "반가워");
       await backend.inputText("R58N90ABCDE", "😸");
 
-      // Tracked state never grew beyond one entry for this serial, and is
-      // cleared after each successful cycle.
-      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBeUndefined();
+      // The IME switch (settings get + ime enable + ime set) happened only
+      // once, on the first call.
+      const settingsGetCalls = exec.mock.calls.filter(([callArgs]) => callArgs[3] === "settings");
+      expect(settingsGetCalls).toHaveLength(1);
+
+      // Tracked state stays a single, unchanged entry across all 3 calls.
+      expect(backend.getTrackedOriginalIme("R58N90ABCDE")).toBe(originalIme);
     });
   });
 });
