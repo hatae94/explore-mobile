@@ -2,9 +2,9 @@
 id: SPEC-IOS-001
 title: "iOS 시뮬레이터(idb) 백엔드 — 공통 스키마/백엔드 인터페이스 iOS 확장"
 version: "0.1.0"
-status: in-progress
+status: implemented
 created: 2026-07-22
-updated: 2026-07-22
+updated: 2026-07-23
 author: manager-spec
 priority: P1
 phase: "v0.2.0 target"

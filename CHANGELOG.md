@@ -55,6 +55,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CLI command dispatch, adb argv construction, IME lifecycle (success /
   error / restore-failure paths), doctor/reset flows, per-serial
   isolation and concurrency, and the skill-wrapper compliance check.
+- iOS Simulator (`idb`) device-control backend (SPEC-IOS-001), extending
+  the CLI to a second platform without redesigning the command layer or
+  the common normalization schema — fulfilling the interface-swap
+  promise made in SPEC-ANDROID-001 (`DeviceBackend`/`CommonElement`
+  designed for this):
+  - `DeviceInfo.platform` (`"android"` | `"ios"`) — every backend now
+    tags which platform owns a device.
+  - `DeviceBackend.dumpUiHierarchy` now returns `CommonElement[]`
+    directly (previously a raw string); normalization moved **into**
+    each backend (`AdbBackend` normalizes uiautomator XML internally,
+    `IdbBackend` normalizes idb `describe-all` JSON internally), so
+    `dump`/`tap`/`text` stay platform-agnostic with no command-layer
+    changes.
+  - `BackendRegistry` (`src/backend/registry.ts`): merges device
+    listings across all available backends and auto-routes
+    `--device <serial>` to the owning backend by platform; an
+    unavailable backend (e.g. idb not installed) degrades gracefully to
+    0 contributed devices, never an error.
+  - `IdbBackend` (`src/backend/idb-backend.ts`): implements the full
+    8-method `DeviceBackend` surface via the `idb` CLI (`list-targets`,
+    `ui describe-all`, `ui tap`, `ui text`, `ui key`, `launch`,
+    `terminate`, screenshot) — command-layer parity with `AdbBackend`.
+  - idb accessibility normalizer (`src/normalize/idb.ts`): pure-function
+    mapping of idb's `describe-all` fields (`AXLabel`, `type`/`role`,
+    `enabled`, `custom_actions`) to `CommonElement`, unit-tested against
+    a documented real-device example.
+  - iOS environment service (`IdbDoctor`,
+    `src/backend/idb-doctor.ts`): idb / `idb_companion` presence checks,
+    booted-simulator check, macOS-only install guidance (pip3/Homebrew,
+    pinned to the last released `fb-idb==1.1.8`), and a near-no-op
+    `reset` (idb's text input is Unicode-native and stateless — nothing
+    to restore).
+  - `doctor`/`reset` now branch on the resolved device's platform
+    (`src/cli/env-services.ts`): an Android target is unchanged
+    (existing `AdbDoctor` path, byte-for-byte); an iOS target routes to
+    `IdbDoctor`.
+  - Error code generalized from `ADB_COMMAND_FAILED` to
+    `BACKEND_COMMAND_FAILED` across all 7 device-facing commands
+    (dump/tap/text/screenshot/launch/stop/key), since a command failure
+    can now originate from either backend.
+  - 106 new/updated unit tests (292 total, up from 186), covering the
+    registry, the idb normalizer, `IdbBackend`, `IdbDoctor`, and the
+    doctor/reset platform-branching dispatch.
 
 ### Notes
 
@@ -68,6 +111,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   this and returns a graceful `APK_NOT_BUNDLED` error instead of
   fabricating a binary. See `vendor/adbkeyboard/README.md` for the
   acquisition checklist.
-- iOS/idb support (SPEC-02), WebView/DOM recognition (SPEC-03), the
-  exploration loop (SPEC-04), and the Codex wrapper (SPEC-05) are
-  committed roadmap items, not yet implemented.
+- iOS Simulator real-device/simulator verification is **deferred, not
+  done**: `idb` is an unmaintained third-party tool (pinned to its last
+  release, `fb-idb==1.1.8`, 2022-08), and no simulator was available this
+  session. Three idb behaviors are verified only against documented
+  examples and remain to be confirmed against real `idb` output in a
+  future run-phase session — the `list-targets --json` field names, the
+  `--udid`/screenshot argument and output shapes, and the `ui key` HID
+  code mapping. These sites are marked `@MX:TODO` in the source; see
+  `.moai/specs/SPEC-IOS-001/progress.md` for the current PASS /
+  PASS-WITH-DEBT breakdown (18 PASS, 10 PASS-WITH-DEBT, 0 FAIL).
+- WebView/DOM recognition (SPEC-03), the exploration loop (SPEC-04), and
+  the Codex wrapper (SPEC-05) remain committed roadmap items, not yet
+  implemented.

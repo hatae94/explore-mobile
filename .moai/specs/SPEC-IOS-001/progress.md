@@ -82,4 +82,17 @@ m1_to_mN_commit_strategy: "per-milestone separate commits (9 commits: M1, M2+M3,
 
 ## §E.4 Sync-phase Audit-Ready Signal
 
-_<pending sync-phase>_
+- **sync_complete_at**: 2026-07-23
+- **sync_commit_sha**: `pending-backfill-single-sync-commit` (자기참조 해시 문제 — 이 커밋 자신의 SHA는 커밋 완료 전에는 알 수 없음. `spec-frontmatter-schema.md`의 SHA placeholder backfill exemption에 따른 표준 placeholder. 이번 sync 커밋은 로컬 전용 단일 커밋이라 별도 backfill 커밋은 생성하지 않음 — 실제 SHA는 `git log`로 확인 가능)
+- **sync_status**: complete-with-deferred-completion — frontmatter `in-progress → implemented` (NOT `completed`): 실기기/실 시뮬레이터 검증(idb `list-targets`/`describe-all`/`ui key` 실 출력 확인)이 미완료이므로 `completed` 승격은 후속 run-phase 세션으로 보류. SPEC-ANDROID-001과 동일한 원칙(실기기 검증 전에는 `completed` 미부여) 적용
+- **b12_self_test_a** (CHANGELOG 중복 방지, pre-emission grep): PASS — 편집 전 `CHANGELOG.md`에 `SPEC-IOS-001` 매치 0건(신규 항목만 이번에 추가) — 병렬 세션발 중복 항목 없음
+- **b12_self_test_b** (AC count match, acceptance.md SSOT 대조): PASS — `grep -cE '^\| AC-IOS-[0-9]+ \|' acceptance.md` = 28 (§D 매트릭스 28건) = progress.md §E.2 요약(PASS 18 + PASS-WITH-DEBT 10 + FAIL 0 = 28)과 일치, CHANGELOG Notes 섹션의 "18 PASS, 10 PASS-WITH-DEBT, 0 FAIL" 서술과도 일치
+- **b12_self_test_c** (CHANGELOG/README에서 참조한 파일 경로 실존 확인): PASS — `src/backend/registry.ts`, `src/backend/idb-backend.ts`, `src/backend/idb-doctor.ts`, `src/normalize/idb.ts`, `src/cli/env-services.ts` 전부 `ls` 확인됨
+- **changelog_entry_position**: `CHANGELOG.md` `## [Unreleased]` → `### Added` 섹션 마지막 항목(SPEC-ANDROID-001 항목 뒤 신규 추가) + `### Notes` 섹션에 iOS 검증-보류 항목 추가 및 기존 로드맵 항목(SPEC-02/03/04/05) 텍스트를 SPEC-IOS-001 구현 완료 반영으로 정정
+- **frontmatter_status_transitions**:
+  - spec.md: `in-progress → implemented` (updated: 2026-07-23)
+  - plan.md: `in-progress → implemented` (updated: 2026-07-23)
+  - acceptance.md: `in-progress → implemented` (updated: 2026-07-23)
+  - progress.md: 본 §E.4 기록으로 sync-phase 완료 표시 (design.md/research.md는 plan-phase 전용 아티팩트로 `draft` 유지, 본 전이 대상 아님)
+- **canary_compliance_check**: n/a — 본 SPEC은 forward-looking policy(자체 sync 시점에 검증하는 정책)를 정의하지 않음
+- **honesty note**: README.md/CHANGELOG.md 모두 iOS 실기기·실 시뮬레이터 검증이 **미완료(deferred)** 임을 명시하고, idb `list-targets`/`--udid`·screenshot 형태/`ui key` HID 코드 3건이 문서 기반 예시로만 검증되었음을 진술한다. `completed` 승격 없이 `implemented`로만 전이하여 overclaim을 방지했다.

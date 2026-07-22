@@ -1,27 +1,31 @@
 # explore-mobile
 
-Agent-agnostic CLI for driving mobile devices — Android today (via `adb`),
-iOS next (via `idb`, committed roadmap item) — so an AI agent (or any
-automation script) can control an emulator, simulator, or real device
-through a single, stable **JSON in/out** command surface. The end goal is
-mobile test automation, including multi-device interaction testing.
+Agent-agnostic CLI for driving mobile devices — Android (via `adb`) and
+iOS Simulator (via `idb`) — so an AI agent (or any automation script) can
+control an emulator, simulator, or real device through a single, stable
+**JSON in/out** command surface. The end goal is mobile test automation,
+including multi-device interaction testing.
 
-> **Status**: core Android/adb primitives + environment bootstrap are
-> implemented and unit/mock-tested (150 tests, all green). Real-device /
-> real-host end-to-end verification is **not yet done** — see
-> [Status](#status) below before relying on this in production. The
-> Unicode-IME APK (ADBKeyBoard, GPL-2.0) is never bundled — `doctor`
-> downloads it from its official release on first use.
+> **Status**: core Android/adb primitives + environment bootstrap, and
+> the iOS Simulator/idb backend, are implemented and unit/mock-tested
+> (292 tests, all green). Real-device / real-simulator end-to-end
+> verification is **not yet done** for either platform — see
+> [Status](#status) below before relying on this in production. iOS in
+> particular still has a few idb behaviors (exact JSON field names, HID
+> key codes) verified only against documented examples, pending
+> confirmation against a real simulator. The Unicode-IME APK
+> (ADBKeyBoard, GPL-2.0) is never bundled — `doctor` downloads it from
+> its official release on first use.
 
 ## Why
 
 - Prompts, not scripts, should be able to drive a device: every command
   speaks JSON in, JSON out — no screen-scraping free text.
 - No install step for the agent calling it — run via `npx`.
-- Android and iOS share one command surface. The Android backend is
-  built first; the interface underneath it is designed so an iOS/idb
-  backend can be added later without a redesign (see
-  [Roadmap](#roadmap)).
+- Android and iOS share one command surface: a common element schema
+  and a `DeviceBackend` interface let a `BackendRegistry` auto-route
+  `--device <serial>` to the owning platform, with no per-platform flag
+  (see [Roadmap](#roadmap)).
 - Korean, emoji, and other non-ASCII text input — usually the hard part
   of automating Android input — is handled automatically.
 
@@ -246,37 +250,46 @@ contaminate either device's input-method state.
 
 ## Status
 
-This is a from-scratch implementation (SPEC-ANDROID-001) with all 8
-planned milestones done and 150 unit/mock tests green, but it has **not
-yet been exercised against a real device or a real host environment**.
-Concretely, still pending before this is production-ready:
+Android (SPEC-ANDROID-001, all 8 milestones) and iOS Simulator
+(SPEC-IOS-001) backends are both implemented, with 292 unit/mock tests
+green, but **neither has been exercised against a real device / real
+simulator or a real host environment yet**. Concretely, still pending
+before this is production-ready:
 
-- Real-emulator/real-device verification of every command (screenshot
-  PNG validity, tap/text landing, `launch`/`stop` observed effects,
-  multi-device isolation with two physically connected devices).
+- Real-emulator/real-device verification of every Android command
+  (screenshot PNG validity, tap/text landing, `launch`/`stop` observed
+  effects, multi-device isolation with two physically connected
+  devices).
+- Real-simulator verification of the iOS backend, including 3 idb
+  behaviors currently confirmed only against documented examples: the
+  `idb list-targets --json` field names, the `--udid`/screenshot
+  argument and output shapes, and the `idb ui key` HID code mapping
+  (see `.moai/specs/SPEC-IOS-001/progress.md` for the current
+  PASS / PASS-WITH-DEBT breakdown).
 - Verifying the runtime ADBKeyBoard download end-to-end against a real
   device (the download/cache/validate logic is unit/mock-verified; see
   the Unicode caveat above and `vendor/adbkeyboard/README.md`).
 - A published npm package (`npx explore-mobile` will work once this
   ships to the registry — today it only runs from a local checkout).
 
-Everything above is unit/mock-verified against constructed `adb`
+Everything above is unit/mock-verified against constructed `adb`/`idb`
 command lines and mocked subprocess output, not against live hardware.
 
 ## Roadmap
 
 | SPEC | Title | Status |
 |---|---|---|
-| SPEC-ANDROID-001 | Android/adb device-control primitives + environment bootstrap (this package) | Implemented, e2e pending |
-| SPEC-02 | iOS backend (`idb`) | Committed |
+| SPEC-ANDROID-001 | Android/adb device-control primitives + environment bootstrap | Implemented, e2e pending |
+| SPEC-IOS-001 | iOS Simulator backend (`idb`) — common schema + registry extension | Implemented, real-simulator confirmation pending |
 | SPEC-03 | WebView/DOM recognition (Chrome DevTools Protocol / `ios-webkit-debug-proxy`) | Committed |
 | SPEC-04 | Prompt-driven exploration loop + multi-device scenario orchestration | Committed |
 | SPEC-05 | Codex skill wrapper + broader packaging | Committed |
 
-The common element schema and the device-backend interface used by the
-CLI are designed so the iOS backend can plug in without a redesign — see
-the design notes in `.moai/specs/SPEC-ANDROID-001/plan.md` §F.9 for the
-iOS field-mapping table.
+The common element schema and the device-backend interface were
+designed so the iOS backend could plug in without a redesign of the CLI
+or normalization layers — see the field-mapping notes in
+`.moai/specs/SPEC-ANDROID-001/plan.md` §F.9 (original design) and
+`.moai/specs/SPEC-IOS-001/plan.md` (implementation).
 
 ## License
 
