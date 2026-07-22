@@ -2,10 +2,9 @@
  * Public library entry point for SPEC-ANDROID-001.
  *
  * Exposes the common element schema (M1), the device-backend interface
- * (M1), the uiautomator normalization pure function (M2), and the CLI
- * router + command layer (M3 — depends only on the `DeviceBackend`
- * interface, testable against a mock backend). The concrete adb backend
- * implementation lands in M4 and is exported from this barrel then.
+ * (M1), the uiautomator normalization pure function (M2), the adb backend
+ * implementation (M4), and the CLI router (M3). `text`/`doctor`/`reset`
+ * commands are wired but report NOT_IMPLEMENTED (M5/M6 scope).
  */
 
 export type { CommonElement, ElementBounds } from "./schema/common-element.js";
@@ -16,6 +15,9 @@ export type {
 } from "./schema/device-backend.js";
 export { KEY_ALIASES, isKeyAlias, type KeyAlias } from "./schema/key-alias.js";
 export { normalizeUiAutomatorXml } from "./normalize/uiautomator.js";
+export { AdbBackend } from "./backend/adb-backend.js";
+export type { AdbExecResult, AdbExecutor } from "./backend/adb-executor.js";
+export { parseAdbDevicesList } from "./backend/device-list-parser.js";
 export {
   success,
   failure,

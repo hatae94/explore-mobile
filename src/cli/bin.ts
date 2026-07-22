@@ -1,24 +1,18 @@
 #!/usr/bin/env node
 /**
- * CLI entry point placeholder.
+ * CLI entry point (M3/M4).
  *
- * The full command surface (doctor / devices / launch / stop / screenshot /
- * tap / text / key / dump — SPEC-ANDROID-001 plan.md §F milestones M3-M8)
- * is implemented in later run-phase chunks. This build ships only the
- * common element schema, the device-backend interface, and the
- * uiautomator normalizer (M1/M2). This stub exists so the package's `bin`
- * entry resolves, and still emits JSON in/out per REQ-ARCH-001 so the
- * contract holds even before the command surface lands.
+ * Wires the command router (M3) to the real `AdbBackend` (M4) and prints
+ * exactly one JSON document to stdout per invocation (REQ-ARCH-001).
+ * `text`/`doctor`/`reset` are wired but report NOT_IMPLEMENTED — those
+ * land in milestones M5/M6 of SPEC-ANDROID-001.
  */
 
-const response = {
-  status: "not_implemented",
-  message:
-    "The explore-mobile CLI command surface (doctor/devices/launch/stop/" +
-    "screenshot/tap/text/key/dump) is implemented in SPEC-ANDROID-001 " +
-    "milestones M3 and later. This build ships the common element schema, " +
-    "device-backend interface, and uiautomator normalizer (M1/M2) only.",
-};
+import { AdbBackend } from "../backend/adb-backend.js";
+import { runCli } from "./router.js";
 
-process.stdout.write(`${JSON.stringify(response)}\n`);
-process.exitCode = 1;
+const backend = new AdbBackend();
+const result = await runCli(process.argv.slice(2), backend);
+
+process.stdout.write(`${JSON.stringify(result)}\n`);
+process.exitCode = result.ok ? 0 : 1;
