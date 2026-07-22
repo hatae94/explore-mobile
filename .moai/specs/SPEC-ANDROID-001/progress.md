@@ -2,7 +2,7 @@
 id: SPEC-ANDROID-001
 title: "Android(adb) 기기 제어 기본기 + 자동 환경 세팅 CLI 코어 — 진행"
 version: "0.1.2"
-status: in-progress
+status: completed
 created: 2026-07-22
 updated: 2026-07-22
 author: manager-spec
@@ -104,4 +104,17 @@ _<pending run-phase — manager-develop 소유>_
 
 ## §E.4 Sync-phase Audit-Ready Signal
 
-_<pending sync-phase — manager-docs 소유>_
+- **sync_complete_at**: 2026-07-22
+- **sync_commit_sha**: `pending-backfill-single-sync-commit` (자기참조 해시 문제 — 이 커밋 자신의 SHA는 커밋 완료 전에는 알 수 없음. `spec-frontmatter-schema.md`의 SHA placeholder backfill exemption에 따른 표준 placeholder. 이번 sync 커밋은 Route A 단일 커밋이라 별도 backfill 커밋은 생성하지 않음 — 실제 SHA는 아래 self-verification 섹션의 git log로 확인 가능)
+- **sync_status**: complete (4개 SPEC artifact frontmatter `in-progress → completed` 전이 + README.md/CHANGELOG.md 생성 완료)
+- **b12_self_test_a** (CHANGELOG 중복 방지, pre-emission grep): PASS — `grep -c 'SPEC-ANDROID-001' CHANGELOG.md` 실행 전 CHANGELOG.md 파일 자체가 존재하지 않음(신규 생성) → 중복 위험 없음
+- **b12_self_test_b** (AC count match, acceptance.md SSOT 대조): PASS — `grep -cE '^\| AC-ANDROID-[0-9]+ \|' acceptance.md` = 19 (acceptance.md §D 매트릭스 19건과 CHANGELOG 본문의 커버리지 서술이 일치)
+- **b12_self_test_c** (CHANGELOG/README에서 참조한 파일 경로 실존 확인): PASS — `src/schema/common-element.ts`, `src/schema/device-backend.ts`, `src/normalize/uiautomator.ts`, `src/backend/doctor.ts`, `src/backend/adbkeyboard.ts`, `.claude/skills/explore-mobile/SKILL.md`, `vendor/adbkeyboard/README.md` 전부 `ls` 확인됨
+- **changelog_entry_position**: `CHANGELOG.md` `## [Unreleased]` 섹션, 단일 항목(SPEC-ANDROID-001 최초 항목, 기존 항목 없음 — 신규 파일)
+- **frontmatter_status_transitions**:
+  - spec.md: `in-progress → completed` (updated: 2026-07-22)
+  - plan.md: `in-progress → completed` (updated: 2026-07-22)
+  - acceptance.md: `in-progress → completed` (updated: 2026-07-22)
+  - progress.md: `in-progress → completed` (updated: 2026-07-22)
+- **canary_compliance_check**: n/a — 본 SPEC은 forward-looking policy(자체 sync 시점에 검증하는 정책)를 정의하지 않음
+- **honesty note**: README.md/CHANGELOG.md 모두 8개 AC가 PARTIAL(실기기 e2e 미검증)임을 명시하고 overclaim하지 않음. `vendor/adbkeyboard/README.md`의 APK 미번들 상태도 README.md Status 섹션에 그대로 반영됨.
