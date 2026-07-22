@@ -23,7 +23,7 @@ export const screenshotCommand: CommandHandler = async (args, backend) => {
   try {
     bytes = await backend.screenshot(target.serial);
   } catch (err) {
-    return failure("screenshot", "ADB_COMMAND_FAILED", errorMessage(err));
+    return failure("screenshot", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
 
   const buffer = Buffer.from(bytes);

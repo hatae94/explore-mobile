@@ -18,7 +18,6 @@
  */
 
 import { elementCenter, findElement, type ElementSelector } from "../../normalize/element-query.js";
-import { normalizeUiAutomatorXml } from "../../normalize/uiautomator.js";
 import { AdbKeyboardInstallFailedError, ImeRestoreFailedError } from "../../backend/ime-errors.js";
 import type { DeviceBackend } from "../../schema/device-backend.js";
 import { resolveTargetDevice } from "../device-targeting.js";
@@ -53,14 +52,13 @@ async function focusElementBySelector(
     ...(index !== undefined ? { index } : {}),
   };
 
-  let xml: string;
+  let elements;
   try {
-    xml = await backend.dumpUiHierarchy(serial);
+    elements = await backend.dumpUiHierarchy(serial);
   } catch (err) {
-    return failure("text", "ADB_COMMAND_FAILED", errorMessage(err));
+    return failure("text", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
 
-  const elements = normalizeUiAutomatorXml(xml);
   const element = findElement(elements, selector);
   if (element === null) {
     return failure("text", "ELEMENT_NOT_FOUND", "No element matched the given focus selector.", { selector });
@@ -70,7 +68,7 @@ async function focusElementBySelector(
   try {
     await backend.tap(serial, x, y);
   } catch (err) {
-    return failure("text", "ADB_COMMAND_FAILED", errorMessage(err));
+    return failure("text", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
 
   return null;
@@ -106,10 +104,10 @@ export const textCommand: CommandHandler = async (args, backend) => {
       // REQ-INPUT-003 revised (self-heal): reuse the identical error code
       // AdbDoctor.ensureAdbKeyboard() already surfaces for the same
       // failure classes (PM_LIST_FAILED / APK_DOWNLOAD_FAILED /
-      // APK_INSTALL_FAILED) instead of degrading to ADB_COMMAND_FAILED.
+      // APK_INSTALL_FAILED) instead of degrading to BACKEND_COMMAND_FAILED.
       return failure("text", err.code, err.message);
     }
-    return failure("text", "ADB_COMMAND_FAILED", errorMessage(err));
+    return failure("text", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
 
   return success("text", { serial: target.serial });

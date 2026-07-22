@@ -23,7 +23,7 @@ export const keyCommand: CommandHandler = async (args, backend) => {
   try {
     await backend.sendKeyEvent(target.serial, alias);
   } catch (err) {
-    return failure("key", "ADB_COMMAND_FAILED", errorMessage(err));
+    return failure("key", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
 
   return success("key", { serial: target.serial, key: alias });

@@ -6,9 +6,12 @@
  * device-backend interface contract (spec.md §A.4, REQ-ARCH-003). Every
  * CLI command that targets a device (M3) depends on this class's method
  * surface staying compatible with `DeviceBackend`.
- * @MX:REASON — a future iOS/idb backend (SPEC-02) must implement the same
- * `DeviceBackend` interface; this class is the reference implementation
- * proving the interface is thin enough to be backend-swappable.
+ * @MX:REASON — SPEC-IOS-001's `IdbBackend` implements the same
+ * `DeviceBackend` interface (`src/backend/idb-backend.ts`); this class is
+ * the reference implementation proving the interface is thin enough to be
+ * backend-swappable (REQ-IOS-ARCH-005). `listDevices` tags `platform:
+ * "android"` (REQ-IOS-SCHEMA-001) and `dumpUiHierarchy` now normalizes
+ * internally (REQ-IOS-SCHEMA-003) — see the method itself.
  */
 
 import { randomBytes } from "node:crypto";
@@ -16,7 +19,9 @@ import { randomBytes } from "node:crypto";
 import { ADBKEYBOARD_BROADCAST_ACTION, ADBKEYBOARD_IME_ID } from "./adbkeyboard.js";
 import { ensureAdbKeyboardInstalled } from "./adbkeyboard-installer.js";
 import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
+import type { CommonElement } from "../schema/common-element.js";
 import { isKeyAlias } from "../schema/key-alias.js";
+import { normalizeUiAutomatorXml } from "../normalize/uiautomator.js";
 import type { AdbExecResult, AdbExecutor } from "./adb-executor.js";
 import { spawnAdb } from "./adb-executor.js";
 import type { ApkAcquirer } from "./apk-downloader.js";
@@ -164,13 +169,21 @@ export class AdbBackend implements DeviceBackend {
           ? (entry.state as DeviceInfo["connectionState"])
           : "offline",
         isEmulator: entry.isEmulator,
+        platform: "android",
       });
     }
 
     return devices;
   }
 
-  async dumpUiHierarchy(serial: string): Promise<string> {
+  /**
+   * REQ-IOS-SCHEMA-003 (SPEC-IOS-001): normalization now happens INSIDE the
+   * backend — this method internally calls `normalizeUiAutomatorXml` on the
+   * collected XML before returning, rather than handing raw XML back to the
+   * caller. Behavior is preserved from SPEC-ANDROID-001 (same dump -> cat ->
+   * cleanup sequence); only the final return value changed shape.
+   */
+  async dumpUiHierarchy(serial: string): Promise<CommonElement[]> {
     // Freshly generated per call (REQ-MULTIDEV-004): namespaced by serial
     // and made unique so concurrent same-serial dumps from separate CLI
     // processes never race on the same device-side path.
@@ -191,7 +204,7 @@ export class AdbBackend implements DeviceBackend {
       // Intentionally swallowed: cleanup is best-effort.
     }
 
-    return catResult.stdout.toString("utf-8");
+    return normalizeUiAutomatorXml(catResult.stdout.toString("utf-8"));
   }
 
   async screenshot(serial: string): Promise<Uint8Array> {

@@ -1,18 +1,20 @@
 /**
- * Common Element Schema — the invariant contract of SPEC-ANDROID-001.
+ * Common Element Schema — the invariant contract originating in
+ * SPEC-ANDROID-001, now fulfilled by SPEC-IOS-001's iOS/idb backend.
  *
- * Every UI-recognition backend (Android/uiautomator today, iOS/idb in a
- * future SPEC — see spec.md §D "Out of Scope — iOS/idb Implementation")
- * normalizes its raw platform output into this shape. This is the load-
- * bearing design artifact of the SPEC: it must accept the iOS accessibility
- * field set (AXLabel, AXUniqueId, frame, type/role) without redesign.
+ * Every UI-recognition backend (Android/uiautomator, iOS/idb) normalizes its
+ * raw platform output into this shape. This is the load-bearing design
+ * artifact shared across backends: it accepts the iOS accessibility field
+ * set (AXLabel, AXUniqueId, frame, type/role) WITHOUT redesign, exactly as
+ * SPEC-ANDROID-001 intended (REQ-IOS-SCHEMA-005 — the shape is unchanged by
+ * SPEC-IOS-001; only the doc-comment below is corrected).
  *
  * @MX:ANCHOR — invariant contract, high fan_in (every recognition path —
- * `dump`, future backends, the Claude skill wrapper — depends on this shape
- * remaining stable). See spec.md §A.3 and plan.md §F.9 (iOS field mapping
- * table) / §F.9.1 (tappable derivation policy for iOS).
+ * `dump`, both backends, the Claude skill wrapper — depends on this shape
+ * remaining stable). See spec.md §A.3/§A.4 and plan.md §F.9 (iOS field
+ * mapping table, verified) / §F.9.1 (tappable derivation policy for iOS).
  * @MX:REASON — changing this shape is a breaking change across every
- * consumer (normalization layer, CLI `dump` command, future iOS backend).
+ * consumer (both backends' normalizers, CLI `dump`/`tap`/`text` commands).
  */
 
 /** Pixel-space bounding rectangle for a UI element, in device coordinates. */
@@ -30,9 +32,16 @@ export interface ElementBounds {
  *   class -> role, resource-id -> id, text/content-desc -> text,
  *   bounds -> bounds, (clickable AND enabled) -> tappable.
  *
- * iOS (idb accessibility) mapping — plan.md §F.9 (design-only, AC-ANDROID-006):
- *   type/role -> role, AXLabel -> text, AXUniqueId -> id, frame -> bounds,
- *   derived(AXTraits, isEnabled) -> tappable (see plan.md §F.9.1).
+ * iOS (idb accessibility) mapping — implemented, SPEC-IOS-001 plan.md
+ * §F.9/§F.9.1 (verified against idb's real `describe-all` JSON output;
+ * corrects the original design-only assumptions):
+ *   type -> role (primary; `role` as an AX-prefixed fallback), AXLabel ->
+ *   text, AXUniqueId -> id, frame{x,y,width,height} -> bounds, enabled ->
+ *   enabled (the field is named `enabled`, NOT `isEnabled`), tappable is
+ *   derived from (type/role/subrole indicates interactive, OR
+ *   custom_actions is non-empty) AND enabled === true — idb's real output
+ *   has NO `AXTraits` field, so tappable derivation does not depend on it
+ *   (see `src/normalize/idb.ts`).
  */
 export interface CommonElement {
   /** Element's platform role/type (Android `class`, iOS `type`/`role`). */

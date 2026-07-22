@@ -11,6 +11,7 @@ import { AdbKeyboardInstallFailedError, ImeRestoreFailedError } from "../backend
 import { ImeSessionStore } from "../backend/ime-session-store.js";
 import type { ProcessExecutor } from "../backend/process-executor.js";
 import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
+import { normalizeUiAutomatorXml } from "../normalize/uiautomator.js";
 import { runCli } from "./router.js";
 
 function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
@@ -20,17 +21,29 @@ function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
     osVersion: "14",
     connectionState: "device",
     isEmulator: false,
+    platform: "android",
     ...overrides,
   };
 }
 
-/** A fully-mocked DeviceBackend — the router/commands never touch adb directly. */
+/**
+ * A fully-mocked DeviceBackend — the router/commands never touch adb
+ * directly. `dumpUiHierarchy` resolves to already-normalized
+ * `CommonElement[]` (REQ-IOS-SCHEMA-002/003, SPEC-IOS-001): fixtures below
+ * are authored as uiautomator XML for readability, then normalized via
+ * `normalizeUiAutomatorXml` at mock-setup time so the mock's return shape
+ * matches the real backend contract.
+ */
 function createMockBackend(devices: DeviceInfo[] = [device()]): DeviceBackend {
   return {
     listDevices: vi.fn().mockResolvedValue(devices),
     dumpUiHierarchy: vi
       .fn()
-      .mockResolvedValue('<hierarchy><node class="android.widget.Button" resource-id="btn_ok" clickable="true" enabled="true" bounds="[0,0][10,10]" /></hierarchy>'),
+      .mockResolvedValue(
+        normalizeUiAutomatorXml(
+          '<hierarchy><node class="android.widget.Button" resource-id="btn_ok" clickable="true" enabled="true" bounds="[0,0][10,10]" /></hierarchy>',
+        ),
+      ),
     screenshot: vi.fn().mockResolvedValue(Buffer.from([0x89, 0x50, 0x4e, 0x47])),
     tap: vi.fn().mockResolvedValue(undefined),
     inputText: vi.fn().mockResolvedValue(undefined),
@@ -161,7 +174,7 @@ describe("runCli", () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+        expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
         expect(result.error.message).toBe("plain string rejection");
       }
     });
@@ -184,7 +197,9 @@ describe("runCli", () => {
     it("taps the computed center of the element matched by --text", async () => {
       const backend = createMockBackend();
       (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        '<hierarchy><node class="android.widget.Button" resource-id="btn_submit" text="Submit" clickable="true" enabled="true" bounds="[100,200][140,240]" /></hierarchy>',
+        normalizeUiAutomatorXml(
+          '<hierarchy><node class="android.widget.Button" resource-id="btn_submit" text="Submit" clickable="true" enabled="true" bounds="[100,200][140,240]" /></hierarchy>',
+        ),
       );
 
       const result = await runCli(["tap", "--text", "Submit"], backend);
@@ -200,10 +215,12 @@ describe("runCli", () => {
     it("selects the Nth match (0-based) via --index when multiple elements share the same id", async () => {
       const backend = createMockBackend();
       (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        "<hierarchy>" +
-          '<node class="a" resource-id="row" clickable="true" enabled="true" bounds="[0,0][10,10]" />' +
-          '<node class="a" resource-id="row" clickable="true" enabled="true" bounds="[0,100][10,110]" />' +
-          "</hierarchy>",
+        normalizeUiAutomatorXml(
+          "<hierarchy>" +
+            '<node class="a" resource-id="row" clickable="true" enabled="true" bounds="[0,0][10,10]" />' +
+            '<node class="a" resource-id="row" clickable="true" enabled="true" bounds="[0,100][10,110]" />' +
+            "</hierarchy>",
+        ),
       );
 
       const result = await runCli(["tap", "--id", "row", "--index", "1"], backend);
@@ -218,7 +235,9 @@ describe("runCli", () => {
     it("still taps a matched but non-tappable element, surfacing a warning instead of refusing", async () => {
       const backend = createMockBackend();
       (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        '<hierarchy><node class="a" resource-id="disabled_btn" clickable="false" enabled="false" bounds="[0,0][10,10]" /></hierarchy>',
+        normalizeUiAutomatorXml(
+          '<hierarchy><node class="a" resource-id="disabled_btn" clickable="false" enabled="false" bounds="[0,0][10,10]" /></hierarchy>',
+        ),
       );
 
       const result = await runCli(["tap", "--id", "disabled_btn"], backend);
@@ -265,7 +284,7 @@ describe("runCli", () => {
       expect(backend.tap).not.toHaveBeenCalled();
     });
 
-    it("degrades a dumpUiHierarchy rejection in selector mode to a graceful ADB_COMMAND_FAILED envelope", async () => {
+    it("degrades a dumpUiHierarchy rejection in selector mode to a graceful BACKEND_COMMAND_FAILED envelope", async () => {
       const backend = createMockBackend();
       (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error("adb: exec-out cat failed"),
@@ -274,7 +293,7 @@ describe("runCli", () => {
       const result = await runCli(["tap", "--id", "btn_ok"], backend);
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+      if (!result.ok) expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
     });
 
     it("returns a graceful device-targeting error (not ELEMENT_NOT_FOUND) when the device is ambiguous in selector mode", async () => {
@@ -321,14 +340,14 @@ describe("runCli", () => {
       }
     });
 
-    it("degrades a sendKeyEvent rejection to a graceful ADB_COMMAND_FAILED envelope", async () => {
+    it("degrades a sendKeyEvent rejection to a graceful BACKEND_COMMAND_FAILED envelope", async () => {
       const backend = createMockBackend();
       (backend.sendKeyEvent as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("adb: device offline"));
 
       const result = await runCli(["key", "back"], backend);
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+      if (!result.ok) expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
     });
   });
 
@@ -390,24 +409,24 @@ describe("runCli", () => {
       expect(backend.stopApp).toHaveBeenCalledWith("R58N90ABCDE", "com.android.settings");
     });
 
-    it("degrades a launchApp rejection to a graceful ADB_COMMAND_FAILED envelope", async () => {
+    it("degrades a launchApp rejection to a graceful BACKEND_COMMAND_FAILED envelope", async () => {
       const backend = createMockBackend();
       (backend.launchApp as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("adb: package not found"));
 
       const result = await runCli(["launch", "com.android.settings"], backend);
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+      if (!result.ok) expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
     });
 
-    it("degrades a stopApp rejection to a graceful ADB_COMMAND_FAILED envelope", async () => {
+    it("degrades a stopApp rejection to a graceful BACKEND_COMMAND_FAILED envelope", async () => {
       const backend = createMockBackend();
       (backend.stopApp as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("adb: device offline"));
 
       const result = await runCli(["stop", "com.android.settings"], backend);
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+      if (!result.ok) expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
     });
   });
 
@@ -436,7 +455,7 @@ describe("runCli", () => {
       }
     });
 
-    it("degrades a dumpUiHierarchy rejection to a graceful ADB_COMMAND_FAILED envelope", async () => {
+    it("degrades a dumpUiHierarchy rejection to a graceful BACKEND_COMMAND_FAILED envelope", async () => {
       const backend = createMockBackend();
       (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error("adb: exec-out cat failed"),
@@ -445,7 +464,7 @@ describe("runCli", () => {
       const result = await runCli(["dump"], backend);
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+      if (!result.ok) expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
     });
   });
 
@@ -482,14 +501,14 @@ describe("runCli", () => {
       }
     });
 
-    it("degrades a screenshot() rejection to a graceful ADB_COMMAND_FAILED envelope", async () => {
+    it("degrades a screenshot() rejection to a graceful BACKEND_COMMAND_FAILED envelope", async () => {
       const backend = createMockBackend();
       (backend.screenshot as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("adb: device offline"));
 
       const result = await runCli(["screenshot"], backend);
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+      if (!result.ok) expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
     });
 
     it("degrades a --out write failure to a graceful WRITE_FAILED envelope", async () => {
@@ -542,14 +561,14 @@ describe("runCli", () => {
       }
     });
 
-    it("degrades a generic inputText rejection to ADB_COMMAND_FAILED", async () => {
+    it("degrades a generic inputText rejection to BACKEND_COMMAND_FAILED", async () => {
       const backend = createMockBackend();
       (backend.inputText as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("adb: device offline"));
 
       const result = await runCli(["text", "hello"], backend);
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+      if (!result.ok) expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
     });
 
     it("surfaces an AdbKeyboardInstallFailedError using its own code, reusing doctor's error codes (REQ-INPUT-003 revised self-heal)", async () => {
@@ -570,7 +589,7 @@ describe("runCli", () => {
       }
     });
 
-    it("returns a graceful device-targeting error (not ADB_COMMAND_FAILED) when the device is ambiguous", async () => {
+    it("returns a graceful device-targeting error (not BACKEND_COMMAND_FAILED) when the device is ambiguous", async () => {
       const devices = [device({ serial: "A" }), device({ serial: "B" })];
       const backend = createMockBackend(devices);
 
@@ -614,7 +633,9 @@ describe("runCli", () => {
     it("focus-taps the element matched by --id, then sends the input text (tap happens before typing)", async () => {
       const backend = createMockBackend();
       (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        '<hierarchy><node class="android.widget.EditText" resource-id="et_name" clickable="true" enabled="true" bounds="[40,220][1040,320]" /></hierarchy>',
+        normalizeUiAutomatorXml(
+          '<hierarchy><node class="android.widget.EditText" resource-id="et_name" clickable="true" enabled="true" bounds="[40,220][1040,320]" /></hierarchy>',
+        ),
       );
 
       const result = await runCli(["text", "hello", "--id", "et_name"], backend);
@@ -631,7 +652,9 @@ describe("runCli", () => {
     it("focus-taps the element matched by --text (content-desc-derived), then sends the input text", async () => {
       const backend = createMockBackend();
       (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        '<hierarchy><node class="android.widget.EditText" resource-id="et_search" content-desc="Search field" clickable="true" enabled="true" bounds="[0,0][100,100]" /></hierarchy>',
+        normalizeUiAutomatorXml(
+          '<hierarchy><node class="android.widget.EditText" resource-id="et_search" content-desc="Search field" clickable="true" enabled="true" bounds="[0,0][100,100]" /></hierarchy>',
+        ),
       );
 
       const result = await runCli(["text", "query", "--text", "Search field"], backend);
@@ -676,7 +699,7 @@ describe("runCli", () => {
       expect(backend.inputText).not.toHaveBeenCalled();
     });
 
-    it("degrades a dumpUiHierarchy rejection during focus mode to a graceful ADB_COMMAND_FAILED envelope, without typing", async () => {
+    it("degrades a dumpUiHierarchy rejection during focus mode to a graceful BACKEND_COMMAND_FAILED envelope, without typing", async () => {
       const backend = createMockBackend();
       (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error("adb: exec-out cat failed"),
@@ -685,7 +708,7 @@ describe("runCli", () => {
       const result = await runCli(["text", "hello", "--id", "et_name"], backend);
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+      if (!result.ok) expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
       expect(backend.inputText).not.toHaveBeenCalled();
     });
   });
@@ -1041,7 +1064,7 @@ describe("runCli", () => {
       if (!result.ok) expect(result.error.code).toBe("UNKNOWN_COMMAND");
     });
 
-    it("degrades a thrown backend error to a graceful ADB_COMMAND_FAILED envelope instead of throwing", async () => {
+    it("degrades a thrown backend error to a graceful BACKEND_COMMAND_FAILED envelope instead of throwing", async () => {
       const backend = createMockBackend();
       (backend.tap as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("adb: device offline"));
 
@@ -1049,7 +1072,7 @@ describe("runCli", () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.error.code).toBe("ADB_COMMAND_FAILED");
+        expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
         expect(result.error.message).toMatch(/device offline/);
       }
     });

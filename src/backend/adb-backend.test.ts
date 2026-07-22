@@ -10,6 +10,7 @@ import { ADBKEYBOARD_IME_ID } from "./adbkeyboard.js";
 import type { ApkAcquirer } from "./apk-downloader.js";
 import { AdbKeyboardInstallFailedError } from "./ime-errors.js";
 import { ImeSessionStore } from "./ime-session-store.js";
+import { normalizeUiAutomatorXml } from "../normalize/uiautomator.js";
 
 function ok(stdout: string, stderr = ""): AdbExecResult {
   return { stdout: Buffer.from(stdout, "utf-8"), stderr: Buffer.from(stderr, "utf-8"), exitCode: 0 };
@@ -98,6 +99,7 @@ describe("AdbBackend", () => {
           osVersion: "14",
           connectionState: "device",
           isEmulator: true,
+          platform: "android",
         },
       ]);
     });
@@ -118,6 +120,7 @@ describe("AdbBackend", () => {
           osVersion: "",
           connectionState: "offline",
           isEmulator: false,
+          platform: "android",
         },
       ]);
     });
@@ -149,7 +152,7 @@ describe("AdbBackend", () => {
   });
 
   describe("dumpUiHierarchy", () => {
-    it("writes, streams via exec-out cat, then removes the device-side temp file, using the SAME path across all three calls (REQ-DUMP-001, REQ-IDEMP-003)", async () => {
+    it("writes, streams via exec-out cat, then removes the device-side temp file, using the SAME path across all three calls, and returns the XML normalized to CommonElement[] (REQ-DUMP-001, REQ-IDEMP-003, REQ-IOS-SCHEMA-002/003)", async () => {
       const xml = "<hierarchy><node class=\"a\" /></hierarchy>";
       const exec = vi
         .fn<AdbExecutor>()
@@ -173,7 +176,10 @@ describe("AdbBackend", () => {
       ]);
       expect(exec).toHaveBeenNthCalledWith(2, ["-s", "R58N90ABCDE", "exec-out", "cat", dumpPath]);
       expect(exec).toHaveBeenNthCalledWith(3, ["-s", "R58N90ABCDE", "shell", "rm", "-f", dumpPath]);
-      expect(result).toBe(xml);
+      // REQ-IOS-SCHEMA-003: normalization now happens INSIDE the backend —
+      // the caller receives CommonElement[], not the raw XML string.
+      expect(result).toEqual(normalizeUiAutomatorXml(xml));
+      expect(result).toEqual([{ role: "a", text: "", id: "", bounds: { x: 0, y: 0, w: 0, h: 0 }, tappable: false, enabled: false, children: [] }]);
     });
 
     it("namespaces the device-side temp path by serial (REQ-MULTIDEV-004)", async () => {

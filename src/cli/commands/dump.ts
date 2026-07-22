@@ -1,14 +1,16 @@
 /**
  * `dump` command (REQ-DUMP-001/002).
  *
- * Layer boundary in action: this handler asks the backend for raw XML
- * (adb wrapper, M4) then normalizes it via the M2 pure function — the CLI
- * layer never touches uiautomator's XML shape directly.
+ * Layer boundary in action: this handler asks the backend for the already-
+ * normalized element tree (REQ-IOS-SCHEMA-002/003, SPEC-IOS-001 — each
+ * backend normalizes its own raw format internally) — the CLI layer never
+ * touches a platform's raw markup/JSON shape directly, which is what lets
+ * this same handler work unchanged for both `AdbBackend` and `IdbBackend`.
  */
 
-import { normalizeUiAutomatorXml } from "../../normalize/uiautomator.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
+import type { CommonElement } from "../../schema/common-element.js";
 import { errorMessage, type CommandHandler } from "./types.js";
 
 export const dumpCommand: CommandHandler = async (args, backend) => {
@@ -16,13 +18,12 @@ export const dumpCommand: CommandHandler = async (args, backend) => {
   const target = resolveTargetDevice(devices, args.device);
   if (!target.ok) return failure("dump", target.code, target.message, target.details);
 
-  let xml: string;
+  let elements: CommonElement[];
   try {
-    xml = await backend.dumpUiHierarchy(target.serial);
+    elements = await backend.dumpUiHierarchy(target.serial);
   } catch (err) {
-    return failure("dump", "ADB_COMMAND_FAILED", errorMessage(err));
+    return failure("dump", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
 
-  const elements = normalizeUiAutomatorXml(xml);
   return success("dump", { serial: target.serial, elements });
 };

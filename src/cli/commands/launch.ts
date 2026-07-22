@@ -23,7 +23,7 @@ export const launchCommand: CommandHandler = async (args, backend) => {
   try {
     await backend.launchApp(target.serial, packageId);
   } catch (err) {
-    return failure("launch", "ADB_COMMAND_FAILED", errorMessage(err));
+    return failure("launch", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
 
   return success("launch", { serial: target.serial, package: packageId });

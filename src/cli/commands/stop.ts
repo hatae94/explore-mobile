@@ -23,7 +23,7 @@ export const stopCommand: CommandHandler = async (args, backend) => {
   try {
     await backend.stopApp(target.serial, packageId);
   } catch (err) {
-    return failure("stop", "ADB_COMMAND_FAILED", errorMessage(err));
+    return failure("stop", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
 
   return success("stop", { serial: target.serial, package: packageId });

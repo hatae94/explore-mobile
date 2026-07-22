@@ -10,7 +10,6 @@
  */
 
 import { elementCenter, findElement, type ElementSelector } from "../../normalize/element-query.js";
-import { normalizeUiAutomatorXml } from "../../normalize/uiautomator.js";
 import type { DeviceBackend } from "../../schema/device-backend.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
@@ -44,14 +43,13 @@ async function tapBySelector(args: ParsedCommandArgs, backend: DeviceBackend): P
     ...(index !== undefined ? { index } : {}),
   };
 
-  let xml: string;
+  let elements;
   try {
-    xml = await backend.dumpUiHierarchy(target.serial);
+    elements = await backend.dumpUiHierarchy(target.serial);
   } catch (err) {
-    return failure("tap", "ADB_COMMAND_FAILED", errorMessage(err));
+    return failure("tap", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
 
-  const elements = normalizeUiAutomatorXml(xml);
   const element = findElement(elements, selector);
   if (element === null) {
     return failure("tap", "ELEMENT_NOT_FOUND", "No element matched the given selector.", { selector });
@@ -62,7 +60,7 @@ async function tapBySelector(args: ParsedCommandArgs, backend: DeviceBackend): P
   try {
     await backend.tap(target.serial, x, y);
   } catch (err) {
-    return failure("tap", "ADB_COMMAND_FAILED", errorMessage(err));
+    return failure("tap", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
 
   // Not tappable (clickable && enabled is false) is not fatal — an
@@ -118,7 +116,7 @@ export const tapCommand: CommandHandler = async (args, backend) => {
   try {
     await backend.tap(target.serial, x, y);
   } catch (err) {
-    return failure("tap", "ADB_COMMAND_FAILED", errorMessage(err));
+    return failure("tap", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
 
   return success("tap", { serial: target.serial, x, y });

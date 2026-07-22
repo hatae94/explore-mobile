@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { DeviceInfo } from "../schema/device-backend.js";
+import type { DeviceInfo, DevicePlatform } from "../schema/device-backend.js";
 import { resolveTargetDevice } from "./device-targeting.js";
 
-function device(serial: string): DeviceInfo {
-  return { serial, model: "m", osVersion: "14", connectionState: "device", isEmulator: false };
+function device(serial: string, platform: DevicePlatform = "android"): DeviceInfo {
+  return { serial, model: "m", osVersion: "14", connectionState: "device", isEmulator: false, platform };
 }
 
 describe("resolveTargetDevice", () => {
@@ -52,6 +52,19 @@ describe("resolveTargetDevice", () => {
     if (!result.ok) {
       expect(result.code).toBe("DEVICE_NOT_FOUND");
       expect(result.details?.["availableDevices"]).toEqual(devices);
+    }
+  });
+
+  it("returns a graceful cross-platform AMBIGUOUS_DEVICE error (platform-tagged device list) when an Android + an iOS device are both connected and --device is omitted (REQ-IOS-ARCH-004)", () => {
+    const devices = [device("R58N90ABCDE", "android"), device("00008030-ABCDEF", "ios")];
+
+    const result = resolveTargetDevice(devices, undefined);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("AMBIGUOUS_DEVICE");
+      const listed = result.details?.["availableDevices"] as DeviceInfo[];
+      expect(listed.map((d) => d.platform)).toEqual(["android", "ios"]);
     }
   });
 });

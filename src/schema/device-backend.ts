@@ -1,23 +1,37 @@
 /**
  * Device-backend interface (REQ-ARCH-003) — the thin plug-in point through
- * which a future iOS/idb backend can replace the Android/adb backend
- * without redesign (spec.md §A.4 architecture layers).
+ * which the iOS/idb backend replaces the Android/adb backend without
+ * redesign (spec.md §A.4 architecture layers).
  *
- * This SPEC (SPEC-ANDROID-001) defines the interface only. Concrete
- * implementations land in later milestones:
- *   - `AdbBackend` (adb subprocess wrapper) — M4/M5/M6, this SPEC.
- *   - An iOS/idb backend — SPEC-02 (spec.md §E roadmap), out of scope here.
+ * SPEC-ANDROID-001 defined the interface and its Android implementation
+ * (`AdbBackend`). SPEC-IOS-001 fulfills the original promise: `IdbBackend`
+ * implements this SAME interface unchanged in shape (REQ-IOS-ARCH-005 —
+ * thin/swappable), plus two additive/relocated changes: `DeviceInfo.platform`
+ * (additive) and `dumpUiHierarchy`'s return type moving from raw string to
+ * normalized `CommonElement[]` (REQ-IOS-SCHEMA-002 — normalization ownership
+ * moves INTO each backend).
  *
- * @MX:ANCHOR — invariant contract for backend substitution (REQ-ARCH-003).
- * @MX:REASON — every CLI command (M3) and the normalization layer depend on
- * this method surface; changing it ripples through every backend and the
- * command layer above it.
+ * @MX:ANCHOR — invariant contract for backend substitution (REQ-ARCH-003,
+ * REQ-IOS-ARCH-005). Both `AdbBackend` and `IdbBackend` implement this exact
+ * 8-method surface.
+ * @MX:REASON — every CLI command and the backend registry (`registry.ts`)
+ * depend on this method surface; changing it ripples through every backend
+ * and the command layer above it.
  */
 
 import type { CommonElement } from "./common-element.js";
 
 /** Device connection state as reported by the platform's device-listing tool. */
 export type DeviceConnectionState = "device" | "offline" | "unauthorized";
+
+/**
+ * Which backend owns a device (REQ-IOS-SCHEMA-001, SPEC-IOS-001) — set by
+ * each backend's `listDevices()` (`AdbBackend` -> `"android"`, `IdbBackend`
+ * -> `"ios"`) and consumed by the backend registry (`registry.ts`) to route
+ * `--device <serial>` to the owning backend without the user specifying a
+ * platform.
+ */
+export type DevicePlatform = "android" | "ios";
 
 /** One connected device, as reported by `devices` (REQ-DEVICES-001/002). */
 export interface DeviceInfo {
@@ -31,6 +45,8 @@ export interface DeviceInfo {
   connectionState: DeviceConnectionState;
   /** True for an emulator/simulator, false for a physical device. */
   isEmulator: boolean;
+  /** Which backend owns this device (REQ-IOS-SCHEMA-001, additive field). */
+  platform: DevicePlatform;
 }
 
 /**
@@ -51,13 +67,18 @@ export interface DeviceBackend {
   listDevices(): Promise<DeviceInfo[]>;
 
   /**
-   * Captures the current UI hierarchy as raw platform-native markup
-   * (Android: uiautomator XML). The normalization layer (M2, this SPEC)
-   * converts the raw string into {@link CommonElement}[] — normalization
-   * is deliberately NOT a backend responsibility, so the same normalizer
-   * can be reused across backends once each backend's raw format is mapped.
+   * Captures the current UI hierarchy and returns it already normalized to
+   * the common element schema (REQ-IOS-SCHEMA-002, SPEC-IOS-001 — revises
+   * the original SPEC-ANDROID-001 design). Each backend owns normalization
+   * of its own raw platform format INTERNALLY: `AdbBackend` collects
+   * uiautomator XML and calls `normalizeUiAutomatorXml` before returning;
+   * `IdbBackend` collects idb's `describe-all` JSON and calls
+   * `normalizeIdbAccessibility` before returning. The command layer
+   * (`dump.ts`/`tap.ts`/`text.ts`) never sees a raw platform format and is
+   * therefore platform-agnostic — this is what lets element-selector
+   * tap/text work on iOS with zero command-layer changes.
    */
-  dumpUiHierarchy(serial: string): Promise<string>;
+  dumpUiHierarchy(serial: string): Promise<CommonElement[]>;
 
   /** Captures a screenshot as raw PNG bytes (REQ-SCREENSHOT-001/002). */
   screenshot(serial: string): Promise<Uint8Array>;
