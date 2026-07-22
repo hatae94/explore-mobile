@@ -10,9 +10,14 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       exclude: [
         "src/**/*.test.ts",
-        // CLI command surface is implemented in later milestones (M3+);
-        // this stub has no behavior to unit test yet.
-        "src/cli/**",
+        // Process entrypoint glue only (real process.argv/stdout/exitCode);
+        // its logic (router.ts + commands/*) is fully unit tested and
+        // intentionally NOT excluded here.
+        "src/cli/bin.ts",
+        // Real child_process.spawn wiring; exercised through AdbBackend's
+        // injected-mock unit tests, not directly (would require a real
+        // adb binary / real subprocess).
+        "src/backend/adb-executor.ts",
       ],
     },
   },

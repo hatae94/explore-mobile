@@ -1,0 +1,21 @@
+/**
+ * Input validation at the CLI trust boundary (Secured). These run BEFORE
+ * any value reaches the adb wrapper — `child_process.spawn` with an argv
+ * array already prevents shell injection (see backend/adb-executor.ts),
+ * but validating shape here rejects obviously malformed input early with
+ * a clear graceful error instead of a confusing adb-level failure.
+ */
+
+const PACKAGE_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
+
+/** Loose Android package-name check: reverse-DNS-style dotted segments. */
+export function isValidPackageName(value: string): boolean {
+  return PACKAGE_NAME_PATTERN.test(value);
+}
+
+/** Parses a coordinate string into a non-negative integer, or undefined if invalid. */
+export function parseCoordinate(value: string): number | undefined {
+  if (!/^\d+$/.test(value)) return undefined;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
+}
