@@ -95,9 +95,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `BACKEND_COMMAND_FAILED` across all 7 device-facing commands
     (dump/tap/text/screenshot/launch/stop/key), since a command failure
     can now originate from either backend.
-  - 106 new/updated unit tests (292 total, up from 186), covering the
-    registry, the idb normalizer, `IdbBackend`, `IdbDoctor`, and the
-    doctor/reset platform-branching dispatch.
+  - `key` now surfaces `UNSUPPORTED_KEY_ON_IOS` at the CLI level for
+    unsupported iOS key aliases (e.g. `home`, `volume_up`) instead of the
+    generic `BACKEND_COMMAND_FAILED` — the backend already threw the
+    typed error, but the CLI layer was masking it; a CLI-level regression
+    test now covers the routed envelope directly.
+  - 81 new/updated unit tests (293 total, up from the 212-test
+    SPEC-ANDROID-001 baseline this SPEC built on), covering the registry,
+    the idb normalizer, `IdbBackend`, `IdbDoctor`, and the doctor/reset
+    platform-branching dispatch.
 
 ### Notes
 
@@ -120,7 +126,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--udid`/screenshot argument and output shapes, and the `ui key` HID
   code mapping. These sites are marked `@MX:TODO` in the source; see
   `.moai/specs/SPEC-IOS-001/progress.md` for the current PASS /
-  PASS-WITH-DEBT breakdown (18 PASS, 10 PASS-WITH-DEBT, 0 FAIL).
+  PASS-WITH-DEBT breakdown (19 PASS, 9 PASS-WITH-DEBT, 0 FAIL). A
+  post-sync quality audit also caught a real CLI-level gap in `key`
+  (AC-IOS-017) and a stale grep-literal wording in two AC descriptions
+  (AC-IOS-003/AC-IOS-024); both are fixed and reflected above.
 - WebView/DOM recognition (SPEC-03), the exploration loop (SPEC-04), and
   the Codex wrapper (SPEC-05) remain committed roadmap items, not yet
   implemented.

@@ -8,7 +8,7 @@ including multi-device interaction testing.
 
 > **Status**: core Android/adb primitives + environment bootstrap, and
 > the iOS Simulator/idb backend, are implemented and unit/mock-tested
-> (292 tests, all green). Real-device / real-simulator end-to-end
+> (293 tests, all green). Real-device / real-simulator end-to-end
 > verification is **not yet done** for either platform — see
 > [Status](#status) below before relying on this in production. iOS in
 > particular still has a few idb behaviors (exact JSON field names, HID
@@ -251,7 +251,7 @@ contaminate either device's input-method state.
 ## Status
 
 Android (SPEC-ANDROID-001, all 8 milestones) and iOS Simulator
-(SPEC-IOS-001) backends are both implemented, with 292 unit/mock tests
+(SPEC-IOS-001) backends are both implemented, with 293 unit/mock tests
 green, but **neither has been exercised against a real device / real
 simulator or a real host environment yet**. Concretely, still pending
 before this is production-ready:
