@@ -1,0 +1,18 @@
+[
+  {
+    "AXFrame": "{{199, 116}, {64, 87.5}}",
+    "AXUniqueId": "Wallet",
+    "frame": { "y": 116, "x": 199, "width": 64, "height": 87.5 },
+    "role_description": "button",
+    "AXLabel": "Wallet",
+    "content_required": false,
+    "type": "Button",
+    "title": null,
+    "help": null,
+    "custom_actions": ["Edit mode", "Today"],
+    "AXValue": "",
+    "enabled": true,
+    "role": "AXButton",
+    "subrole": null
+  }
+]

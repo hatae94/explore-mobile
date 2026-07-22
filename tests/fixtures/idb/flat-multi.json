@@ -1,0 +1,22 @@
+[
+  {
+    "AXUniqueId": "btn_submit",
+    "AXLabel": "Submit",
+    "frame": { "x": 10, "y": 20, "width": 100, "height": 44 },
+    "type": "Button",
+    "role": "AXButton",
+    "subrole": null,
+    "custom_actions": [],
+    "enabled": true
+  },
+  {
+    "AXUniqueId": "lbl_title",
+    "AXLabel": "Title",
+    "frame": { "x": 10, "y": 80, "width": 200, "height": 30 },
+    "type": "StaticText",
+    "role": "AXStaticText",
+    "subrole": null,
+    "custom_actions": [],
+    "enabled": true
+  }
+]
