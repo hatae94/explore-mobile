@@ -9,6 +9,7 @@ import type { ApkAcquirer } from "../backend/apk-downloader.js";
 import { AdbDoctor } from "../backend/doctor.js";
 import { IdbDoctor } from "../backend/idb-doctor.js";
 import { AdbKeyboardInstallFailedError, ImeRestoreFailedError } from "../backend/ime-errors.js";
+import { UnsupportedKeyOnIosError } from "../backend/idb-errors.js";
 import { ImeSessionStore } from "../backend/ime-session-store.js";
 import { BackendRegistry } from "../backend/registry.js";
 import type { ProcessExecutor } from "../backend/process-executor.js";
@@ -416,6 +417,38 @@ describe("runCli", () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
+    });
+
+    it("surfaces UNSUPPORTED_KEY_ON_IOS at the CLI level (not BACKEND_COMMAND_FAILED) for a valid alias with no iOS HID mapping on an iOS-registry-routed target (AC-IOS-017, D7 typed-error precedence)", async () => {
+      const iosDeviceInfo = device({ serial: "00008030-IOS", platform: "ios" });
+      const idbBackend: DeviceBackend = {
+        listDevices: vi.fn().mockResolvedValue([iosDeviceInfo]),
+        dumpUiHierarchy: vi.fn().mockResolvedValue([]),
+        screenshot: vi.fn().mockResolvedValue(new Uint8Array()),
+        tap: vi.fn().mockResolvedValue(undefined),
+        inputText: vi.fn().mockResolvedValue(undefined),
+        sendKeyEvent: vi
+          .fn()
+          .mockRejectedValue(
+            new UnsupportedKeyOnIosError(
+              "Key alias 'home' has no iOS HID keycode mapping — no hardware-keyboard equivalent exists on iOS.",
+            ),
+          ),
+        launchApp: vi.fn().mockResolvedValue(undefined),
+        stopApp: vi.fn().mockResolvedValue(undefined),
+      };
+      const registry: DeviceBackend = new BackendRegistry([
+        { platform: "ios", backend: idbBackend, isAvailable: async () => true },
+      ]);
+
+      const result = await runCli(["key", "home"], registry);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("UNSUPPORTED_KEY_ON_IOS");
+        expect(result.error.code).not.toBe("BACKEND_COMMAND_FAILED");
+      }
+      expect(idbBackend.sendKeyEvent).toHaveBeenCalledWith(iosDeviceInfo.serial, "home");
     });
   });
 
