@@ -31,7 +31,7 @@ author: manager-spec
 | AC-IOS-013 | `dumpUiHierarchy`: `idb ui describe-all` → CommonElement[] | REQ-IOS-BACKEND-003 | unit(mock) + e2e |
 | AC-IOS-014 | `screenshot`: 유효 PNG(매직바이트 `\x89PNG`) | REQ-IOS-BACKEND-004 | e2e·manual |
 | AC-IOS-015 | `tap x y`: `idb ui tap` 좌표 탭 | REQ-IOS-BACKEND-005 | unit(mock) + e2e |
-| AC-IOS-016 | `text`: `idb ui text` Unicode-native(IME 절차 없음) + hideKeyboard no-op | REQ-IOS-BACKEND-006 | unit(mock) + e2e |
+| AC-IOS-016 | `text`: ASCII는 `idb ui text` 단일 호출, 비ASCII는 `simctl pbcopy` + Command-V 붙여넣기(IME 절차 없음) + hideKeyboard no-op | REQ-IOS-BACKEND-006 | unit(mock) + e2e |
 | AC-IOS-017 | `key`: HID 매핑 전송 + 미대응 별칭 `UNSUPPORTED_KEY_ON_IOS` 거부 | REQ-IOS-BACKEND-007 | unit(mock) + e2e |
 | AC-IOS-018 | `launch`/`stop`: `idb launch`/`terminate` | REQ-IOS-BACKEND-008 | e2e·manual |
 | AC-IOS-019 | iOS 환경 서비스: idb/companion/부팅 시뮬레이터 점검 JSON 보고 | REQ-IOS-DOCTOR-001 | unit(mock) + e2e |
@@ -126,11 +126,16 @@ author: manager-spec
 - **When** `IdbBackend.tap(serial, x, y)`를 호출하면,
 - **Then** `idb ui tap <x> <y>`(대상 지정 플래그 포함)가 정확한 argv로 호출된다.
 
-### AC-IOS-016 — text Unicode-native
+### AC-IOS-016 — text: ASCII 직접 입력 + 비ASCII 클립보드 경로
+> **개정(2026-07-25, 실기기 검증)**: 최초 기준은 `idb ui text "안녕 😸"`를 요구했으나, 실측 결과 `idb ui text`는 **Unicode를 지원하지 않는다**. fb-idb 1.1.7 `idb/common/hid.py`의 `text_to_events`가 고정 미국 자판표(`KEY_MAP` = 출력 가능 ASCII 95자 + 개행)만 처리하고, 그 외 문자에는 `No keycode found for 네` 예외를 던진다. 원래 기준은 **달성 불가능**하므로 아래로 개정한다.
+
 - **Given** mock idb executor,
-- **When** `IdbBackend.inputText(serial, "안녕 😸")`를 호출하면,
-- **Then** `idb ui text "안녕 😸"`가 호출되고, ADBKeyBoard/IME 전환/base64/디스크 세션 절차가 **전혀 수행되지 않는다**(Unicode-native).
+- **When** `IdbBackend.inputText(serial, "hello world")`(ASCII)를 호출하면,
+- **Then** `idb ui text "hello world"`가 **단일 호출**로 실행되고, ADBKeyBoard/IME 전환/base64/디스크 세션 절차가 **전혀 수행되지 않는다**.
+- **And** `IdbBackend.inputText(serial, "네이버 한글 🎉")`(비ASCII)를 호출하면, `simctl pbcopy`로 기기 페이스트보드에 기록한 뒤 Command(HID 227)를 누른 상태에서 V(HID 25)를 눌러 붙여넣는다(`ui text`는 호출하지 않는다).
+- **And** 페이스트보드 기록 실패 및 붙여넣기 키 실패는 각각 오류로 표면화된다(무음 실패 금지).
 - **And** `options.hideKeyboardAfter`는 iOS에서 no-op이며 오류를 유발하지 않는다.
+- **알려진 제약**: ASCII 경로는 시뮬레이터의 **활성 자판 배열**에 종속된다. 한글 자판이 선택된 상태에서는 `ui text "naver"`가 오류 없이 `ㅜㅁㅍㄷㄱ`로 입력된다. idb에는 활성 입력 모드를 읽거나 지정하는 수단이 없다(HID 57이 한/영을 토글하지만 현재 상태를 알 수 없어 맹목적). 붙여넣기 경로는 자판을 우회하므로 이 문제가 없다.
 
 ### AC-IOS-017 — key HID 매핑 + 미대응 거부
 - **Given** iOS 키 별칭 맵,

@@ -32,6 +32,8 @@ import { spawnIdb } from "./idb-executor.js";
 import { IdbCommandFailedError, UnsupportedKeyOnIosError } from "./idb-errors.js";
 import { IOS_HID_KEYCODE } from "./keycodes-ios.js";
 import { parseIdbTargets } from "./idb-target-parse.js";
+import type { ClipboardWriter } from "./idb-clipboard.js";
+import { simctlPbcopy } from "./idb-clipboard.js";
 import { normalizeIdbAccessibility } from "../normalize/idb.js";
 
 /**
@@ -74,6 +76,32 @@ function toDeviceInfo(raw: RawIdbTarget): DeviceInfo {
   };
 }
 
+/**
+ * Every character `idb ui text` can encode: fb-idb 1.1.7's `KEY_MAP`
+ * (`idb/common/hid.py`) holds exactly the 95 printable ASCII characters plus
+ * newline, and `text_to_events` raises `No keycode found for <char>` for
+ * anything else. Verified by reading KEY_MAP out of the installed module.
+ */
+const IDB_TYPABLE_PATTERN = /^[\x20-\x7E\n]*$/;
+
+/** HID usage codes for the paste chord (Left GUI = Command, and V). */
+const HID_LEFT_GUI = 227;
+const HID_V = 25;
+
+/**
+ * `idb` has no chord/modifier command — `ui key` presses one code at a time —
+ * so the paste chord is produced by holding Command with `--duration` in one
+ * invocation while a second invocation presses V. Measured on this toolchain,
+ * one `idb` invocation costs ~130-190 ms end to end, so V is pressed ~750 ms
+ * into a 2 s hold: comfortably clear of both edges.
+ */
+const MODIFIER_HOLD_SECONDS = 2;
+const PASTE_KEY_DELAY_MS = 600;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /** Throws IdbCommandFailedError (carrying stderr) when the invocation failed. */
 function assertSuccess(result: IdbExecResult, context: string): void {
   if (result.exitCode !== 0) {
@@ -87,7 +115,12 @@ function assertSuccess(result: IdbExecResult, context: string): void {
 }
 
 export class IdbBackend implements DeviceBackend {
-  constructor(private readonly exec: IdbExecutor = spawnIdb) {}
+  constructor(
+    private readonly exec: IdbExecutor = spawnIdb,
+    private readonly writeClipboard: ClipboardWriter = simctlPbcopy,
+    /** Injectable so unit tests need not wait out the real inter-keystroke gap. */
+    private readonly pasteKeyDelayMs: number = PASTE_KEY_DELAY_MS,
+  ) {}
 
   /**
    * @MX:NOTE — the `list-targets --json` DEFER assumption (research.md §3.1,
@@ -156,15 +189,65 @@ export class IdbBackend implements DeviceBackend {
   }
 
   /**
-   * REQ-IOS-BACKEND-006: idb's `ui text` is Unicode-native — no IME
-   * switch, no ADBKeyBoard, no base64 broadcast, no session/disk state
-   * (spec.md §C.2). `options.hideKeyboardAfter` has no iOS equivalent
-   * action, so it is accepted but ignored (an observable no-op, never an
-   * error) rather than rejected as an unknown option.
+   * REQ-IOS-BACKEND-006 (AMENDED after real-simulator verification): idb's
+   * `ui text` is NOT Unicode-native. It encodes each character through a fixed
+   * US-keyboard table and fails outright on anything outside printable ASCII
+   * (`No keycode found for 네`), so Korean and emoji cannot be typed with it.
+   * ASCII keeps the direct one-call path; everything else goes through the
+   * device pasteboard and a Command-V chord. Still far simpler than Android:
+   * no ADBKeyBoard APK, no GPL download, no base64 broadcast, no disk-persisted
+   * per-serial IME session to restore.
+   *
+   * `options.hideKeyboardAfter` has no iOS equivalent action, so it is
+   * accepted but ignored (an observable no-op, never an error) rather than
+   * rejected as an unknown option.
+   *
+   * @MX:WARN — the ASCII path is at the mercy of the simulator's ACTIVE
+   * keyboard layout: with a Korean layout selected, `ui text "naver"` silently
+   * lands as `ㅜㅁㅍㄷㄱ` instead of failing.
+   * @MX:REASON — observed on a ko_KR simulator during SPEC-IOS-001
+   * verification. idb exposes no way to read or set the active input mode
+   * (Caps Lock / HID 57 toggles it blindly, with no readable state), so this
+   * cannot currently be detected or corrected here; the paste path below is
+   * immune because pasting bypasses the keyboard entirely.
    */
   async inputText(serial: string, text: string, _options?: { hideKeyboardAfter?: boolean }): Promise<void> {
-    const result = await this.exec(["ui", "text", "--udid", serial, text]);
-    assertSuccess(result, "ui text");
+    if (IDB_TYPABLE_PATTERN.test(text)) {
+      const result = await this.exec(["ui", "text", "--udid", serial, text]);
+      assertSuccess(result, "ui text");
+      return;
+    }
+    await this.pasteText(serial, text);
+  }
+
+  /**
+   * Unicode text input: put the text on the device pasteboard, then paste it
+   * with Command-V. Verified against a booted simulator with `"네이버 한글 🎉"`.
+   */
+  private async pasteText(serial: string, text: string): Promise<void> {
+    await this.writeClipboard(serial, text);
+
+    const hold = this.exec([
+      "ui",
+      "key",
+      "--udid",
+      serial,
+      "--duration",
+      String(MODIFIER_HOLD_SECONDS),
+      String(HID_LEFT_GUI),
+    ]);
+    // The hold runs concurrently with the V keystroke below, so attach a no-op
+    // handler now to keep a hold failure from surfacing as an unhandled
+    // rejection during the delay. The real result is awaited (and rethrown)
+    // after the paste key, so no error is swallowed.
+    hold.catch(() => undefined);
+
+    await delay(this.pasteKeyDelayMs);
+    const paste = await this.exec(["ui", "key", "--udid", serial, String(HID_V)]);
+    const holdResult = await hold;
+
+    assertSuccess(paste, "ui key (paste V)");
+    assertSuccess(holdResult, "ui key (hold Command)");
   }
 
   /**

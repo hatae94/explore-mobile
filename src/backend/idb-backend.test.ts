@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { DeviceBackend } from "../schema/device-backend.js";
+import type { ClipboardWriter } from "./idb-clipboard.js";
 import type { IdbExecResult, IdbExecutor } from "./idb-executor.js";
 import { IdbBackend } from "./idb-backend.js";
 import { IdbCommandFailedError, UnsupportedKeyOnIosError } from "./idb-errors.js";
@@ -230,15 +231,69 @@ describe("IdbBackend", () => {
     });
   });
 
-  describe("inputText (AC-IOS-016 — Unicode-native, no IME procedure)", () => {
-    it("calls 'idb ui text --udid <serial> <text>' directly, with no self-heal / IME / broadcast steps", async () => {
+  describe("inputText (AC-IOS-016 — ASCII via ui text, non-ASCII via clipboard paste)", () => {
+    it("calls 'idb ui text --udid <serial> <text>' directly for ASCII, with no self-heal / IME / broadcast steps", async () => {
       const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));
 
       const backend = new IdbBackend(exec);
-      await backend.inputText("SIM-1", "안녕 😸");
+      await backend.inputText("SIM-1", "hello world");
 
       expect(exec).toHaveBeenCalledTimes(1);
-      expect(exec).toHaveBeenCalledWith(["ui", "text", "--udid", "SIM-1", "안녕 😸"]);
+      expect(exec).toHaveBeenCalledWith(["ui", "text", "--udid", "SIM-1", "hello world"]);
+    });
+
+    /**
+     * `idb ui text` is NOT Unicode-capable: it maps each character through a
+     * fixed US-keyboard table (fb-idb 1.1.7 `idb/common/hid.py` KEY_MAP —
+     * printable ASCII plus newline) and raises `No keycode found for 네` for
+     * anything else. Non-ASCII therefore routes through the device pasteboard
+     * instead: simctl pbcopy, then Cmd (HID 227) held down while V (HID 25) is
+     * pressed. Verified against a booted simulator.
+     */
+    it("routes non-ASCII text through the clipboard: pbcopy, then V pressed while Cmd is held", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValue(ok(""));
+      const writeClipboard = vi.fn<ClipboardWriter>().mockResolvedValue(undefined);
+
+      const backend = new IdbBackend(exec, writeClipboard, 0);
+      await backend.inputText("SIM-1", "네이버 한글 🎉");
+
+      expect(writeClipboard).toHaveBeenCalledWith("SIM-1", "네이버 한글 🎉");
+      expect(exec).toHaveBeenCalledTimes(2);
+      expect(exec).toHaveBeenNthCalledWith(1, ["ui", "key", "--udid", "SIM-1", "--duration", "2", "227"]);
+      expect(exec).toHaveBeenNthCalledWith(2, ["ui", "key", "--udid", "SIM-1", "25"]);
+      // Never attempts `ui text` with a character idb cannot encode.
+      expect(exec).not.toHaveBeenCalledWith(expect.arrayContaining(["text"]));
+    });
+
+    it("keeps the ASCII fast path for every character idb's KEY_MAP covers (printable ASCII + newline)", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValue(ok(""));
+      const writeClipboard = vi.fn<ClipboardWriter>().mockResolvedValue(undefined);
+      const backend = new IdbBackend(exec, writeClipboard, 0);
+
+      await backend.inputText("SIM-1", "a~Z0!@#$%^&*()_+-=[]{}|;':\",./<>?\n");
+
+      expect(writeClipboard).not.toHaveBeenCalled();
+      expect(exec).toHaveBeenCalledTimes(1);
+      expect(exec.mock.calls[0]?.[0]?.[1]).toBe("text");
+    });
+
+    it("surfaces a clipboard-write failure as an error rather than silently typing nothing", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValue(ok(""));
+      const writeClipboard = vi.fn<ClipboardWriter>().mockRejectedValue(new Error("simctl pbcopy failed (exit 1)"));
+
+      const backend = new IdbBackend(exec, writeClipboard, 0);
+
+      await expect(backend.inputText("SIM-1", "한글")).rejects.toThrow(/pbcopy/);
+      expect(exec).not.toHaveBeenCalled();
+    });
+
+    it("surfaces a failed paste keystroke as IdbCommandFailedError", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok("")).mockResolvedValueOnce(fail("HID event failed"));
+      const writeClipboard = vi.fn<ClipboardWriter>().mockResolvedValue(undefined);
+
+      const backend = new IdbBackend(exec, writeClipboard, 0);
+
+      await expect(backend.inputText("SIM-1", "한글")).rejects.toBeInstanceOf(IdbCommandFailedError);
     });
 
     it("accepts options.hideKeyboardAfter as a harmless no-op — it changes nothing about the single idb call issued", async () => {
