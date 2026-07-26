@@ -8,8 +8,17 @@ function idbOk(stdout = ""): IdbExecResult {
   return { stdout: Buffer.from(stdout, "utf-8"), stderr: Buffer.alloc(0), exitCode: 0 };
 }
 
-function idbFail(stderr: string): IdbExecResult {
-  return { stdout: Buffer.alloc(0), stderr: Buffer.from(stderr, "utf-8"), exitCode: 1 };
+function idbFail(stderr: string, exitCode = 1): IdbExecResult {
+  return { stdout: Buffer.alloc(0), stderr: Buffer.from(stderr, "utf-8"), exitCode };
+}
+
+/**
+ * Real `idb list-targets --json` output shape (fb-idb 1.1.7, confirmed
+ * against a booted simulator during SPEC-IOS-001 run-phase verification):
+ * JSONL — one JSON object per line, NOT a wrapping JSON array.
+ */
+function jsonl(...entries: Record<string, unknown>[]): string {
+  return entries.map((entry) => JSON.stringify(entry)).join("\n");
 }
 
 function processOk(stdout = ""): ProcessExecResult {
@@ -30,16 +39,35 @@ describe("IdbDoctor", () => {
       expect(idbExec).toHaveBeenCalledWith(["--version"]);
     });
 
-    it("reports installed:false when 'idb --version' exits non-zero", async () => {
+    /**
+     * fb-idb 1.1.7 (the version pipx actually installs) has NO `--version`
+     * flag: it exits 2 with an argparse "unrecognized arguments: --version"
+     * error. Treating that as "idb is not installed" made BackendRegistry skip
+     * the entire iOS backend, so every iOS device silently vanished from
+     * `devices` output. Presence must therefore fall back to a `which idb`
+     * probe — the same probe shape `checkCompanion` already uses.
+     */
+    it("falls back to a 'which idb' presence probe when 'idb --version' is unsupported (fb-idb 1.1.7 exits 2)", async () => {
+      const idbExec = vi.fn<IdbExecutor>().mockResolvedValueOnce(idbFail("idb: error: unrecognized arguments: --version", 2));
+      const processExec = vi.fn<ProcessExecutor>().mockResolvedValueOnce(processOk("/Users/me/.local/bin/idb\n"));
+      const doctor = new IdbDoctor(idbExec, processExec);
+
+      await expect(doctor.checkIdbInstalled()).resolves.toEqual({ installed: true, version: null });
+      expect(processExec).toHaveBeenCalledWith("which", ["idb"]);
+    });
+
+    it("reports installed:false when 'idb --version' exits non-zero AND 'which idb' finds nothing", async () => {
       const idbExec = vi.fn<IdbExecutor>().mockResolvedValueOnce(idbFail("command not found"));
-      const doctor = new IdbDoctor(idbExec);
+      const processExec = vi.fn<ProcessExecutor>().mockResolvedValueOnce(processFail());
+      const doctor = new IdbDoctor(idbExec, processExec);
 
       await expect(doctor.checkIdbInstalled()).resolves.toEqual({ installed: false, version: null });
     });
 
     it("reports installed:false when spawning idb itself throws (binary missing)", async () => {
       const idbExec = vi.fn<IdbExecutor>().mockRejectedValueOnce(new Error("spawn idb ENOENT"));
-      const doctor = new IdbDoctor(idbExec);
+      const processExec = vi.fn<ProcessExecutor>().mockResolvedValueOnce(processFail());
+      const doctor = new IdbDoctor(idbExec, processExec);
 
       await expect(doctor.checkIdbInstalled()).resolves.toEqual({ installed: false, version: null });
     });
@@ -73,7 +101,7 @@ describe("IdbDoctor", () => {
     it("reports booted:true when any simulator is Booted (no serial given)", async () => {
       const idbExec = vi
         .fn<IdbExecutor>()
-        .mockResolvedValueOnce(idbOk(JSON.stringify([{ udid: "A", state: "Shutdown" }, { udid: "B", state: "Booted" }])));
+        .mockResolvedValueOnce(idbOk(jsonl({ udid: "A", state: "Shutdown" }, { udid: "B", state: "Booted" })));
       const doctor = new IdbDoctor(idbExec);
 
       await expect(doctor.checkSimulatorBooted()).resolves.toEqual({ booted: true });
@@ -82,7 +110,7 @@ describe("IdbDoctor", () => {
     it("reports booted:false with a message when no simulator is booted", async () => {
       const idbExec = vi
         .fn<IdbExecutor>()
-        .mockResolvedValueOnce(idbOk(JSON.stringify([{ udid: "A", state: "Shutdown" }])));
+        .mockResolvedValueOnce(idbOk(jsonl({ udid: "A", state: "Shutdown" })));
       const doctor = new IdbDoctor(idbExec);
 
       const result = await doctor.checkSimulatorBooted();
@@ -93,12 +121,12 @@ describe("IdbDoctor", () => {
     it("checks a SPECIFIC serial's booted state when given", async () => {
       const idbExec = vi
         .fn<IdbExecutor>()
-        .mockResolvedValueOnce(idbOk(JSON.stringify([{ udid: "A", state: "Booted" }, { udid: "B", state: "Shutdown" }])));
+        .mockResolvedValueOnce(idbOk(jsonl({ udid: "A", state: "Booted" }, { udid: "B", state: "Shutdown" })));
       const doctor = new IdbDoctor(idbExec);
 
       await expect(doctor.checkSimulatorBooted("A")).resolves.toEqual({ booted: true });
       const resultB = await new IdbDoctor(
-        vi.fn<IdbExecutor>().mockResolvedValueOnce(idbOk(JSON.stringify([{ udid: "A", state: "Booted" }, { udid: "B", state: "Shutdown" }]))),
+        vi.fn<IdbExecutor>().mockResolvedValueOnce(idbOk(jsonl({ udid: "A", state: "Booted" }, { udid: "B", state: "Shutdown" }))),
       ).checkSimulatorBooted("B");
       expect(resultB.booted).toBe(false);
     });

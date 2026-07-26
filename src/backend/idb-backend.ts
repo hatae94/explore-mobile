@@ -31,19 +31,22 @@ import type { IdbExecResult, IdbExecutor } from "./idb-executor.js";
 import { spawnIdb } from "./idb-executor.js";
 import { IdbCommandFailedError, UnsupportedKeyOnIosError } from "./idb-errors.js";
 import { IOS_HID_KEYCODE } from "./keycodes-ios.js";
+import { parseIdbTargets } from "./idb-target-parse.js";
 import { normalizeIdbAccessibility } from "../normalize/idb.js";
 
-/** One raw `idb list-targets --json` target entry (research.md §3.1 — assumed field names, run-phase DEFER). */
+/**
+ * One raw `idb list-targets --json` target entry, CONFIRMED against fb-idb
+ * 1.1.7 + a booted iPhone 17 Pro simulator (SPEC-IOS-001 run-phase
+ * verification, 2026-07-25). Real keys observed:
+ * `{name, udid, state, type, os_version, architecture}` — note `type`, NOT
+ * the `target_type` this originally assumed (research.md §3.1).
+ */
 interface RawIdbTarget {
   udid?: unknown;
   name?: unknown;
   os_version?: unknown;
   state?: unknown;
-  target_type?: unknown;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  type?: unknown;
 }
 
 function stringField(value: unknown): string {
@@ -66,7 +69,7 @@ function toDeviceInfo(raw: RawIdbTarget): DeviceInfo {
     model: stringField(raw.name),
     osVersion: stringField(raw.os_version),
     connectionState: mapConnectionState(raw.state),
-    isEmulator: stringField(raw.target_type).toLowerCase() === "simulator",
+    isEmulator: stringField(raw.type).toLowerCase() === "simulator",
     platform: "ios",
   };
 }
@@ -87,31 +90,21 @@ export class IdbBackend implements DeviceBackend {
   constructor(private readonly exec: IdbExecutor = spawnIdb) {}
 
   /**
-   * @MX:TODO — `list-targets --json` field names (udid/name/os_version/
-   * state/target_type) are a documented Run-phase DEFER assumption
-   * (research.md §3.1, plan.md §B.0 gate decision) pending confirmation
-   * against a real `idb list-targets --json` invocation. A mismatch only
-   * requires adjusting `toDeviceInfo`'s field reads, isolated here.
+   * @MX:NOTE — the `list-targets --json` DEFER assumption (research.md §3.1,
+   * plan.md §B.0) is now RESOLVED against fb-idb 1.1.7 + a real booted
+   * simulator: the output is JSONL (one object per line, NO wrapping array)
+   * and the emulator discriminator is `type`, not `target_type`. Document-
+   * shape handling lives in `parseIdbTargets` (shared with IdbDoctor); this
+   * method only maps fields.
    */
   async listDevices(): Promise<DeviceInfo[]> {
     const result = await this.exec(["list-targets", "--json"]);
     assertSuccess(result, "list-targets --json");
 
-    const stdout = result.stdout.toString("utf-8").trim();
-    if (stdout.length === 0) return [];
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(stdout);
-    } catch {
-      // Runtime boundary guard (Secured): unparseable idb output degrades
-      // to an empty list rather than throwing (REQ-IOS-ARCH-003 spirit —
-      // never let one backend's output shape drift crash the whole CLI).
-      return [];
-    }
-
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isRecord).map((entry) => toDeviceInfo(entry as RawIdbTarget));
+    // Runtime boundary guard (Secured): unparseable idb output degrades to an
+    // empty list rather than throwing (REQ-IOS-ARCH-003 spirit — never let one
+    // backend's output shape drift crash the whole CLI).
+    return parseIdbTargets(result.stdout.toString("utf-8")).map((entry) => toDeviceInfo(entry as RawIdbTarget));
   }
 
   /**
@@ -143,8 +136,16 @@ export class IdbBackend implements DeviceBackend {
     return normalizeIdbAccessibility(parsed);
   }
 
+  /**
+   * @MX:NOTE — `dest_path` is a REQUIRED positional for `idb screenshot`
+   * ("The destination file path to write to or - (dash) to write to stdout",
+   * confirmed via `idb screenshot --help`, fb-idb 1.1.7). Omitting it — as the
+   * original DEFER assumption did — makes idb exit non-zero on argparse, so
+   * `-` is passed to keep the no-disk-residue stdout contract this method
+   * shares with AdbBackend's `exec-out screencap`.
+   */
   async screenshot(serial: string): Promise<Uint8Array> {
-    const result = await this.exec(["screenshot", "--udid", serial]);
+    const result = await this.exec(["screenshot", "--udid", serial, "-"]);
     assertSuccess(result, "screenshot");
     return result.stdout;
   }

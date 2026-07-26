@@ -17,6 +17,15 @@ function fail(stderr: string, exitCode = 1): IdbExecResult {
   return { stdout: Buffer.alloc(0), stderr: Buffer.from(stderr, "utf-8"), exitCode };
 }
 
+/**
+ * Real `idb list-targets --json` output shape (fb-idb 1.1.7, confirmed
+ * against a booted simulator during SPEC-IOS-001 run-phase verification):
+ * JSONL — one JSON object per line, NOT a wrapping JSON array.
+ */
+function jsonl(...entries: Record<string, unknown>[]): string {
+  return entries.map((entry) => JSON.stringify(entry)).join("\n");
+}
+
 describe("IdbBackend", () => {
   it("implements the DeviceBackend interface (AC-IOS-011, AC-IOS-026 — type-level, compiles iff true)", () => {
     const backend: DeviceBackend = new IdbBackend(vi.fn<IdbExecutor>());
@@ -24,12 +33,16 @@ describe("IdbBackend", () => {
   });
 
   describe("listDevices (AC-IOS-012)", () => {
-    it("calls 'idb list-targets --json' and maps udid/name/os_version/state/target_type to DeviceInfo with platform:ios", async () => {
+    it("calls 'idb list-targets --json' and maps udid/name/os_version/state/type to DeviceInfo with platform:ios", async () => {
       const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(
         ok(
-          JSON.stringify([
-            { udid: "00008030-0011ABCDEF", name: "iPhone 15", os_version: "17.5", state: "Booted", target_type: "simulator" },
-          ]),
+          jsonl({
+            udid: "00008030-0011ABCDEF",
+            name: "iPhone 15",
+            os_version: "17.5",
+            state: "Booted",
+            type: "simulator",
+          }),
         ),
       );
 
@@ -51,7 +64,7 @@ describe("IdbBackend", () => {
 
     it("maps a non-Booted state to connectionState 'offline'", async () => {
       const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(
-        ok(JSON.stringify([{ udid: "X", name: "iPad", os_version: "17.0", state: "Shutdown", target_type: "simulator" }])),
+        ok(jsonl({ udid: "X", name: "iPad", os_version: "17.0", state: "Shutdown", type: "simulator" })),
       );
 
       const backend = new IdbBackend(exec);
@@ -60,15 +73,65 @@ describe("IdbBackend", () => {
       expect(devices[0]?.connectionState).toBe("offline");
     });
 
-    it("marks a physical device (target_type: device) as isEmulator: false", async () => {
+    it("marks a physical device (type: device) as isEmulator: false", async () => {
       const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(
-        ok(JSON.stringify([{ udid: "PHYS-1", name: "iPhone", os_version: "17.5", state: "Booted", target_type: "device" }])),
+        ok(jsonl({ udid: "PHYS-1", name: "iPhone", os_version: "17.5", state: "Booted", type: "device" })),
       );
 
       const backend = new IdbBackend(exec);
       const devices = await backend.listDevices();
 
       expect(devices[0]?.isEmulator).toBe(false);
+    });
+
+    it("parses MULTI-LINE JSONL output (one target per line, no wrapping array)", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(
+        ok(
+          jsonl(
+            { udid: "SIM-A", name: "iPad (A16)", os_version: "iOS 18.6", state: "Shutdown", type: "simulator" },
+            { udid: "SIM-B", name: "iPhone 17 Pro", os_version: "iOS 26.0", state: "Booted", type: "simulator" },
+          ),
+        ),
+      );
+
+      const backend = new IdbBackend(exec);
+      const devices = await backend.listDevices();
+
+      expect(devices).toHaveLength(2);
+      expect(devices[1]).toEqual({
+        serial: "SIM-B",
+        model: "iPhone 17 Pro",
+        osVersion: "iOS 26.0",
+        connectionState: "device",
+        isEmulator: true,
+        platform: "ios",
+      });
+    });
+
+    it("still tolerates a legacy wrapping JSON-array output shape", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(
+        ok(JSON.stringify([{ udid: "LEGACY-1", name: "iPhone", os_version: "17.5", state: "Booted", type: "simulator" }])),
+      );
+
+      const backend = new IdbBackend(exec);
+      const devices = await backend.listDevices();
+
+      expect(devices[0]?.serial).toBe("LEGACY-1");
+      expect(devices[0]?.isEmulator).toBe(true);
+    });
+
+    it("skips unparseable lines but keeps the valid ones (Secured — partial output drift)", async () => {
+      const exec = vi
+        .fn<IdbExecutor>()
+        .mockResolvedValueOnce(
+          ok(`not json{{{\n${JSON.stringify({ udid: "SIM-OK", name: "iPhone", os_version: "26.0", state: "Booted", type: "simulator" })}`),
+        );
+
+      const backend = new IdbBackend(exec);
+      const devices = await backend.listDevices();
+
+      expect(devices).toHaveLength(1);
+      expect(devices[0]?.serial).toBe("SIM-OK");
     });
 
     it("returns an empty array for empty stdout, without throwing", async () => {
@@ -144,14 +207,14 @@ describe("IdbBackend", () => {
   });
 
   describe("screenshot (AC-IOS-014)", () => {
-    it("calls 'idb screenshot --udid <serial>' and returns raw PNG bytes from stdout", async () => {
+    it("calls 'idb screenshot --udid <serial> -' (dest_path is a REQUIRED positional; '-' = stdout) and returns raw PNG bytes", async () => {
       const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
       const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(okBinary(pngBytes));
 
       const backend = new IdbBackend(exec);
       const result = await backend.screenshot("SIM-1");
 
-      expect(exec).toHaveBeenCalledWith(["screenshot", "--udid", "SIM-1"]);
+      expect(exec).toHaveBeenCalledWith(["screenshot", "--udid", "SIM-1", "-"]);
       expect(Buffer.from(result)).toEqual(pngBytes);
     });
   });

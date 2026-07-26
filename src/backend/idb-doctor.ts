@@ -26,6 +26,7 @@ import type { IdbExecutor } from "./idb-executor.js";
 import { spawnIdb } from "./idb-executor.js";
 import type { ProcessExecutor } from "./process-executor.js";
 import { spawnProcess } from "./process-executor.js";
+import { parseIdbTargets } from "./idb-target-parse.js";
 
 export interface IdbInstalledCheck {
   installed: boolean;
@@ -69,10 +70,6 @@ interface RawIdbTarget {
   state?: unknown;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 export class IdbDoctor {
   constructor(
     private readonly idbExec: IdbExecutor = spawnIdb,
@@ -80,13 +77,36 @@ export class IdbDoctor {
     private readonly platform: NodeJS.Platform = process.platform,
   ) {}
 
-  /** Is the `idb` client binary present and runnable? (REQ-IOS-DOCTOR-001) */
+  /**
+   * Is the `idb` client binary present and runnable? (REQ-IOS-DOCTOR-001)
+   *
+   * @MX:WARN — `idb --version` does NOT exist in fb-idb 1.1.7 (the version
+   * pipx installs): it exits 2 with `idb: error: unrecognized arguments:
+   * --version`. The flag is still attempted first (a future/patched build may
+   * support it, and it is the only way to report a real version string), but a
+   * non-zero exit falls back to a `which idb` presence probe — the same shape
+   * `checkCompanion` uses — reporting `version: null`.
+   * @MX:REASON — treating the argparse failure as "not installed" made
+   * `BackendRegistry.isAvailable()` skip the ENTIRE iOS backend, so every
+   * booted simulator silently disappeared from `devices` output and every iOS
+   * command failed with NO_DEVICES_FOUND. Presence and version-readability are
+   * two different questions; only the former may gate the backend.
+   */
   async checkIdbInstalled(): Promise<IdbInstalledCheck> {
     try {
       const result = await this.idbExec(["--version"]);
-      if (result.exitCode !== 0) return { installed: false, version: null };
-      const firstLine = result.stdout.toString("utf-8").split(/\r?\n/)[0]?.trim() ?? null;
-      return { installed: true, version: firstLine && firstLine.length > 0 ? firstLine : null };
+      if (result.exitCode === 0) {
+        const firstLine = result.stdout.toString("utf-8").split(/\r?\n/)[0]?.trim() ?? null;
+        return { installed: true, version: firstLine && firstLine.length > 0 ? firstLine : null };
+      }
+    } catch {
+      // Spawn itself failed — fall through to the presence probe, which
+      // distinguishes "binary missing" from "binary present, flag rejected".
+    }
+
+    try {
+      const which = await this.processExec("which", ["idb"]);
+      return which.exitCode === 0 ? { installed: true, version: null } : { installed: false, version: null };
     } catch {
       return { installed: false, version: null };
     }
@@ -125,15 +145,12 @@ export class IdbDoctor {
     const stdout = result.stdout.toString("utf-8").trim();
     if (stdout.length === 0) return { booted: false, message: "No simulators found." };
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(stdout);
-    } catch {
-      return { booted: false, message: "Could not parse idb list-targets output." };
-    }
-    if (!Array.isArray(parsed)) return { booted: false, message: "Unexpected idb list-targets output shape." };
+    // Shared with IdbBackend.listDevices — real output is JSONL, not a JSON
+    // array (see parseIdbTargets). Non-empty stdout that yields zero targets
+    // means nothing in it was parseable.
+    const targets = parseIdbTargets(stdout) as RawIdbTarget[];
+    if (targets.length === 0) return { booted: false, message: "Could not parse idb list-targets output." };
 
-    const targets = parsed.filter(isRecord) as RawIdbTarget[];
     const bootedTargets = targets.filter((t) => String(t.state).toLowerCase() === "booted");
 
     if (serial !== undefined) {
