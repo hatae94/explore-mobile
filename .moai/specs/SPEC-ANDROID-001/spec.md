@@ -2,9 +2,9 @@
 id: SPEC-ANDROID-001
 title: "Android(adb) 기기 제어 기본기 + 자동 환경 세팅 CLI 코어"
 version: "0.2.0"
-status: in-progress
+status: completed
 created: 2026-07-22
-updated: 2026-07-22
+updated: 2026-07-27
 author: manager-spec
 priority: P0
 phase: "v0.1.0 target"

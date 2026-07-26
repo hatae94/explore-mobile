@@ -33,10 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([ADBKeyBoard](https://github.com/senzhk/ADBKeyBoard)) via
   `pm list packages` dedup.
 - Korean/emoji/Unicode `text` input: automatic ASCII-fast-path vs
-  non-ASCII base64-broadcast (`ADB_INPUT_B64`) routing, with the
-  original IME always restored afterward — including on error — and a
-  dedicated `IME_RESTORE_FAILED` error code (with the original IME id)
-  when restoration itself fails, so a failure is never silent.
+  non-ASCII base64-broadcast (`ADB_INPUT_B64`) routing, and a dedicated
+  `IME_RESTORE_FAILED` error code (with the original IME id) when
+  restoration itself fails, so a failure is never silent. (The IME
+  lifecycle was later revised from per-call restore to a session-scoped
+  model — see the real-device hardening entry below.)
 - Multi-device support: every command accepts `--device <serial>`;
   omitting it with 2+ devices connected returns a graceful
   `AMBIGUOUS_DEVICE` error (never a silent first-device guess); per-serial
@@ -55,6 +56,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CLI command dispatch, adb argv construction, IME lifecycle (success /
   error / restore-failure paths), doctor/reset flows, per-serial
   isolation and concurrency, and the skill-wrapper compliance check.
+- Android real-device hardening (SPEC-ANDROID-001 amendment 0.2.0). Five
+  capabilities that emerged from driving an actual device, reconciled into
+  the SPEC by amendment and now documented here:
+  - **Element-selector targeting**: `tap --id|--text [--index <n>]` taps a
+    matched element's center instead of a hardcoded coordinate, and
+    `text ... --id|--text` focuses a field before typing. An unmatched
+    selector returns `ELEMENT_NOT_FOUND` rather than acting on the wrong
+    element — and for `text`, the string is not sent at all. Coordinates
+    plus a selector is `TARGET_CONFLICT`, never a silent winner. Both are
+    platform-agnostic, so they work unchanged on iOS.
+  - **Session-scoped IME with disk persistence**: the non-ASCII path now
+    records the device's real original keyboard to
+    `<cache-dir>/ime-sessions.json` and restores it at `reset` /
+    `doctor --clean`, rather than switching back on every call. Each CLI
+    invocation is a separate OS process, so the earlier in-memory-only
+    tracking lost the original keyboard between the `text` call and the
+    later `reset`.
+  - **`text` self-heal**: a non-ASCII send with ADBKeyBoard missing now
+    performs the runtime download and install itself (reusing
+    `doctor`'s installer), so `doctor` is no longer a prerequisite. An
+    install failure leaves the device in its pre-call state with no
+    half-applied IME switch.
+  - **Soft-keyboard dismissal**: `text` hides the keyboard after sending by
+    default so it does not cover the next tap target; `--keep-keyboard`
+    opts out.
+  - **ADBKeyBoard runtime download instead of bundling**: the APK is
+    GPL-2.0 and this package is MIT, so it is fetched from a pinned
+    official release, validated, and cached — never redistributed.
 - iOS Simulator (`idb`) device-control backend (SPEC-IOS-001), extending
   the CLI to a second platform without redesigning the command layer or
   the common normalization schema — fulfilling the interface-swap

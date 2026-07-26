@@ -125,12 +125,33 @@ $ npx explore-mobile screenshot --out ./shot.png
 {"ok":true,"command":"screenshot","data":{"serial":"emulator-5554","savedTo":"./shot.png","byteLength":48213}}
 ```
 
-### `tap <x> <y>`
+### `tap <x> <y>` / `tap --id|--text [--index <n>]`
+
+Coordinates, or an element selector matched against the normalized tree —
+`--id` against `CommonElement.id` (Android `resource-id`, iOS
+`AXUniqueId`), `--text` against its text (Android `text` or
+`content-desc`, iOS `AXLabel`), and `--index <n>` to pick the n-th of
+several matches. Selector mode taps the matched element's center, so it
+survives layout shifts that break hardcoded coordinates. Coordinates and
+a selector together are rejected with `TARGET_CONFLICT` rather than one
+silently winning; an unmatched selector returns `ELEMENT_NOT_FOUND`
+rather than tapping the wrong place.
 
 ```bash
 $ npx explore-mobile tap 540 1200
 {"ok":true,"command":"tap","data":{"serial":"emulator-5554","x":540,"y":1200}}
+
+$ npx explore-mobile tap --text "로그인"
+{"ok":true,"command":"tap","data":{"serial":"emulator-5554","x":540,"y":1180,"selector":{"text":"로그인"}}}
 ```
+
+A matched element that is not `tappable` is still tapped, with a
+`warnings` entry in the response — an automation script may legitimately
+want to poke a disabled control to confirm it does *not* respond.
+
+Selector mode is platform-agnostic: the same flags work against an
+Android device and an iOS simulator, because each backend normalizes its
+own tree before the selector runs.
 
 ### `key <alias>`
 
@@ -144,12 +165,24 @@ $ npx explore-mobile key back
 {"ok":true,"command":"key","data":{"serial":"emulator-5554","key":"back"}}
 ```
 
-### `text "<string>"`
+### `text "<string>" [--id|--text [--index <n>]] [--keep-keyboard]`
 
 ```bash
 $ npx explore-mobile text "hello world"
 {"ok":true,"command":"text","data":{"serial":"emulator-5554"}}
+
+$ npx explore-mobile text "hello" --id com.example:id/search_field
+{"ok":true,"command":"text","data":{"serial":"emulator-5554"}}
 ```
+
+The same selector flags as `tap` may be given to **focus a field before
+typing** — the element is tapped first, then the text is sent. If the
+selector matches nothing, the text is **not** sent at all: the caller gets
+`ELEMENT_NOT_FOUND` instead of the string landing in whatever happened to
+be focused already.
+
+After sending, the soft keyboard is dismissed by default so it does not
+cover the next element you want to tap. Pass `--keep-keyboard` to opt out.
 
 See [Korean / emoji / Unicode text input](#korean--emoji--unicode-text-input)
 below for how non-ASCII strings are handled.
@@ -213,27 +246,42 @@ automatically — callers never choose it themselves:
 - **ASCII-only** input uses the platform's native fast path directly.
 - **Any non-ASCII** input (Korean, emoji, or mixed) is routed through a
   Unicode IME ([ADBKeyBoard](https://github.com/senzhk/ADBKeyBoard)) via
-  a base64 broadcast. The device's original keyboard is always switched
-  back afterward — even if the send itself fails.
-- If keyboard restoration itself fails, `text` returns
-  `error.code: "IME_RESTORE_FAILED"` with `error.details.originalImeId`
-  so you can manually restore it — never a silent failure.
+  a base64 broadcast on Android, and through the device pasteboard on iOS.
+- On Android the IME switch is **session-scoped, not per-call**: the first
+  non-ASCII `text` call records the device's real original keyboard to disk
+  and switches to ADBKeyBoard; subsequent calls reuse that session instead
+  of switching back and forth. `reset` (or `doctor --clean`) is what
+  restores the original keyboard. The session record survives process
+  exit, because each CLI invocation is a separate process — an earlier
+  in-memory-only version lost the original keyboard between the `text` call
+  and the later `reset`.
+- If keyboard restoration fails during `reset`, the error surfaces with
+  `error.code: "IME_RESTORE_FAILED"` and `error.details.originalImeId` so
+  you can restore it by hand — never a silent failure.
 
 ```bash
 $ npx explore-mobile text "안녕하세요 😸"
 {"ok":true,"command":"text","data":{"serial":"emulator-5554"}}
+
+$ npx explore-mobile reset      # restores the original keyboard
+{"ok":true,"command":"reset","data":{"serial":"emulator-5554",...}}
 ```
 
 **ADBKeyBoard is not bundled with this package — by design.** ADBKeyBoard
 is licensed GPL-2.0; this package is MIT, so we do not redistribute it.
-Instead, `doctor` downloads ADBKeyBoard from its official GitHub release
-on first use (a pinned tag, never `master`), validates the download, and
-caches it locally. Run `npx explore-mobile doctor` before your first
-non-ASCII `text` call. A network failure, a 404, or an invalid download
-all fail gracefully with `error.code: "APK_DOWNLOAD_FAILED"` and
-manual-install instructions — never a crash or a silent failure. See
-[`vendor/adbkeyboard/README.md`](vendor/adbkeyboard/README.md) for the
+Instead it is downloaded from its official GitHub release on first use (a
+pinned tag, never `master`), validated, and cached locally. `text`
+**self-heals**: when a non-ASCII string is sent and ADBKeyBoard is not
+installed, `text` performs that download-and-install itself, so running
+`doctor` first is convenient but not required. A network failure, a 404, or
+an invalid download all fail gracefully with
+`error.code: "APK_DOWNLOAD_FAILED"` and manual-install instructions — and
+the device is left in its pre-call state, with no half-applied IME switch.
+See [`vendor/adbkeyboard/README.md`](vendor/adbkeyboard/README.md) for the
 full license-compliance rationale.
+
+On iOS none of this applies: there is no IME to switch, no APK, and no
+session state — see the iOS notes in [Status](#status).
 
 ## Multi-device
 

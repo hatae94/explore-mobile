@@ -2,9 +2,9 @@
 id: SPEC-ANDROID-001
 title: "Android(adb) 기기 제어 기본기 + 자동 환경 세팅 CLI 코어 — 진행"
 version: "0.2.0"
-status: in-progress
+status: completed
 created: 2026-07-22
-updated: 2026-07-22
+updated: 2026-07-27
 author: manager-spec
 amendment_of: SPEC-ANDROID-001
 ---
@@ -119,3 +119,26 @@ _<pending run-phase — manager-develop 소유>_
   - progress.md: `in-progress → completed` (updated: 2026-07-22)
 - **canary_compliance_check**: n/a — 본 SPEC은 forward-looking policy(자체 sync 시점에 검증하는 정책)를 정의하지 않음
 - **honesty note**: README.md/CHANGELOG.md 모두 8개 AC가 PARTIAL(실기기 e2e 미검증)임을 명시하고 overclaim하지 않음. `vendor/adbkeyboard/README.md`의 APK 미번들 상태도 README.md Status 섹션에 그대로 반영됨.
+
+### §E.4-b 개정(0.2.0) sync 마감 (2026-07-27)
+
+위 §E.4는 v0.1.2 시점(`e536e11`, 2026-07-22 14:18)의 기록이다. 그 마감 이후 실기기 하드닝이 5개 커밋에 걸쳐 진행되어(`e670a78` 요소 셀렉터 tap/focus 등, 15:41~) 문서가 드리프트했고, 개정 0.2.0(`eb3a443`, 16:38)이 SPEC 아티팩트 4개를 정합화했다. 그 개정은 `status`를 `in-progress`로 되돌린 채 **마감되지 않았다**. 본 기록이 그 개정을 닫는다.
+
+- **amendment_sync_complete_at**: 2026-07-27
+- **amendment_sync_commit_sha**: `pending-backfill-single-sync-commit` (자기참조 해시 — `spec-frontmatter-schema.md` SHA placeholder backfill exemption. 실제 SHA는 `git log`로 확인)
+- **amendment_sync_status**: complete — 4개 아티팩트 frontmatter `in-progress → completed` 전이 + README.md/CHANGELOG.md에 개정 5개 역량 반영 완료.
+- **개정이 사용자 문서에 누락돼 있던 문제(본 sync에서 해소)**: `eb3a443`은 `.moai/specs/SPEC-ANDROID-001/` 4개 파일만 수정했고 README.md/CHANGELOG.md를 건드리지 않았다. 그 결과 개정으로 신설된 5개 역량이 **사용자가 볼 수 있는 문서에 전혀 없었다**(README에서 "selector"는 SPEC-IOS-001 sync 때 추가된 iOS 서술뿐). 본 sync에서 README `tap`/`text` 절 + Unicode 절 + CHANGELOG `Added`에 반영했다.
+- **README/CHANGELOG의 낡은 IME 서술 정정**: 두 문서 모두 개정 전 모델("호출마다 원래 IME 복원, 오류 시에도")을 서술하고 있었다. 현재 코드(`adb-backend.ts:254~`, `ime-session-store.ts`)는 **세션 기반 + 디스크 영속 + `reset` 시 복원** 모델이므로 그에 맞게 정정했다. `text` 자가치유(ADBKeyBoard 미설치 시 자동 설치)로 `doctor` 선행 실행이 더는 필수가 아닌 점도 반영했다.
+- **AC 개수 정합화**: `acceptance.md`(SSOT) = **24건**(개정으로 AC-ANDROID-020~024 신설). 위 §E.2 요약의 "19건 중 PASS 11 / PARTIAL 8"은 v0.1.2 시점 수치이며 신설 5건이 빠져 있었다.
+- **신설 AC 5건 검증 상태 (unit/mock 증거 기반)**:
+  | AC | 역량 | 상태 | 증거 |
+  |----|------|------|------|
+  | AC-ANDROID-020 | `text` 자가치유 자동설치 | PASS (unit/mock) | `router.test.ts` "surfaces an AdbKeyboardInstallFailedError using its own code, reusing doctor's error codes"; `adbkeyboard-installer.ts` 공유 설치기 |
+  | AC-ANDROID-021 | 디스크 영속 IME (프로세스 간 복원) | PASS (unit/mock) | `ime-session-store.test.ts` 12 케이스 |
+  | AC-ANDROID-022 | 소프트키보드 기본 숨김 + `--keep-keyboard` | PASS (unit/mock) | `router.test.ts` "forwards hideKeyboardAfter: true by default" / "forwards hideKeyboardAfter: false when --keep-keyboard is given" |
+  | AC-ANDROID-023 | 셀렉터 `tap --id/--text/--index` + 좌표 XOR | PASS (unit/mock) | `router.test.ts` 셀렉터 탭/ELEMENT_NOT_FOUND/TARGET_CONFLICT 케이스; `element-query.test.ts` 13 케이스 |
+  | AC-ANDROID-024 | 셀렉터 `text` 포커스 후 타이핑 | PASS (unit/mock) | `router.test.ts` "focus-taps the element matched by --id, then sends the input text" 외 3케이스(미매칭 시 미전송 포함) |
+  - **e2e 여부**: 위 5건 모두 `검증 방식`이 `unit(mock) + e2e`이나, 기록된 증거는 unit/mock뿐이다. e2e는 아래 항목과 동일하게 미기록으로 남긴다.
+- **실기기 e2e 상태 — 보수적 기재 (사용자 승인, 2026-07-27)**: 개정 근거(`spec.md` §Amendments)가 "실기기 검증 과정에서 구현이 진화했다"고 기술하고 `§C.2 알려진 한계`에 실기기 관찰(resource-id 미설정 앱은 `--text` 필요, 이모지가 HTML 엔티티로 정규화됨)이 남아 있으므로 **실기기 하드닝 자체는 실제로 있었다**. 그러나 **AC별 e2e PASS 증거는 어디에도 기록되지 않았다**. 본 sync 시점에 안드로이드 기기가 연결돼 있지 않아(`adb devices` 결과 없음) 재관측도 불가능했다. 따라서 8건(AC-001/002/003/004/005/007/011/017)은 **PARTIAL을 유지**하고, 관측하지 않은 것을 PASS로 승격하지 않았다(`verification-claim-integrity.md` §1.1 준수). 최종: 24건 중 PASS 16(기존 11 + 신설 5) / PARTIAL 8 / FAIL 0.
+- **검증**: 303 tests PASS (20 files), `pnpm typecheck` exit 0, `pnpm build` exit 0 — 본 sync는 문서 전용이라 코드 변경 없음.
+- **남은 후속(마감과 무관)**: 실기기 e2e 증거 기록(기기 연결 시), APK 조달 체크리스트(`vendor/adbkeyboard/README.md`), npm 게시.
