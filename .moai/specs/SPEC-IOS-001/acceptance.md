@@ -2,9 +2,9 @@
 id: SPEC-IOS-001
 title: "iOS 시뮬레이터(idb) 백엔드 — 인수 기준"
 version: "0.1.0"
-status: implemented
+status: completed
 created: 2026-07-22
-updated: 2026-07-23
+updated: 2026-07-26
 author: manager-spec
 ---
 
@@ -127,7 +127,7 @@ author: manager-spec
 - **Then** `idb ui tap <x> <y>`(대상 지정 플래그 포함)가 정확한 argv로 호출된다.
 
 ### AC-IOS-016 — text: ASCII 직접 입력 + 비ASCII 클립보드 경로
-> **개정(2026-07-25, 실기기 검증)**: 최초 기준은 `idb ui text "안녕 😸"`를 요구했으나, 실측 결과 `idb ui text`는 **Unicode를 지원하지 않는다**. fb-idb 1.1.7 `idb/common/hid.py`의 `text_to_events`가 고정 미국 자판표(`KEY_MAP` = 출력 가능 ASCII 95자 + 개행)만 처리하고, 그 외 문자에는 `No keycode found for 네` 예외를 던진다. 원래 기준은 **달성 불가능**하므로 아래로 개정한다.
+> **개정(2026-07-26, 실기기 검증)**: 최초 기준은 `idb ui text "안녕 😸"`를 요구했으나, 실측 결과 `idb ui text`는 **Unicode를 지원하지 않는다**. fb-idb 1.1.7 `idb/common/hid.py`의 `text_to_events`가 고정 미국 자판표(`KEY_MAP` = 출력 가능 ASCII 95자 + 개행)만 처리하고, 그 외 문자에는 `No keycode found for 네` 예외를 던진다. 원래 기준은 **달성 불가능**하므로 아래로 개정한다.
 
 - **Given** mock idb executor,
 - **When** `IdbBackend.inputText(serial, "hello world")`(ASCII)를 호출하면,

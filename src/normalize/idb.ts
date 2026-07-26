@@ -22,13 +22,20 @@ import type { CommonElement, ElementBounds } from "../schema/common-element.js";
 const DEFAULT_BOUNDS: ElementBounds = { x: 0, y: 0, w: 0, h: 0 };
 
 /**
- * idb `type` values known to be interactive (design.md §F.3 — run-phase
- * best-guess starting set, pending real-simulator observation per plan.md
- * §B.0). `role`/`subrole` are checked case-insensitively against the same
+ * idb `type` values known to be interactive (design.md §F.3).
+ * `role`/`subrole` are checked case-insensitively against the same
  * vocabulary as a fallback when `type` is absent or unrecognized.
  *
- * @MX:TODO — confirm/extend this set against a real simulator's
- * `describe-all` output (run-phase DEFER item, plan.md §B.0).
+ * @MX:NOTE — partially confirmed on a real simulator (2026-07-26, iOS 26.0):
+ * `describe-all` emitted `Application`, `Group`, `StaticText`, `Button`,
+ * `TextField`, and `Heading`. `Button` and `TextField` were correctly derived
+ * as tappable; the non-interactive types were correctly excluded.
+ * @MX:TODO — `Cell`, `Switch`, and `Link` are still unobserved: the screens
+ * exercised so far (home screen, Safari chrome) contain none, and web page
+ * content does not appear in the accessibility tree at all. Confirm them
+ * against a native app with a table view / toggle before treating this set as
+ * complete. A `Slider` was observed on the home screen and is arguably
+ * interactive, but was deliberately left out pending a real use case.
  */
 const INTERACTIVE_TYPES = new Set(["Button", "Cell", "TextField", "Switch", "Link"]);
 

@@ -2,9 +2,9 @@
 id: SPEC-IOS-001
 title: "iOS 시뮬레이터(idb) 백엔드 — 구현 계획"
 version: "0.1.0"
-status: implemented
+status: completed
 created: 2026-07-22
-updated: 2026-07-23
+updated: 2026-07-26
 author: manager-spec
 ---
 

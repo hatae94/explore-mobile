@@ -14,18 +14,20 @@
  * `IdbBackend.sendKeyEvent` rejects those with `UNSUPPORTED_KEY_ON_IOS`
  * rather than silently ignoring them (REQ-IOS-BACKEND-007).
  *
- * @MX:NOTE — partial mapping + documented gap. HID usage values below are
- * the standard USB HID Usage Tables assumption (research.md §3.2); idb's
- * exact interpretation is a Run-phase DEFER item (plan.md §B.0) — a
- * mismatch here only requires adjusting these numeric values, isolated
- * behind `IdbBackend` (no command-layer or interface impact).
+ * @MX:NOTE — partial mapping + documented gap. HID usage values below follow
+ * the standard USB HID Usage Tables (research.md §3.2) and were confirmed
+ * against a real simulator on 2026-07-26: every alias below was accepted by
+ * `idb ui key`, and `enter` was confirmed functionally (it submitted a URL and
+ * navigated the page). The remaining aliases were accepted without an
+ * observable side effect to assert on, so acceptance — not behavior — is what
+ * was verified for them.
  */
 
 import type { KeyAlias } from "../schema/key-alias.js";
 
-// @MX:TODO — confirm these HID usage values against a real `idb ui key`
-// invocation (run-phase DEFER item, plan.md §B.0 / research.md §3.2). A
-// mismatch only requires adjusting the numeric values below.
+// Confirmed against fb-idb 1.1.7 + iOS 26.0 simulator (2026-07-26).
+// Not listed here but useful to know: HID 57 (Caps Lock) toggles the Korean/
+// English input mode, and HID 125 (Paste) is silently ignored by iOS.
 export const IOS_HID_KEYCODE: Partial<Record<KeyAlias, number>> = {
   enter: 40, // Keyboard Return (Enter)
   del: 42, // Keyboard Delete (Backspace)

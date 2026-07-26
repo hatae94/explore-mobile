@@ -8,14 +8,14 @@ including multi-device interaction testing.
 
 > **Status**: core Android/adb primitives + environment bootstrap, and
 > the iOS Simulator/idb backend, are implemented and unit/mock-tested
-> (293 tests, all green). Real-device / real-simulator end-to-end
-> verification is **not yet done** for either platform — see
-> [Status](#status) below before relying on this in production. iOS in
-> particular still has a few idb behaviors (exact JSON field names, HID
-> key codes) verified only against documented examples, pending
-> confirmation against a real simulator. The Unicode-IME APK
-> (ADBKeyBoard, GPL-2.0) is never bundled — `doctor` downloads it from
-> its official release on first use.
+> (303 tests, all green). The **iOS backend has been verified end-to-end
+> against a booted simulator** (2026-07-26, iPhone 17 Pro / iOS 26.0):
+> launch Safari, dump the element tree, tap by selector, type, send
+> keys, screenshot, navigate. Android real-device verification is still
+> pending — see [Status](#status) below before relying on this in
+> production. The Unicode-IME APK (ADBKeyBoard, GPL-2.0) is never
+> bundled — `doctor` downloads it from its official release on first
+> use.
 
 ## Why
 
@@ -251,36 +251,56 @@ contaminate either device's input-method state.
 ## Status
 
 Android (SPEC-ANDROID-001, all 8 milestones) and iOS Simulator
-(SPEC-IOS-001) backends are both implemented, with 293 unit/mock tests
-green, but **neither has been exercised against a real device / real
-simulator or a real host environment yet**. Concretely, still pending
-before this is production-ready:
+(SPEC-IOS-001) backends are both implemented, with 303 unit/mock tests
+green.
+
+**iOS: verified against a real simulator** (2026-07-26, iPhone 17 Pro /
+iOS 26.0, fb-idb 1.1.7). A full Safari journey — `doctor` → `devices` →
+`launch` → `dump` → selector `tap` → `text` → `key enter` →
+`screenshot` → in-page navigation — ran end to end. The three idb
+behaviors that had been confirmed only against documented examples were
+all checked, and **all three turned out to be wrong** and are now fixed:
+`list-targets --json` emits JSONL rather than a JSON array, the
+emulator discriminator field is `type` (not `target_type`), and
+`screenshot` requires a `dest_path` positional. A fourth defect surfaced
+in the same run: `idb --version` does not exist in fb-idb 1.1.7, so the
+presence probe reported "not installed" and the registry skipped the
+entire iOS backend.
+
+Known iOS limitations found during that run:
+
+- `idb ui text` cannot type non-ASCII (its keycode table covers only
+  printable ASCII plus newline). Korean and emoji go through the device
+  pasteboard instead — handled automatically by `text`.
+- The ASCII path follows the simulator's **active keyboard layout**: with
+  a Korean layout selected, `text "naver"` silently lands as `ㅜㅁㅍㄷㄱ`.
+  idb exposes no way to read or set the input mode.
+- `dump` sees native UI only. With a web page loaded, it returns the
+  browser chrome alone — web content is not in the accessibility tree,
+  so selector targeting cannot reach it (that is SPEC-03's scope).
+
+Still pending before this is production-ready:
 
 - Real-emulator/real-device verification of every Android command
   (screenshot PNG validity, tap/text landing, `launch`/`stop` observed
   effects, multi-device isolation with two physically connected
   devices).
-- Real-simulator verification of the iOS backend, including 3 idb
-  behaviors currently confirmed only against documented examples: the
-  `idb list-targets --json` field names, the `--udid`/screenshot
-  argument and output shapes, and the `idb ui key` HID code mapping
-  (see `.moai/specs/SPEC-IOS-001/progress.md` for the current
-  PASS / PASS-WITH-DEBT breakdown).
 - Verifying the runtime ADBKeyBoard download end-to-end against a real
   device (the download/cache/validate logic is unit/mock-verified; see
   the Unicode caveat above and `vendor/adbkeyboard/README.md`).
 - A published npm package (`npx explore-mobile` will work once this
   ships to the registry — today it only runs from a local checkout).
 
-Everything above is unit/mock-verified against constructed `adb`/`idb`
-command lines and mocked subprocess output, not against live hardware.
+The Android items above are unit/mock-verified against constructed
+`adb` command lines and mocked subprocess output, not against live
+hardware.
 
 ## Roadmap
 
 | SPEC | Title | Status |
 |---|---|---|
 | SPEC-ANDROID-001 | Android/adb device-control primitives + environment bootstrap | Implemented, e2e pending |
-| SPEC-IOS-001 | iOS Simulator backend (`idb`) — common schema + registry extension | Implemented, real-simulator confirmation pending |
+| SPEC-IOS-001 | iOS Simulator backend (`idb`) — common schema + registry extension | Completed, verified on a real simulator |
 | SPEC-03 | WebView/DOM recognition (Chrome DevTools Protocol / `ios-webkit-debug-proxy`) | Committed |
 | SPEC-04 | Prompt-driven exploration loop + multi-device scenario orchestration | Committed |
 | SPEC-05 | Codex skill wrapper + broader packaging | Committed |

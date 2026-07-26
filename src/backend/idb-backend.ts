@@ -5,14 +5,16 @@
  * the interface is thin enough to be backend-swappable exactly as
  * SPEC-ANDROID-001 designed it to be (REQ-IOS-ARCH-005).
  *
- * Every idb command's exact argv/output shape below follows design.md §B;
- * three shapes are explicitly DEFERRED to Run-phase real-simulator
- * confirmation (plan.md §B.0 gate decision — DEFER, not an open question):
- * `list-targets --json` field names, the `--udid` target flag + describe-
- * all/screenshot argument shape, and `ui key`'s HID code interpretation.
- * A mismatch in any of these only requires adjusting this class's argv
- * construction / field parsing — the `DeviceBackend` interface and the
- * command layer above it are unaffected (isolation is the point).
+ * Every idb command's exact argv/output shape below follows design.md §B.
+ * The three shapes plan.md §B.0 deferred to Run-phase — `list-targets --json`
+ * field names, the `--udid` flag + describe-all/screenshot argument shape, and
+ * `ui key`'s HID codes — were confirmed against fb-idb 1.1.7 and a booted
+ * iPhone 17 Pro (iOS 26.0) on 2026-07-26, and all three turned out to differ
+ * from the assumption: the listing is JSONL rather than a JSON array, the
+ * emulator discriminator is `type` rather than `target_type`, and `screenshot`
+ * requires a `dest_path` positional. That the fix was confined to this file's
+ * argv construction and field parsing — with no change to the `DeviceBackend`
+ * interface or the command layer — is the isolation working as designed.
  *
  * @MX:ANCHOR — this is SPEC-IOS-001's iOS implementation of the
  * device-backend interface contract (spec.md §A.4, REQ-ARCH-003,
@@ -39,7 +41,7 @@ import { normalizeIdbAccessibility } from "../normalize/idb.js";
 /**
  * One raw `idb list-targets --json` target entry, CONFIRMED against fb-idb
  * 1.1.7 + a booted iPhone 17 Pro simulator (SPEC-IOS-001 run-phase
- * verification, 2026-07-25). Real keys observed:
+ * verification, 2026-07-26). Real keys observed:
  * `{name, udid, state, type, os_version, architecture}` — note `type`, NOT
  * the `target_type` this originally assumed (research.md §3.1).
  */
@@ -146,11 +148,18 @@ export class IdbBackend implements DeviceBackend {
    * mirrors AdbBackend.dumpUiHierarchy's internal-normalization contract
    * (REQ-IOS-SCHEMA-002/003).
    *
-   * @MX:TODO — the `--udid <serial>` target flag and describe-all's exact
-   * argument/output shape are a documented Run-phase DEFER assumption
-   * (research.md §3.3, plan.md §B.0 gate decision) pending confirmation
-   * against a real idb CLI. A mismatch only requires adjusting this
-   * method's argv construction, isolated here.
+   * @MX:NOTE — the `--udid <serial>` flag and this argv were confirmed
+   * verbatim against fb-idb 1.1.7 + an iOS 26.0 simulator (2026-07-26):
+   * `describe-all` returns a FLAT JSON array (no `children` key anywhere), the
+   * enabled field is `enabled` (not `isEnabled`), and `AXTraits` does not
+   * exist — which is why the normalizer derives `tappable` from type/role.
+   * @MX:WARN — the returned tree covers only NATIVE UI. With a web page loaded
+   * in Safari, `describe-all` returns the browser chrome alone (6 elements) and
+   * nothing from the page itself, so selector-based targeting cannot reach web
+   * content; that is SPEC-03 (webview DOM via CDP/iwdp) territory.
+   * @MX:REASON — a caller that assumes `dump` sees everything on screen will
+   * silently find no elements on a web page and fall back to blind coordinate
+   * taps.
    */
   async dumpUiHierarchy(serial: string): Promise<CommonElement[]> {
     const result = await this.exec(["ui", "describe-all", "--udid", serial, "--json"]);

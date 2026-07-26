@@ -104,6 +104,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     SPEC-ANDROID-001 baseline this SPEC built on), covering the registry,
     the idb normalizer, `IdbBackend`, `IdbDoctor`, and the doctor/reset
     platform-branching dispatch.
+- Non-ASCII text input on iOS via the device pasteboard
+  (`src/backend/idb-clipboard.ts`). `idb ui text` encodes each character
+  through a fixed US-keyboard table (fb-idb 1.1.7 `idb/common/hid.py`
+  `KEY_MAP` — the 95 printable ASCII characters plus newline) and raises
+  `No keycode found for <char>` on anything else, so Korean and emoji were
+  impossible to type. `IdbBackend.inputText` now keeps the single
+  `ui text` call for ASCII and routes everything else through
+  `simctl pbcopy` followed by a Command-V chord (HID 227 held with
+  `--duration` while a second invocation presses HID 25, since idb has no
+  chord command). Verified on a booted simulator with `"네이버 한글 🎉"`
+  and `"안녕하세요"`.
+
+### Fixed
+
+- Four `idb` integration defects that made every iOS command fail with an
+  empty device list, all found by the first real-simulator run
+  (2026-07-26, iPhone 17 Pro / iOS 26.0, fb-idb 1.1.7):
+  - `idb --version` does not exist in fb-idb 1.1.7 (argparse exits 2), so
+    `IdbDoctor.checkIdbInstalled` reported `installed: false` and
+    `BackendRegistry` skipped the entire iOS backend. Presence now falls
+    back to a `which idb` probe, reporting `version: null` honestly.
+  - `list-targets --json` emits JSONL (one object per line), not a JSON
+    array. Both call sites parsed it as an array and silently degraded to
+    an empty list. Extracted a shared `parseIdbTargets`
+    (`src/backend/idb-target-parse.ts`) accepting both shapes and skipping
+    unparseable lines rather than discarding the valid ones.
+  - The emulator discriminator field is `type`, not `target_type`, so
+    `isEmulator` was always `false`.
+  - `idb screenshot` requires a `dest_path` positional; `-` is now passed
+    to keep the no-disk-residue stdout contract.
+
+### Changed
+
+- `REQ-IOS-BACKEND-006` / `AC-IOS-016` amended: the original
+  "`idb ui text` is Unicode-native" premise was disproved by reading
+  fb-idb's own keycode table and is replaced by the ASCII / pasteboard
+  split described above.
 
 ### Notes
 
@@ -117,19 +154,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   this and returns a graceful `APK_NOT_BUNDLED` error instead of
   fabricating a binary. See `vendor/adbkeyboard/README.md` for the
   acquisition checklist.
-- iOS Simulator real-device/simulator verification is **deferred, not
-  done**: `idb` is an unmaintained third-party tool (pinned to its last
-  release, `fb-idb==1.1.8`, 2022-08), and no simulator was available this
-  session. Three idb behaviors are verified only against documented
-  examples and remain to be confirmed against real `idb` output in a
-  future run-phase session — the `list-targets --json` field names, the
-  `--udid`/screenshot argument and output shapes, and the `ui key` HID
-  code mapping. These sites are marked `@MX:TODO` in the source; see
-  `.moai/specs/SPEC-IOS-001/progress.md` for the current PASS /
-  PASS-WITH-DEBT breakdown (19 PASS, 9 PASS-WITH-DEBT, 0 FAIL). A
-  post-sync quality audit also caught a real CLI-level gap in `key`
+- iOS Simulator verification is **done** (2026-07-26): a full Safari
+  journey ran end to end against a booted iPhone 17 Pro (iOS 26.0) with
+  `idb_companion` 1.1.8 and the `idb` client on Python 3.11 — fb-idb 1.1.7
+  crashes on Python 3.12+ because it calls `asyncio.get_event_loop()`
+  without a running loop. All three deferred idb behaviors were checked
+  and all three were wrong; see **Fixed** above. The `@MX:TODO` markers at
+  those sites are cleared. One `@MX:TODO` remains in
+  `src/normalize/idb.ts`: the `Cell` / `Switch` / `Link` interactive types
+  are still unobserved, because neither the home screen nor Safari chrome
+  contains them.
+- Known iOS limitations found during that run: the ASCII text path follows
+  the simulator's active keyboard layout (a Korean layout turns
+  `text "naver"` into `ㅜㅁㅍㄷㄱ` with no error, and idb offers no way to
+  read or set the input mode); and `dump` sees native UI only — with a web
+  page loaded, `idb ui describe-all` returns the browser chrome alone, so
+  selector targeting cannot reach web content. The latter confirms
+  SPEC-03 (WebView/DOM via CDP/`ios-webkit-debug-proxy`) is required
+  rather than optional.
+- A post-sync quality audit also caught a real CLI-level gap in `key`
   (AC-IOS-017) and a stale grep-literal wording in two AC descriptions
   (AC-IOS-003/AC-IOS-024); both are fixed and reflected above.
+- Android real-device verification remains outstanding — the Android
+  implementation is still unit/mock-verified only.
 - WebView/DOM recognition (SPEC-03), the exploration loop (SPEC-04), and
   the Codex wrapper (SPEC-05) remain committed roadmap items, not yet
   implemented.

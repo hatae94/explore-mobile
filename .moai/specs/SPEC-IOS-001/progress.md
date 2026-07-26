@@ -105,3 +105,19 @@ m1_to_mN_commit_strategy: "per-milestone separate commits (9 commits: M1, M2+M3,
   - progress.md: 본 §E.4 기록으로 sync-phase 완료 표시 (design.md/research.md는 plan-phase 전용 아티팩트로 `draft` 유지, 본 전이 대상 아님)
 - **canary_compliance_check**: n/a — 본 SPEC은 forward-looking policy(자체 sync 시점에 검증하는 정책)를 정의하지 않음
 - **honesty note**: README.md/CHANGELOG.md 모두 iOS 실기기·실 시뮬레이터 검증이 **미완료(deferred)** 임을 명시하고, idb `list-targets`/`--udid`·screenshot 형태/`ui key` HID 코드 3건이 문서 기반 예시로만 검증되었음을 진술한다. `completed` 승격 없이 `implemented`로만 전이하여 overclaim을 방지했다.
+
+### §E.4-b 실 시뮬레이터 검증 (2026-07-26) — `implemented → completed` 승격 근거
+
+위 §E.4가 `completed` 승격을 "후속 run-phase 세션"으로 보류한 그 조건이 충족되어, 본 세션에서 실 시뮬레이터 검증을 수행하고 `completed`로 전이했다.
+
+- **환경**: iPhone 17 Pro / iOS 26.0 (UDID `D0B3A18C-E485-4E7C-A25E-504BF4CA6163`), Xcode 26.0 (Build 17A324), `idb_companion` 1.1.8, `idb` 클라이언트 fb-idb 1.1.7 on Python 3.11.0 (pipx). fb-idb는 Python 3.12+에서 `asyncio.get_event_loop()` RuntimeError로 기동 실패 — 3.11 고정이 전제조건.
+- **시나리오 (전 단계 PASS)**: `doctor --device` → `devices`(23대, 시뮬레이터 22 + 실물 iPad 1을 `isEmulator`로 정확히 구분) → `launch com.apple.mobilesafari` → `dump`(18요소) → `tap --id TabBarItemTitle`(선택자 모드) → `text "naver.com"` → `key enter` → naver.com 로드 확증(스크린샷 1,942,716 B) → 좌표 탭 내부 탐색(뉴스 섹션 이동 확증) → `stop` → `reset`(iOS no-op).
+- **DEFER 3건 확정 결과 — 3건 전부 가정이 틀렸음**: (a) `list-targets --json`은 JSONL(줄당 1객체, 배열 아님); (b) 기기종류 필드는 `type`(≠`target_type`); (c) `screenshot`은 `dest_path` 필수 위치인자(stdout은 `-`). HID는 전 별칭 수락 + `enter`=40 기능 확증(URL 제출·페이지 이동).
+- **추가 발견 결함 1건 (가장 치명적)**: `idb --version` 플래그가 fb-idb 1.1.7에 없어(argparse exit 2) `checkIdbInstalled`가 `installed:false`를 반환 → `BackendRegistry`가 iOS 백엔드를 통째로 건너뛰어 `devices`가 빈 배열. `which idb` 폴백으로 수정.
+- **재현 우선 준수**: 결함 4건 모두 실패 테스트를 먼저 작성해 RED를 관측(`red-1.log` 10 failed, `red-2.log` 1 failed)한 뒤 최소 수정 → GREEN.
+- **REQ-IOS-BACKEND-006 / AC-IOS-016 개정**: `idb ui text`의 "Unicode-native" 전제가 **거짓**으로 판명(fb-idb `idb/common/hid.py` `text_to_events`가 `KEY_MAP` = 출력 가능 ASCII 95자 + 개행만 지원, 그 외 `No keycode found for 네` 예외). 비ASCII는 `simctl pbcopy` + Command(227) 홀드 중 V(25) 붙여넣기로 대체 구현(`src/backend/idb-clipboard.ts`), `"네이버 한글 🎉"`·`"안녕하세요"` 실기기 확증.
+- **검증 수치**: 303 tests PASS (20 files), `pnpm typecheck` exit 0, `pnpm build` exit 0. 증거 로그: `.moai/state/verify/0e051298/`(red-1, red-2, red-3, green-1~3, green-final, typecheck-final, build-final).
+- **커밋**: `cf90bc0`(결함 4건 수정), `dbcfa24`(클립보드 유니코드 입력) — 둘 다 `origin/master` 푸시 완료.
+- **@MX:TODO 정리**: DEFER 3곳 중 2곳(`idb-backend.ts` describe-all argv, `keycodes-ios.ts` HID)은 `@MX:NOTE`로 전환. `normalize/idb.ts`는 `Cell`/`Switch`/`Link` 미관측이 사실이므로 `@MX:TODO`를 축소해 유지(홈 화면·사파리 크롬에 해당 타입이 없음).
+- **알려진 제약 (문서화, 코드 미변경)**: (1) ASCII 경로는 시뮬레이터 활성 자판에 종속 — 한글 자판 시 `text "naver"`가 무오류로 `ㅜㅁㅍㄷㄱ` 입력(idb에 입력 모드 조회/설정 수단 없음; HID 57 토글은 현재 상태를 알 수 없어 맹목적); (2) `ui describe-all`은 네이티브 UI만 반환 — 웹 페이지 로드 시 사파리 크롬 6요소만 나와 선택자 타겟팅이 웹 콘텐츠에 도달 불가 → SPEC-03(CDP/iwdp) 필요성 실증.
+- **실패한 접근 (재시도 금지)**: HID 125(Paste 키) 무시됨; `ui tap --duration` 길게 누르기로 붙여넣기 콜아웃 메뉴 미출현.
