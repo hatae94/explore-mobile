@@ -126,6 +126,124 @@ pnpm build        → exit 0
 - 툴바가 **완전히 펼쳐진** 상태(스크롤 최상단에서 주소창 확장)는 이번 관측 구간에서 별도 상태로 분리 확인되지 않았다. iOS 26 사파리는 하단 플로팅 바가 기본이라 상단 크롬은 상태 표시줄뿐이며, 그것이 오프셋 불변의 물리적 근거로 보이나 **가설**이다. 런타임 측정 방식이므로 가설이 틀려도 조용히 틀리지는 않는다.
 - 다른 기기(iPad, 노치 없는 기기)에서의 오프셋은 미측정. 상수를 박지 않았으므로 설계상 대응되나 실측 확인은 필요.
 
+### M2 — WebKit Inspector 클라이언트 [완료]
+
+`Target` 래퍼 프로토콜 클라이언트. 전송은 Node **내장 `WebSocket`** — 의존성 0개 추가, 대신 `engines.node`를 `>=22`로 상향(내장 WebSocket은 22.4+). 사용자 승인 사항.
+
+산출물: `src/webview/inspector-client.ts`, `src/webview/webkit-errors.ts`, 테스트 19건(모의 소켓).
+
+**실 프로토콜 검증** (모의가 아니라 실제 프록시·시뮬레이터):
+
+| 항목 | 관측 |
+|---|---|
+| targetId | `page-12` — **이벤트에서 획득**. 스파이크 때는 `page-1`이었음 → 하드코딩 금지(REQ-WEB-PROTO-002)가 실측으로 정당화됨 |
+| 문자열 평가 | `document.title` → `"NAVER"` |
+| 구조체 평가 | `({w:innerWidth,h:innerHeight,dpr:devicePixelRatio})` → `{"w":402,"h":714,"dpr":3}` |
+| `wasThrown` | `definitelyNotDefined()` → `WEB_EVAL_THREW` + `ReferenceError…` (성공으로 오인 안 함) |
+
+### M3 — DOM 정규화 순수 함수 [완료]
+
+산출물: `src/normalize/webdom.ts`(수집 표현식 + 정규화), 테스트 26건(픽스처만, 기기 불필요).
+
+**경계 검증** — 페이지 안에서 도는 수집 코드와 밖에서 도는 정규화기가 맞는지는 모의로 증명 불가하므로 실제 페이지로 확인:
+
+```
+선택자 매칭   508
+수집된 항목   508          ← 수집 코드가 내보내는 모양이 정규화기가 읽는 모양과 일치
+비가시 제외 후 333 (175개 제외)
+tappable      331
+role 분포     {"a":265,"input":2,"button":66}
+```
+
+폴백 체인도 실제로 동작: `input#query`는 `textContent`가 비어 `placeholder`("검색어를 입력해 주세요.")로, `MM_SEARCH_BACK`은 `aria-label`("이전 페이지")로 채워짐.
+
+`normalizeWebDomIndexed`를 추가로 노출한다. 비가시 요소를 걸러내면 순번이 어긋나는데, JS 폴백은 페이지를 **같은 선택자로 다시 질의**하므로 필터 이전의 원본 인덱스가 필요하다. 이걸 안 맞추면 숨은 요소가 있는 페이지에서만 조용히 다른 요소를 누른다.
+
+### M4 — iwdp 프로세스 생명주기 [완료]
+
+산출물: `src/webview/proxy-service.ts`, 테스트 17건.
+
+**실측 검증**:
+
+| 시나리오 | 관측 |
+|---|---|
+| 이미 떠 있는 프록시 | `startedByUs: false`, `dispose()` 후에도 **PID 93915 그대로 생존** (REQ-WEB-PROXY-002) |
+| 프록시 없음 | `startedByUs: true`, `dispose()` 후 **누수 없음** |
+| 명령 실패 시(NO_WEB_PAGE) | `finally` 정리로 **누수 없음** — plan.md §B.3이 지목한 위험 차단 확인 |
+| 소켓 선택 | 디스크에 5개, 점유 중 1개 → 점유 기준 선택(REQ-WEB-PROXY-001) |
+| `doctor` | `webInspectorProxy: {installed: true, liveSocketCount: 1}` (AC-WEB-003 후단) |
+
+### M5 — CLI `--web` 플래그 [완료]
+
+산출물: `src/cli/commands/web-support.ts`, `src/webview/calibration.ts`, `src/cli/args.ts` 확장, `dump`/`tap`/`text`/`doctor` 배선. 테스트 47건.
+
+- `--web`은 **값이 선택적**이라 `parseArgs`로 직접 표현이 안 됨(`dump --web`은 값 없음, `tap --web "<CSS>"`는 값 있음) → `normalizeWebFlagArgv`로 argv를 먼저 정규화.
+- 좌표 보정은 **캐시 + 자동 감지**(사용자 결정): 기기별로 디스크 캐시(`<cache-dir>/web-calibration.json`, `ime-sessions.json`과 같은 디렉터리), 매 호출 `screen`/`inner` 기하를 대조해 회전·크롬 변화 시 자동 재측정. 캐시 적중 시에는 페이지에 아무것도 주입하지 않고 탭도 보내지 않음.
+- 요소 조회를 **보정보다 먼저** 수행. 보정은 (무해하지만) 탭을 보내므로, AC-WEB-015의 "미매칭 시 아무 동작 없음"을 지키려면 순서가 이래야 함.
+- `--web`과 좌표/`--id`/`--text` 동시 사용은 `TARGET_CONFLICT`로 거부 — 한쪽을 조용히 무시하지 않음.
+
+### M6 — 실 시뮬레이터 e2e [완료 · 마감 조건 충족]
+
+환경: iPhone 17 Pro / iOS 26.0, UDID `D0B3A18C-…`, 2026-07-27. 보정 캐시는 삭제하고 시작(콜드 스타트 포함).
+
+| # | 명령 | 관측 결과 |
+|---|------|-----------|
+| 1 | `dump --web` (프록시 꺼진 상태) | CLI가 **프록시를 스스로 기동**, 요소 333개 반환 |
+| 2 | `dump --web "a[href*='news']"` | 선택자 매칭 118개 |
+| 3 | `tap --web "a[href*='shopping.naver.com']"` | `method: "native"`, `(183,434)` → **`shopping.naver.com/ns/home`으로 실제 이동, 스크린샷 확증** |
+| 4 | `tap --web "a" --index 50` (화면 밖 요소) | `method: "js-click"` → **`m.brand.naver.com/avedakorea/…`로 실제 이동** |
+| 5 | `tap --web "#MM_SEARCH_FAKE"` | `method: "native"`, `(186,188)` → 검색 오버레이 열림, `input#query` 노출 |
+| 6 | `text "네이버 웹뷰" --web "#query"` | `method: "native"`, `(203,98)` → 필드 값 읽기: **`{"value":"네이버 웹뷰","focused":"query"}`** (한글 입력 + 포커스 확인) |
+| 7 | 실패 경로 | `ELEMENT_NOT_FOUND` / `TARGET_CONFLICT` / `MISSING_SELECTOR` / `IWDP_NOT_INSTALLED`(PATH 심 285개 링크로 재현) / `NO_WEB_PAGE`(사파리 종료로 재현) 전부 정상 JSON |
+
+스크린샷: `m6-before.png`, `m6-after.png`(쇼핑 이동 확증), `m6-fallback.png`, `m6-text.png`.
+
+## §E.3 Run-phase Audit-Ready Signal
+
+```
+run_status: audit-ready
+run_complete_at: 2026-07-27
+tests: 426 passed / 26 files   (기준선 303 → +123)
+typecheck: exit 0
+build: exit 0
+coverage: 전체 92.99% stmts / 88.6% branch (목표 85% 상회), src/webview 86.4% stmts
+```
+
+### AC 매트릭스 (20건)
+
+| AC | 상태 | 근거 |
+|----|------|------|
+| AC-WEB-001 살아있는 소켓 선택 | **PASS** | 단위 2건 + e2e(디스크 5 / 점유 1) |
+| AC-WEB-002 자기 프록시만 정리 | **PASS** | 단위 2건 + e2e(PID 동일 생존 / 자체 기동분 정리) |
+| AC-WEB-003 iwdp 미설치 graceful + doctor | **PASS** | 단위 4건 + e2e(PATH 심) + doctor 실측 |
+| AC-WEB-004 열린 페이지 없음 | **PASS** | 단위 3건 + e2e(사파리 종료) |
+| AC-WEB-005 Target 래퍼 전송 | **PASS** | 단위 + 실 프로토콜 |
+| AC-WEB-006 targetId 이벤트 획득 | **PASS** | 단위 + 실측(`page-1`→`page-12` 변동) + grep 0건 |
+| AC-WEB-007 wasThrown 오류 처리 | **PASS** | 단위 + 실 프로토콜 |
+| AC-WEB-008 타임아웃 + 정리 | **PASS** | 단위(가짜 타이머) |
+| AC-WEB-009 정규화 순수 함수 | **PASS** | 단위 26건(픽스처만) |
+| AC-WEB-010 비가시 제외 | **PASS** | 단위 + 실측(508→333) |
+| AC-WEB-011 degrade | **PASS** | 단위 |
+| AC-WEB-012 네이티브 탭 기본 경로 | **PASS** | 단위 + e2e(페이지 이동 + 스크린샷) |
+| AC-WEB-013 JS click 폴백 + 경로 표기 | **PASS** | 단위 + e2e(`js-click` 표기 + 실제 이동) |
+| AC-WEB-014 text 포커스 후 입력 | **PASS** | 단위 + e2e(필드 값 읽기 확인) |
+| AC-WEB-015 미매칭 → 무동작 | **PASS** | 단위 + e2e |
+| AC-WEB-016 좌표 변환 규칙 | **PASS** | M1 실측 8/8 + 단위 13건 + 종단 검증 |
+| AC-WEB-017 기존 동작 불변 | **PASS** | 기존 274건 전부 통과 |
+| AC-WEB-018 JSON 봉투 계약 | **PASS** | 단위 + e2e 전 출력 파싱됨 |
+| AC-WEB-019 Android → UNSUPPORTED_ON_PLATFORM | **PARTIAL** | 단위 2건 PASS. **실기기 e2e 미실시 — Android 기기 미연결** |
+| AC-WEB-020 실 시뮬레이터 e2e | **PASS** | M6 표 7행 |
+
+**19 PASS / 1 PARTIAL / 0 FAIL.**
+
+### 잔여 위험 · 알려진 한계
+
+- **AC-WEB-019는 단위 테스트만**이다. Android 기기가 연결되면 실측으로 승격해야 한다(SPEC-ANDROID-001의 실기기 e2e 미기록 항목과 같은 성격).
+- **`doctor`의 iOS 구간은 adb가 PATH에 없으면 도달하지 않는다.** `doctor`는 adb 미설치 시 조기 반환하므로(SPEC-IOS-001에서 확립된 기존 동작, `doctor.ts` @MX:NOTE에 명시) iOS 전용 사용자는 `webInspectorProxy` 보고를 못 본다. 본 SPEC 범위 밖이나 실사용 갭이다.
+- **`src/webview` 커버리지 86.4%의 미커버는 실 I/O 어댑터**(`nativeWebSocketFactory`, `spawnProxyProcess`, `nativeFetchJson`, `defaultWebDeps`)다. 단위 테스트 대신 M6 e2e로 검증했다 — 가짜 테스트로 숫자를 채우지 않았다.
+- 다중 페이지일 때 "첫 번째 페이지" 규칙(plan.md §B.2)은 그대로다. 탭이 여러 개인 상황은 미검증.
+- 관측 중 `src/backend/idb-doctor.ts`의 모듈 주석이 여전히 "idb `ui text`는 Unicode-native"라고 기술한다. SPEC-IOS-001에서 거짓으로 확인·개정된 전제다. 본 SPEC 범위 밖이라 수정하지 않았다.
+
 ## §F Phase 4 Mode Selection
 
 ```

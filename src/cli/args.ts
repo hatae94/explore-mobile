@@ -23,6 +23,44 @@ export interface ParsedCommandArgs {
   selectorText: string | undefined;
   /** `tap`/`text --index <n>`: 0-based match index when a selector matches more than one element. Kept as a raw string here (parsed by the command handler) to match the existing coordinate-parsing pattern. */
   index: string | undefined;
+  /**
+   * `--web` (SPEC-WEBVIEW-001, REQ-WEB-CLI-001): routes the command through
+   * the WebKit Inspector path instead of the native accessibility path.
+   *
+   * Three states, because the flag carries an OPTIONAL value:
+   *   `undefined`  — flag absent; the native path, entirely unchanged
+   *   `""`         — `dump --web`, web mode with no selector
+   *   non-empty    — `tap --web "<CSS>"`, the CSS selector to act on
+   */
+  web: string | undefined;
+}
+
+/**
+ * Gives a valueless `--web` an explicit empty value so `node:util.parseArgs`
+ * can treat `--web` as a string option.
+ *
+ * `parseArgs` has no "optional value" option type: declaring `--web` as a
+ * string makes a bare `dump --web` fail, and declaring it boolean makes
+ * `tap --web "<CSS>"` drop the selector. The SPEC's command surface
+ * (REQ-WEB-CLI-001) needs both forms, so the argv is normalized first.
+ *
+ * A token after `--web` is treated as its value unless it starts with `-`.
+ * A CSS selector cannot begin with `-` at the top level, so this cannot
+ * swallow a real selector.
+ */
+export function normalizeWebFlagArgv(argv: string[]): string[] {
+  const normalized: string[] = [];
+
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i]!;
+    normalized.push(token);
+    if (token !== "--web") continue;
+
+    const next = argv[i + 1];
+    if (next === undefined || next.startsWith("-")) normalized.push("");
+  }
+
+  return normalized;
 }
 
 /**
@@ -38,8 +76,9 @@ export interface ParsedCommandArgs {
  */
 export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
   const { values, positionals } = parseArgs({
-    args: argv,
+    args: normalizeWebFlagArgv(argv),
     options: {
+      web: { type: "string" },
       device: { type: "string" },
       out: { type: "string" },
       yes: { type: "boolean" },
@@ -63,5 +102,6 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
     id: typeof values.id === "string" ? values.id : undefined,
     selectorText: typeof values.text === "string" ? values.text : undefined,
     index: typeof values.index === "string" ? values.index : undefined,
+    web: typeof values.web === "string" ? values.web : undefined,
   };
 }

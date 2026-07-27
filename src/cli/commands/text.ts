@@ -30,6 +30,7 @@ import { failure, success } from "../envelope.js";
 import type { CommandError } from "../envelope.js";
 import { parseIndex } from "../validators.js";
 import { errorMessage, type CommandHandler } from "./types.js";
+import { runWebText } from "./web-support.js";
 import type { ParsedCommandArgs } from "../args.js";
 
 /**
@@ -80,6 +81,10 @@ async function focusElementBySelector(
 }
 
 export const textCommand: CommandHandler = async (args, backend) => {
+  // `--web` routes to the WebKit Inspector path (SPEC-WEBVIEW-001); without
+  // it this handler behaves exactly as before (AC-WEB-017).
+  if (args.web !== undefined) return runWebText(args, backend);
+
   const text = args.positionals[0];
   if (text === undefined) {
     return failure("text", "MISSING_TEXT", 'text requires an input string: text "<...>".');

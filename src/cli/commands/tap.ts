@@ -21,6 +21,7 @@ import { failure, success } from "../envelope.js";
 import type { CommandResult } from "../envelope.js";
 import { parseCoordinate, parseIndex } from "../validators.js";
 import { errorMessage, type CommandHandler } from "./types.js";
+import { runWebTap } from "./web-support.js";
 import type { ParsedCommandArgs } from "../args.js";
 
 /**
@@ -86,6 +87,10 @@ async function tapBySelector(args: ParsedCommandArgs, backend: DeviceBackend): P
 }
 
 export const tapCommand: CommandHandler = async (args, backend) => {
+  // `--web` routes to the WebKit Inspector path (SPEC-WEBVIEW-001); without
+  // it this handler behaves exactly as before (AC-WEB-017).
+  if (args.web !== undefined) return runWebTap(args, backend);
+
   const [xRaw, yRaw] = args.positionals;
   const hasCoords = xRaw !== undefined || yRaw !== undefined;
   const hasSelector = args.id !== undefined || args.selectorText !== undefined;

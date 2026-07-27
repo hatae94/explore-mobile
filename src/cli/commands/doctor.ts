@@ -23,6 +23,8 @@
  * shape rather than being replaced/removed).
  */
 
+import { spawnProcess } from "../../backend/process-executor.js";
+import { checkWebInspectorProxy } from "../../webview/proxy-service.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { success } from "../envelope.js";
 import { performReset } from "./reset.js";
@@ -70,17 +72,21 @@ export const doctorCommand: CommandHandler = async (args, backend, envServices) 
   const resolvedDevice = devices.find((d) => d.serial === target.serial);
 
   if (resolvedDevice?.platform === "ios") {
-    const [idbInstalled, companion, simulatorBooted] = await Promise.all([
+    const [idbInstalled, companion, simulatorBooted, webInspectorProxy] = await Promise.all([
       envServices.ios.checkIdbInstalled(),
       envServices.ios.checkCompanion(),
       envServices.ios.checkSimulatorBooted(target.serial),
+      // SPEC-WEBVIEW-001 REQ-WEB-PROXY-003: `--web`'s prerequisite is
+      // reported here so a user learns it is missing from `doctor` rather
+      // than from a failed `tap --web`.
+      checkWebInspectorProxy(spawnProcess),
     ]);
     return success("doctor", {
       adb,
       daemon,
       devices,
       adbKeyboard: { skipped: true, reason: "Target device is iOS; see idbEnvironment instead." },
-      idbEnvironment: { idbInstalled, companion, simulatorBooted },
+      idbEnvironment: { idbInstalled, companion, simulatorBooted, webInspectorProxy },
     });
   }
 

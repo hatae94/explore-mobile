@@ -17,8 +17,13 @@ import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import type { CommonElement } from "../../schema/common-element.js";
 import { errorMessage, type CommandHandler } from "./types.js";
+import { runWebDump } from "./web-support.js";
 
 export const dumpCommand: CommandHandler = async (args, backend) => {
+  // `--web` routes to the WebKit Inspector path (SPEC-WEBVIEW-001); without
+  // it this handler behaves exactly as before (AC-WEB-017).
+  if (args.web !== undefined) return runWebDump(args, backend);
+
   const devices = await backend.listDevices();
   const target = resolveTargetDevice(devices, args.device);
   if (!target.ok) return failure("dump", target.code, target.message, target.details);

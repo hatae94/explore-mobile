@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseCommandArgs } from "./args.js";
+import { normalizeWebFlagArgv, parseCommandArgs } from "./args.js";
 
 describe("parseCommandArgs", () => {
   it("parses positionals and --device/--out (M3 baseline)", () => {
@@ -43,5 +43,46 @@ describe("parseCommandArgs", () => {
 
   it("throws on an unrecognized flag (router converts this to a graceful INVALID_ARGS error)", () => {
     expect(() => parseCommandArgs(["--not-a-real-flag"])).toThrow();
+  });
+
+  it("leaves web undefined when --web is absent (native path unchanged, REQ-WEB-CLI-001)", () => {
+    expect(parseCommandArgs(["100", "200"]).web).toBeUndefined();
+  });
+
+  it("parses a bare --web as web mode with no selector (dump --web)", () => {
+    expect(parseCommandArgs(["--web"]).web).toBe("");
+    expect(parseCommandArgs(["--web", "--device", "UDID"]).web).toBe("");
+  });
+
+  it("parses --web <CSS> as web mode with a selector", () => {
+    expect(parseCommandArgs(["--web", "a[href]"]).web).toBe("a[href]");
+    expect(parseCommandArgs(["안녕", "--web", "#query"]).positionals).toEqual(["안녕"]);
+    expect(parseCommandArgs(["안녕", "--web", "#query"]).web).toBe("#query");
+  });
+});
+
+describe("normalizeWebFlagArgv", () => {
+  it("leaves argv untouched when --web is absent", () => {
+    expect(normalizeWebFlagArgv(["tap", "1", "2"])).toEqual(["tap", "1", "2"]);
+  });
+
+  it("supplies an empty value for a trailing bare --web", () => {
+    expect(normalizeWebFlagArgv(["--web"])).toEqual(["--web", ""]);
+  });
+
+  it("supplies an empty value when --web is followed by another flag", () => {
+    expect(normalizeWebFlagArgv(["--web", "--device", "X"])).toEqual(["--web", "", "--device", "X"]);
+  });
+
+  it("keeps a selector that follows --web", () => {
+    expect(normalizeWebFlagArgv(["--web", "a.link"])).toEqual(["--web", "a.link"]);
+  });
+
+  it("does not touch a --web=<value> form", () => {
+    expect(normalizeWebFlagArgv(["--web=a.link"])).toEqual(["--web=a.link"]);
+  });
+
+  it("does not treat a bare --web value that looks like a negative number as a flag", () => {
+    expect(normalizeWebFlagArgv(["--web", "-1"])).toEqual(["--web", "", "-1"]);
   });
 });

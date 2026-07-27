@@ -1,0 +1,324 @@
+/**
+ * M5 — `--web` command wiring (REQ-WEB-ACT-001..004, REQ-WEB-CLI-001..003;
+ * AC-WEB-012..015, 018, 019).
+ *
+ * The proxy, the inspector connection, and the calibration store are all
+ * injected, so these run with no proxy, no simulator, and no disk.
+ */
+
+import { describe, expect, it } from "vitest";
+import type { CommonElement, DeviceBackend, DeviceInfo } from "../../schema/device-backend.js";
+import type { ProcessExecResult } from "../../backend/process-executor.js";
+import { CalibrationStore } from "../../webview/calibration.js";
+import { IwdpNotInstalledError } from "../../webview/webkit-errors.js";
+import type { WebInspectorClient } from "../../webview/inspector-client.js";
+import type { WebProxySession } from "../../webview/proxy-service.js";
+import { parseCommandArgs } from "../args.js";
+import { runWebDump, runWebTap, runWebText, type WebRunDeps } from "./web-support.js";
+
+const IOS_DEVICE: DeviceInfo = {
+  serial: "UDID-1",
+  model: "iPhone 17 Pro",
+  osVersion: "26.0",
+  connectionState: "device",
+  isEmulator: true,
+  platform: "ios",
+};
+
+const ANDROID_DEVICE: DeviceInfo = { ...IOS_DEVICE, serial: "R58N90", platform: "android" };
+
+const VIEWPORT_SIGNATURE = { innerWidth: 402, innerHeight: 714, screenWidth: 402, screenHeight: 874 };
+
+/** A raw collected element as the in-page collector emits it. */
+function rawEl(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    tag: "a",
+    role: "",
+    text: "뉴스",
+    label: "",
+    placeholder: "",
+    id: "",
+    rect: { x: 20, y: 348, w: 66, h: 48 },
+    disabled: false,
+    onclick: false,
+    ...overrides,
+  };
+}
+
+interface Harness {
+  deps: WebRunDeps;
+  backend: DeviceBackend;
+  taps: { x: number; y: number }[];
+  typed: string[];
+  evaluated: string[];
+  disposed: () => boolean;
+  clientClosed: () => boolean;
+}
+
+function harness(options: { device?: DeviceInfo; collected?: unknown; clickResult?: unknown; proxyError?: Error } = {}): Harness {
+  const device = options.device ?? IOS_DEVICE;
+  const collected = options.collected ?? [rawEl()];
+  const taps: { x: number; y: number }[] = [];
+  const typed: string[] = [];
+  const evaluated: string[] = [];
+  let disposed = false;
+  let clientClosed = false;
+
+  const backend = {
+    listDevices: async (): Promise<DeviceInfo[]> => [device],
+    dumpUiHierarchy: async (): Promise<CommonElement[]> => [],
+    screenshot: async (): Promise<Uint8Array> => new Uint8Array(),
+    tap: async (_serial: string, x: number, y: number): Promise<void> => {
+      taps.push({ x, y });
+    },
+    inputText: async (_serial: string, text: string): Promise<void> => {
+      typed.push(text);
+    },
+    sendKeyEvent: async (): Promise<void> => undefined,
+    launchApp: async (): Promise<void> => undefined,
+    stopApp: async (): Promise<void> => undefined,
+  } satisfies DeviceBackend;
+
+  const client: WebInspectorClient = {
+    targetId: "page-12",
+    close: () => {
+      clientClosed = true;
+    },
+    evaluate: async <T>(expression: string): Promise<T> => {
+      evaluated.push(expression);
+      if (expression.includes("screenHeight")) return VIEWPORT_SIGNATURE as T;
+      if (expression.includes(".click()")) return (options.clickResult ?? true) as T;
+      return collected as T;
+    },
+  };
+
+  const session: WebProxySession = {
+    pageWebSocketUrl: "ws://localhost:9222/devtools/page/1",
+    startedByUs: true,
+    dispose: () => {
+      disposed = true;
+    },
+  };
+
+  const files = new Map<string, Buffer>();
+  const store = new CalibrationStore("/tmp/fake/web-calibration.json", {
+    read: async (path) => files.get(path) ?? null,
+    write: async (path, data) => {
+      files.set(path, data);
+    },
+  });
+  // Pre-seed so the command layer never needs a calibration tap of its own;
+  // measurement itself is covered by calibration.test.ts.
+  void store.set(device.serial, { topOffset: 62, signature: VIEWPORT_SIGNATURE });
+
+  return {
+    deps: {
+      openProxy: async (): Promise<WebProxySession> => {
+        if (options.proxyError) throw options.proxyError;
+        return session;
+      },
+      connect: async (): Promise<WebInspectorClient> => client,
+      store,
+      exec: async (): Promise<ProcessExecResult> => ({
+        stdout: Buffer.from(""),
+        stderr: Buffer.from(""),
+        exitCode: 0,
+      }),
+    },
+    backend,
+    taps,
+    typed,
+    evaluated,
+    disposed: () => disposed,
+    clientClosed: () => clientClosed,
+  };
+}
+
+describe("runWebDump", () => {
+  it("returns normalized web elements", async () => {
+    const h = harness();
+    const result = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const data = result.data as { serial: string; elements: CommonElement[] };
+    expect(data.serial).toBe("UDID-1");
+    expect(data.elements).toHaveLength(1);
+    expect(data.elements[0]).toMatchObject({ role: "a", text: "뉴스", tappable: true });
+  });
+
+  it("drops invisible elements before reporting", async () => {
+    const h = harness({ collected: [rawEl(), rawEl({ id: "ghost", rect: { x: 0, y: 0, w: 0, h: 0 } })] });
+    const result = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+    expect(result.ok && (result.data as { elements: CommonElement[] }).elements).toHaveLength(1);
+  });
+
+  it("emits a single parseable JSON document (AC-WEB-018)", async () => {
+    const h = harness();
+    const result = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+    expect(() => JSON.parse(JSON.stringify(result))).not.toThrow();
+  });
+
+  it("always releases the proxy and the connection", async () => {
+    const h = harness();
+    await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+    expect(h.disposed()).toBe(true);
+    expect(h.clientClosed()).toBe(true);
+  });
+});
+
+describe("platform guard (REQ-WEB-CLI-003, AC-WEB-019)", () => {
+  it("refuses --web against an Android device", async () => {
+    const h = harness({ device: ANDROID_DEVICE });
+    const result = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("UNSUPPORTED_ON_PLATFORM");
+  });
+
+  it("does not open a proxy for an unsupported platform", async () => {
+    const h = harness({ device: ANDROID_DEVICE, proxyError: new Error("must not be reached") });
+    const result = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("runWebTap", () => {
+  it("taps the converted device coordinate natively (AC-WEB-012)", async () => {
+    const h = harness();
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(true);
+    // rect {20,348,66,48} -> centre (53,372) -> +62 -> (53,434)
+    expect(h.taps).toEqual([{ x: 53, y: 434 }]);
+    expect(result.ok && (result.data as { method: string }).method).toBe("native");
+  });
+
+  it("reports the coordinate it used", async () => {
+    const h = harness();
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    expect(result.ok && result.data).toMatchObject({ x: 53, y: 434 });
+  });
+
+  it("falls back to JS click for an element outside the viewport, and says so (AC-WEB-013)", async () => {
+    const h = harness({ collected: [rawEl({ rect: { x: 719, y: 142, w: 64, h: 45 } })] });
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && (result.data as { method: string }).method).toBe("js-click");
+    expect(h.taps).toEqual([]);
+  });
+
+  it("rejects an unmatched selector without tapping or clicking (AC-WEB-015)", async () => {
+    const h = harness({ collected: [] });
+    const result = await runWebTap(parseCommandArgs(["--web", "a.nope"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("ELEMENT_NOT_FOUND");
+    expect(h.taps).toEqual([]);
+    expect(h.evaluated.some((e) => e.includes(".click()"))).toBe(false);
+  });
+
+  it("treats an all-invisible match set as not found", async () => {
+    const h = harness({ collected: [rawEl({ rect: { x: 0, y: 0, w: 0, h: 0 } })] });
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error.code).toBe("ELEMENT_NOT_FOUND");
+  });
+
+  it("requires a selector", async () => {
+    const h = harness();
+    const result = await runWebTap(parseCommandArgs(["--web"]), h.backend, h.deps);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("MISSING_SELECTOR");
+  });
+
+  it("addresses the Nth VISIBLE match by its position in the raw match list", async () => {
+    const h = harness({
+      collected: [
+        rawEl({ id: "ghost", rect: { x: 0, y: 0, w: 0, h: 0 } }),
+        rawEl({ id: "first-visible" }),
+        rawEl({ id: "second-visible", rect: { x: 719, y: 142, w: 64, h: 45 } }),
+      ],
+    });
+    // --index 1 selects the second VISIBLE element, which is raw index 2.
+    const result = await runWebTap(parseCommandArgs(["--web", "a", "--index", "1"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(true);
+    const clickExpr = h.evaluated.find((e) => e.includes(".click()")) ?? "";
+    expect(clickExpr).toContain("[2]");
+  });
+
+  it("rejects an out-of-range index", async () => {
+    const h = harness();
+    const result = await runWebTap(parseCommandArgs(["--web", "a", "--index", "5"]), h.backend, h.deps);
+    expect(!result.ok && result.error.code).toBe("ELEMENT_NOT_FOUND");
+  });
+
+  it("refuses to combine --web with coordinates rather than ignoring one of them", async () => {
+    const h = harness();
+    const result = await runWebTap(parseCommandArgs(["100", "200", "--web", "a"]), h.backend, h.deps);
+    expect(!result.ok && result.error.code).toBe("TARGET_CONFLICT");
+    expect(h.taps).toEqual([]);
+  });
+
+  it("refuses to combine --web with the native --id/--text selectors", async () => {
+    const h = harness();
+    const byId = await runWebTap(parseCommandArgs(["--web", "a", "--id", "btn"]), h.backend, h.deps);
+    const byText = await runWebTap(parseCommandArgs(["--web", "a", "--text", "OK"]), h.backend, h.deps);
+    expect(!byId.ok && byId.error.code).toBe("TARGET_CONFLICT");
+    expect(!byText.ok && byText.error.code).toBe("TARGET_CONFLICT");
+  });
+
+  it("surfaces a proxy failure with its own code (AC-WEB-003)", async () => {
+    const h = harness({ proxyError: new IwdpNotInstalledError("not installed") });
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("IWDP_NOT_INSTALLED");
+  });
+});
+
+describe("runWebText", () => {
+  it("activates the element, then types (REQ-WEB-ACT-003)", async () => {
+    const h = harness({ collected: [rawEl({ tag: "input", placeholder: "검색" })] });
+    const result = await runWebText(parseCommandArgs(["안녕하세요", "--web", "#query"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(h.taps).toEqual([{ x: 53, y: 434 }]);
+    expect(h.typed).toEqual(["안녕하세요"]);
+  });
+
+  it("does not type when the selector matched nothing (AC-WEB-015)", async () => {
+    const h = harness({ collected: [] });
+    const result = await runWebText(parseCommandArgs(["안녕", "--web", "#nope"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error.code).toBe("ELEMENT_NOT_FOUND");
+    expect(h.typed).toEqual([]);
+  });
+
+  it("requires the text positional", async () => {
+    const h = harness();
+    const result = await runWebText(parseCommandArgs(["--web", "#query"]), h.backend, h.deps);
+    expect(!result.ok && result.error.code).toBe("MISSING_TEXT");
+  });
+
+  it("refuses to combine --web with the native --id/--text selectors", async () => {
+    const h = harness();
+    const result = await runWebText(parseCommandArgs(["안녕", "--web", "#query", "--id", "field"]), h.backend, h.deps);
+    expect(!result.ok && result.error.code).toBe("TARGET_CONFLICT");
+    expect(h.typed).toEqual([]);
+  });
+
+  it("releases the session even when the selector fails", async () => {
+    const h = harness({ collected: [] });
+    await runWebText(parseCommandArgs(["안녕", "--web", "#nope"]), h.backend, h.deps);
+    expect(h.disposed()).toBe(true);
+    expect(h.clientClosed()).toBe(true);
+  });
+});
