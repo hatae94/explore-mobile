@@ -42,6 +42,7 @@ function createMockIosBackend(): DeviceBackend {
     sendKeyEvent: vi.fn().mockResolvedValue(undefined),
     launchApp: vi.fn().mockResolvedValue(undefined),
     stopApp: vi.fn().mockResolvedValue(undefined),
+    swipe: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -81,6 +82,7 @@ function createMockBackend(devices: DeviceInfo[] = [device()]): DeviceBackend {
     sendKeyEvent: vi.fn().mockResolvedValue(undefined),
     launchApp: vi.fn().mockResolvedValue(undefined),
     stopApp: vi.fn().mockResolvedValue(undefined),
+    swipe: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -361,6 +363,7 @@ describe("runCli", () => {
         sendKeyEvent: vi.fn().mockResolvedValue(undefined),
         launchApp: vi.fn().mockResolvedValue(undefined),
         stopApp: vi.fn().mockResolvedValue(undefined),
+        swipe: vi.fn().mockResolvedValue(undefined),
       };
       const registry: DeviceBackend = new BackendRegistry([
         { platform: "ios", backend: idbBackend, isAvailable: async () => true },
@@ -436,6 +439,7 @@ describe("runCli", () => {
           ),
         launchApp: vi.fn().mockResolvedValue(undefined),
         stopApp: vi.fn().mockResolvedValue(undefined),
+        swipe: vi.fn().mockResolvedValue(undefined),
       };
       const registry: DeviceBackend = new BackendRegistry([
         { platform: "ios", backend: idbBackend, isAvailable: async () => true },

@@ -38,6 +38,7 @@ function mockBackend(devices: DeviceInfo[]): DeviceBackend {
     sendKeyEvent: vi.fn().mockResolvedValue(undefined),
     launchApp: vi.fn().mockResolvedValue(undefined),
     stopApp: vi.fn().mockResolvedValue(undefined),
+    swipe: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -204,6 +205,22 @@ describe("BackendRegistry", () => {
       const registry: DeviceBackend = new BackendRegistry([android]);
 
       await expect(registry.tap("does-not-exist", 1, 1)).rejects.toThrow(/No backend owns/);
+    });
+
+    it("swipe(serial, from, to, options) routes to the owning backend with the exact arguments (SPEC-GESTURE-001 M1, resolve-then-delegate like stopApp)", async () => {
+      const android = registeredBackend("android", [androidDevice()]);
+      const ios = registeredBackend("ios", [iosDevice()]);
+      const registry: DeviceBackend = new BackendRegistry([android, ios]);
+
+      await registry.swipe(iosDevice().serial, { x: 100, y: 800 }, { x: 100, y: 200 }, { durationMs: 500 });
+
+      expect(ios.backend.swipe).toHaveBeenCalledWith(
+        iosDevice().serial,
+        { x: 100, y: 800 },
+        { x: 100, y: 200 },
+        { durationMs: 500 },
+      );
+      expect(android.backend.swipe).not.toHaveBeenCalled();
     });
   });
 });

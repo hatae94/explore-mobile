@@ -1,9 +1,10 @@
 /**
  * `IdbBackend` — the SPEC-IOS-001 concrete `DeviceBackend` (SPEC-ANDROID-001
  * M1 interface) implementation, wrapping `idb` subprocess calls to control
- * iOS Simulators. Implements all 8 methods (REQ-IOS-BACKEND-001), proving
- * the interface is thin enough to be backend-swappable exactly as
- * SPEC-ANDROID-001 designed it to be (REQ-IOS-ARCH-005).
+ * iOS Simulators. Implements all 9 methods (REQ-IOS-BACKEND-001; `swipe`
+ * added SPEC-GESTURE-001 M1), proving the interface is thin enough to be
+ * backend-swappable exactly as SPEC-ANDROID-001 designed it to be
+ * (REQ-IOS-ARCH-005).
  *
  * Every idb command's exact argv/output shape below follows design.md §B.
  * The three shapes plan.md §B.0 deferred to Run-phase — `list-targets --json`
@@ -21,13 +22,13 @@
  * REQ-IOS-ARCH-005). Every CLI command that targets an iOS device depends
  * on this class's method surface staying compatible with `DeviceBackend`.
  * @MX:REASON — `AdbBackend` is the reference implementation this class
- * must match structurally; both implement the exact same 8-method
+ * must match structurally; both implement the exact same 9-method
  * interface so the backend registry (`registry.ts`) can swap between them
  * transparently.
  */
 
 import type { CommonElement } from "../schema/common-element.js";
-import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
+import type { DeviceBackend, DeviceInfo, SwipeOptions, SwipePoint } from "../schema/device-backend.js";
 import { isKeyAlias, type KeyAlias } from "../schema/key-alias.js";
 import type { IdbExecResult, IdbExecutor } from "./idb-executor.js";
 import { spawnIdb } from "./idb-executor.js";
@@ -288,5 +289,37 @@ export class IdbBackend implements DeviceBackend {
   async stopApp(serial: string, bundleId: string): Promise<void> {
     const result = await this.exec(["terminate", "--udid", serial, bundleId]);
     assertSuccess(result, "terminate");
+  }
+
+  /**
+   * REQ-GEST-SWIPE-001/002/004 (SPEC-GESTURE-001 M1, additive 9th method):
+   * `idb ui swipe --udid <serial> x1 y1 x2 y2 [--duration <seconds>]`.
+   *
+   * @MX:WARN — `idb`'s `--duration` is SECONDS (float), not milliseconds —
+   * confirmed against fb-idb's `hid.py` (`duration: Optional[float]`), and
+   * this file already depends on that unit elsewhere (`MODIFIER_HOLD_SECONDS
+   * = 2` passed as `--duration 2` for a 2-second modifier hold, above).
+   * The CLI's single contract unit is milliseconds (spec.md §C.1-⑦), so
+   * `options.durationMs` is converted to seconds HERE, before argv is
+   * built. Passing ms straight through (as `AdbBackend.swipe` correctly
+   * does for `adb`) would silently turn `--duration 500` into a
+   * 500-SECOND swipe on iOS.
+   * @MX:REASON — this exact ms/seconds asymmetry is the defect
+   * SPEC-GESTURE-001 was written to close (spec.md §C.1-⑦, AC-GEST-002);
+   * omitting the conversion has no type error and no runtime error — it
+   * just silently sends the wrong duration.
+   *
+   * The `--duration` token pair is appended AFTER the four coordinate
+   * positionals (never interleaved between them, AC-GEST-002) — Python's
+   * `argparse` does not reliably accept an optional flag interleaved
+   * between positionals.
+   */
+  async swipe(serial: string, from: SwipePoint, to: SwipePoint, options?: SwipeOptions): Promise<void> {
+    const args = ["ui", "swipe", "--udid", serial, String(from.x), String(from.y), String(to.x), String(to.y)];
+    if (options?.durationMs !== undefined) {
+      args.push("--duration", String(options.durationMs / 1000));
+    }
+    const result = await this.exec(args);
+    assertSuccess(result, "ui swipe");
   }
 }

@@ -257,6 +257,55 @@ describe("AdbBackend", () => {
     });
   });
 
+  describe("swipe (AC-GEST-001, AC-GEST-002 — SPEC-GESTURE-001 M1)", () => {
+    it("calls 'shell input swipe <x1> <y1> <x2> <y2>' targeted with -s <serial>, with no duration argument when options are omitted", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok(""));
+
+      const backend = new AdbBackend(exec);
+      await backend.swipe("R58N90ABCDE", { x: 100, y: 800 }, { x: 100, y: 200 });
+
+      expect(exec).toHaveBeenCalledWith([
+        "-s",
+        "R58N90ABCDE",
+        "shell",
+        "input",
+        "swipe",
+        "100",
+        "800",
+        "100",
+        "200",
+      ]);
+    });
+
+    it("passes --duration ms straight through as the trailing argument (adb's swipe duration unit is already ms — spec.md §C.1-⑥)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok(""));
+
+      const backend = new AdbBackend(exec);
+      await backend.swipe("R58N90ABCDE", { x: 100, y: 800 }, { x: 100, y: 200 }, { durationMs: 500 });
+
+      expect(exec).toHaveBeenCalledWith([
+        "-s",
+        "R58N90ABCDE",
+        "shell",
+        "input",
+        "swipe",
+        "100",
+        "800",
+        "100",
+        "200",
+        "500",
+      ]);
+    });
+
+    it("throws when the underlying adb swipe invocation exits non-zero", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(fail("device offline"));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.swipe("R58N90ABCDE", { x: 0, y: 0 }, { x: 1, y: 1 })).rejects.toThrow(/device offline/);
+    });
+  });
+
   describe("sendKeyEvent", () => {
     it("maps a supported alias to its Android KEYCODE (REQ-INPUT-005)", async () => {
       const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok(""));

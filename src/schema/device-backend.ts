@@ -13,7 +13,8 @@
  *
  * @MX:ANCHOR — invariant contract for backend substitution (REQ-ARCH-003,
  * REQ-IOS-ARCH-005). Both `AdbBackend` and `IdbBackend` implement this exact
- * 8-method surface.
+ * 9-method surface (SPEC-GESTURE-001 M1 added `swipe`, additive only — the
+ * pre-existing methods are unchanged in shape/behavior).
  * @MX:REASON — every CLI command and the backend registry (`registry.ts`)
  * depend on this method surface; changing it ripples through every backend
  * and the command layer above it.
@@ -23,6 +24,29 @@ import type { CommonElement } from "./common-element.js";
 
 /** Device connection state as reported by the platform's device-listing tool. */
 export type DeviceConnectionState = "device" | "offline" | "unauthorized";
+
+/**
+ * A device-pixel coordinate for a gesture endpoint (REQ-GEST-SWIPE-001,
+ * SPEC-GESTURE-001). Shared by `swipe`'s `from`/`to` parameters.
+ */
+export interface SwipePoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * Optional `swipe` parameters (REQ-GEST-SWIPE-002, SPEC-GESTURE-001).
+ *
+ * `durationMs` is expressed in the CLI's contract unit — milliseconds —
+ * regardless of backend. Each backend converts to its own tool's unit
+ * internally: `AdbBackend` passes ms straight through (`adb shell input
+ * swipe`'s duration argument is already ms); `IdbBackend` converts ms to
+ * seconds (float) before building argv, because `idb`'s `--duration` is
+ * seconds (spec.md §C.1-⑦). Omit to use the platform default duration.
+ */
+export interface SwipeOptions {
+  durationMs?: number;
+}
 
 /**
  * Which backend owns a device (REQ-IOS-SCHEMA-001, SPEC-IOS-001) — set by
@@ -104,6 +128,15 @@ export interface DeviceBackend {
 
   /** Force-stops the given app package/bundle (REQ-APP-002). */
   stopApp(serial: string, packageId: string): Promise<void>;
+
+  /**
+   * Sends a swipe/drag gesture from `from` to `to` (REQ-GEST-SWIPE-001,
+   * SPEC-GESTURE-001 M1 — additive 9th method, the original 8 are
+   * unchanged). `options.durationMs` is always in milliseconds (the CLI's
+   * single contract unit); each implementation converts to its own tool's
+   * unit — see `SwipeOptions`.
+   */
+  swipe(serial: string, from: SwipePoint, to: SwipePoint, options?: SwipeOptions): Promise<void>;
 }
 
 // Re-exported so consumers of this module can reference the schema type

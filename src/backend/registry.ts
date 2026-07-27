@@ -27,7 +27,13 @@
  */
 
 import type { CommonElement } from "../schema/common-element.js";
-import type { DeviceBackend, DeviceInfo, DevicePlatform } from "../schema/device-backend.js";
+import type {
+  DeviceBackend,
+  DeviceInfo,
+  DevicePlatform,
+  SwipeOptions,
+  SwipePoint,
+} from "../schema/device-backend.js";
 
 /** One backend registered with the registry, plus its availability check. */
 export interface RegisteredBackend {
@@ -160,5 +166,17 @@ export class BackendRegistry implements DeviceBackend {
   async stopApp(serial: string, packageId: string): Promise<void> {
     const backend = await this.resolveOwningBackend(serial);
     return backend.stopApp(serial, packageId);
+  }
+
+  /**
+   * Facade for `DeviceBackend.swipe` (SPEC-GESTURE-001 M1, additive 9th
+   * method) — resolve-then-delegate, identical shape to `stopApp` above.
+   * Without this facade, `swipe` would type-check-break `bin.ts` (which
+   * passes this registry to `runCli`) AND never reach a real device in
+   * production, since `bin.ts` only ever holds a `BackendRegistry`.
+   */
+  async swipe(serial: string, from: SwipePoint, to: SwipePoint, options?: SwipeOptions): Promise<void> {
+    const backend = await this.resolveOwningBackend(serial);
+    return backend.swipe(serial, from, to, options);
   }
 }

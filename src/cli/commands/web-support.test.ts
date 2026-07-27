@@ -85,6 +85,7 @@ function harness(
     sendKeyEvent: async (): Promise<void> => undefined,
     launchApp: async (): Promise<void> => undefined,
     stopApp: async (): Promise<void> => undefined,
+    swipe: async (): Promise<void> => undefined,
   } satisfies DeviceBackend;
 
   const client: WebInspectorClient = {

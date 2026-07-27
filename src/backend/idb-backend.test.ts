@@ -231,6 +231,54 @@ describe("IdbBackend", () => {
     });
   });
 
+  describe("swipe (AC-GEST-001, AC-GEST-002 — SPEC-GESTURE-001 M1)", () => {
+    it("calls 'idb ui swipe --udid <serial> <x1> <y1> <x2> <y2>' with no --duration token when options are omitted", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));
+
+      const backend = new IdbBackend(exec);
+      await backend.swipe("SIM-1", { x: 100, y: 800 }, { x: 100, y: 200 });
+
+      expect(exec).toHaveBeenCalledWith(["ui", "swipe", "--udid", "SIM-1", "100", "800", "100", "200"]);
+    });
+
+    it("converts durationMs to seconds (float) BEFORE building argv — idb's --duration is seconds, not ms (spec.md §C.1-⑦)", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));
+
+      const backend = new IdbBackend(exec);
+      await backend.swipe("SIM-1", { x: 100, y: 800 }, { x: 100, y: 200 }, { durationMs: 500 });
+
+      const calledArgs = exec.mock.calls[0]?.[0] as string[];
+      expect(calledArgs).toEqual(["ui", "swipe", "--udid", "SIM-1", "100", "800", "100", "200", "--duration", "0.5"]);
+      // The literal read-out that matters most (AC-GEST-002): the token
+      // immediately after "--duration" parses to 0.5, never 500.
+      const durationIndex = calledArgs.indexOf("--duration");
+      expect(Number(calledArgs[durationIndex + 1])).toBe(0.5);
+    });
+
+    it("groups the --duration pair AFTER the four coordinate positionals, never interleaved between them (AC-GEST-002 — argparse positional-optional ordering hazard)", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));
+
+      const backend = new IdbBackend(exec);
+      await backend.swipe("SIM-1", { x: 100, y: 800 }, { x: 100, y: 200 }, { durationMs: 500 });
+
+      const calledArgs = exec.mock.calls[0]?.[0] as string[];
+      // The four coordinate positionals occupy indices 4-7 (right after
+      // "ui","swipe","--udid",serial); --duration must start at index 8 or
+      // later — never inside the 4-7 coordinate block.
+      expect(calledArgs.slice(4, 8)).toEqual(["100", "800", "100", "200"]);
+      const durationIndex = calledArgs.indexOf("--duration");
+      expect(durationIndex).toBeGreaterThanOrEqual(8);
+    });
+
+    it("throws IdbCommandFailedError when the underlying idb swipe invocation exits non-zero", async () => {
+      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(fail("Invalid udid"));
+
+      const backend = new IdbBackend(exec);
+
+      await expect(backend.swipe("SIM-1", { x: 0, y: 0 }, { x: 1, y: 1 })).rejects.toThrow(IdbCommandFailedError);
+    });
+  });
+
   describe("inputText (AC-IOS-016 — ASCII via ui text, non-ASCII via clipboard paste)", () => {
     it("calls 'idb ui text --udid <serial> <text>' directly for ASCII, with no self-heal / IME / broadcast steps", async () => {
       const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));

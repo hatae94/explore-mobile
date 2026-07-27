@@ -18,7 +18,7 @@ import { randomBytes } from "node:crypto";
 
 import { ADBKEYBOARD_BROADCAST_ACTION, ADBKEYBOARD_IME_ID } from "./adbkeyboard.js";
 import { ensureAdbKeyboardInstalled } from "./adbkeyboard-installer.js";
-import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
+import type { DeviceBackend, DeviceInfo, SwipeOptions, SwipePoint } from "../schema/device-backend.js";
 import type { CommonElement } from "../schema/common-element.js";
 import { isKeyAlias } from "../schema/key-alias.js";
 import { normalizeUiAutomatorXml } from "../normalize/uiautomator.js";
@@ -419,5 +419,31 @@ export class AdbBackend implements DeviceBackend {
   async stopApp(serial: string, packageId: string): Promise<void> {
     const result = await this.exec(["-s", serial, "shell", "am", "force-stop", packageId]);
     assertSuccess(result, "shell am force-stop");
+  }
+
+  /**
+   * REQ-GEST-SWIPE-001/002/004 (SPEC-GESTURE-001 M1, additive 9th method):
+   * `adb shell input swipe x1 y1 x2 y2 [duration]` — the trailing duration
+   * argument is already milliseconds (spec.md §C.1-⑥), matching the CLI's
+   * ms contract exactly, so it is passed straight through with NO unit
+   * conversion (unlike `IdbBackend.swipe`, which must convert to seconds).
+   */
+  async swipe(serial: string, from: SwipePoint, to: SwipePoint, options?: SwipeOptions): Promise<void> {
+    const args = [
+      "-s",
+      serial,
+      "shell",
+      "input",
+      "swipe",
+      String(from.x),
+      String(from.y),
+      String(to.x),
+      String(to.y),
+    ];
+    if (options?.durationMs !== undefined) {
+      args.push(String(options.durationMs));
+    }
+    const result = await this.exec(args);
+    assertSuccess(result, "shell input swipe");
   }
 }
