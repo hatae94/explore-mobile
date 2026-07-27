@@ -680,7 +680,7 @@ m1_to_mN_commit_strategy: "M1-M5 마일스톤별 개별 커밋(M1 9c98e3a, M2 2e
 ```yaml
 sync_status: audit-ready
 sync_complete_at: "2026-07-28"
-sync_commit_sha: "pending-backfill-single-sync-commit"   # 자기참조 해시 문제(spec-frontmatter-schema.md § SHA placeholder backfill exemption). Route A 단일 sync 커밋이므로 이 커밋 직후 별도 backfill 커밋 1개로 정정한다.
+sync_commit_sha: "9b2828f"   # backfill 완료(자기참조 해시 문제 — spec-frontmatter-schema.md § SHA placeholder backfill exemption). 이 값을 담은 별도 chore backfill 커밋 참조.
 b12_self_test_a: "grep -c 'SPEC-GESTURE-001' CHANGELOG.md (편집 전) -> 0 -- 중복 없음, 방출 진행"
 b12_self_test_b: "grep -cE '^### AC-GEST-[0-9]+' acceptance.md -> 17 -- CHANGELOG Notes의 '17 acceptance criteria' 표기와 일치"
 b12_self_test_c: "CHANGELOG/README가 인용한 모든 파일 경로를 커밋 전 Read로 실재 확인: device-backend.ts, adb-backend.ts, idb-backend.ts, registry.ts, swipe.ts, scroll.ts, scroll-geometry.ts, web-support.ts, coordinates.ts, args.ts, validators.ts, router.ts"
