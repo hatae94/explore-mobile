@@ -201,16 +201,41 @@ function buildClickExpression(cssSelector: string, sourceIndex: number): string 
 })()`;
 }
 
-/** How the element was reached — reported to the caller so a fallback is never silent (REQ-WEB-ACT-002). */
+/**
+ * Re-queries the page with the same selector and scrolls the node at its RAW
+ * `sourceIndex` into view (REQ-GEST-WEB-001). Mirrors {@link buildClickExpression}'s
+ * addressing scheme so both paths always agree on which node they mean.
+ */
+function buildScrollIntoViewExpression(cssSelector: string, sourceIndex: number): string {
+  return `(function(){
+  var nodes = document.querySelectorAll(${JSON.stringify(cssSelector)});
+  var el = nodes[${JSON.stringify(sourceIndex)}];
+  if (!el) return false;
+  el.scrollIntoView({block: "center"});
+  return true;
+})()`;
+}
+
+/**
+ * How the element was reached — reported to the caller so a fallback (or a
+ * page-scrolling side effect) is never silent (REQ-WEB-ACT-002, REQ-GEST-WEB-002).
+ * The `-scrolled` suffix marks that `scrollIntoView` actually ran before the
+ * tap/click — the page's scroll position changed as a side effect.
+ */
 interface Activation {
-  method: "native" | "js-click";
+  method: "native" | "native-scrolled" | "js-click" | "js-click-scrolled";
   x?: number;
   y?: number;
 }
 
 /**
- * Taps the element's centre natively when its coordinate can be trusted,
- * and falls back to an in-page `click()` when it cannot (off-viewport).
+ * Taps the element's centre natively when its coordinate can be trusted.
+ *
+ * When it cannot (off-viewport), scrolls the element into view and
+ * re-measures before retrying natively (REQ-GEST-WEB-001) — the pre-scroll
+ * rectangle is stale by definition, so reusing it would tap the wrong place.
+ * Falls back to the existing in-page `click()` only if the coordinate is
+ * still unconvertible after that (REQ-GEST-WEB-003).
  *
  * Returns `null` when the page no longer has a node at that position.
  */
@@ -219,6 +244,7 @@ async function activateElement(
   backend: DeviceBackend,
   css: string,
   entry: IndexedWebElement,
+  index: number,
   viewport: ViewportMetrics,
 ): Promise<Activation | null> {
   const point = webRectToDevicePoint(entry.element.bounds, viewport);
@@ -228,8 +254,21 @@ async function activateElement(
     return { method: "native", x: point.x, y: point.y };
   }
 
+  const scrolled = await ctx.client.evaluate<unknown>(buildScrollIntoViewExpression(css, entry.sourceIndex));
+  if (scrolled === true) {
+    const reEntry = await findWebElement(ctx, css, index);
+    if (reEntry !== null) {
+      const rePoint = webRectToDevicePoint(reEntry.element.bounds, viewport);
+      if (rePoint !== null) {
+        await backend.tap(ctx.serial, rePoint.x, rePoint.y);
+        return { method: "native-scrolled", x: rePoint.x, y: rePoint.y };
+      }
+    }
+  }
+
   const clicked = await ctx.client.evaluate<unknown>(buildClickExpression(css, entry.sourceIndex));
-  return clicked === true ? { method: "js-click" } : null;
+  if (clicked !== true) return null;
+  return { method: scrolled === true ? "js-click-scrolled" : "js-click" };
 }
 
 /** Collects the selector's matches and returns the one at `index`, or `null`. */
@@ -300,7 +339,7 @@ export async function runWebTap(
       deps.store,
     );
 
-    const activation = await activateElement(ctx, backend, selector.css, entry, viewport);
+    const activation = await activateElement(ctx, backend, selector.css, entry, selector.index, viewport);
     if (activation === null) {
       return failure("tap", "ELEMENT_NOT_FOUND", NOT_FOUND_MESSAGE, {
         selector: { css: selector.css, index: selector.index },
@@ -351,7 +390,7 @@ export async function runWebText(
 
     // Activating focuses the field. A native tap also raises the soft
     // keyboard, which a programmatic `focus()` does not reliably do on iOS.
-    const activation = await activateElement(ctx, backend, selector.css, entry, viewport);
+    const activation = await activateElement(ctx, backend, selector.css, entry, selector.index, viewport);
     if (activation === null) {
       return failure("text", "ELEMENT_NOT_FOUND", NOT_FOUND_MESSAGE, {
         selector: { css: selector.css, index: selector.index },

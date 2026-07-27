@@ -370,3 +370,118 @@ preserve_list_post_run_count: 0   # src/normalize/*, src/webview/* 미변경
 4. **지시문과 실제 코드의 불일치 없음**: B-1~B-9 전부가 실제 코드베이스·실기기 상태와 정확히 일치했다(사전 점검에서 확인된 `parseCoordinate`/`parseIndex`/`parseNonNegativeInteger`, 실측된 witness 상태 등). plan.md 자체의 부정확성은 발견하지 않았다 — 발견한 것은 위 1번(구현 세부의 공백)뿐이다.
 5. **범위 이탈 없음**: `src/normalize/*`, `src/webview/*` 등 PRESERVE 대상과 M4-M5 전용 파일(`src/cli/commands/web-support.ts`, `src/webview/coordinates.ts`) 모두 미변경 확인. M1/M2 산출물(`src/schema/device-backend.ts`, `src/backend/*`, `src/cli/commands/swipe.ts` 등)도 미변경 확인.
 6. **M4+ 참고**: `scroll.ts`가 `backend.swipe`를 `{durationMs: SCROLL_SWIPE_DURATION_MS}`로 호출하는 패턴은 M4(웹 요소 스크롤)에는 직접 적용되지 않는다 — M4는 `scrollIntoView`(JS 경로)를 쓰며 네이티브 `swipe`를 호출하지 않는다(plan.md §F M4). 혼동 방지를 위해 명시한다.
+
+### M4 — `tap --web` 화면 밖 요소 보강
+
+**산출물 (plan.md §F M4 1-2 모두 완료)**
+
+1. `src/cli/commands/web-support.ts` — `activateElement`에 스크롤 분기 추가: 좌표 변환이 `null`(뷰포트 밖)일 때 `scrollIntoView({block:"center"})` → `findWebElement`로 재측정 → 재측정 좌표로 네이티브 탭 재시도. 그래도 안 되면 기존 JS `click()` 폴백. `Activation.method`를 `"native" | "native-scrolled" | "js-click" | "js-click-scrolled"`로 확장(REQ-GEST-WEB-002) — `-scrolled` 접미사가 스크롤 발생 여부를 구분 표기한다. `buildScrollIntoViewExpression`은 기존 `buildClickExpression`과 동일하게 RAW `sourceIndex`로 주소를 지정(재측정도 같은 노드를 가리키게 함, B-5). 뷰포트 **안** 요소의 첫 분기(`point !== null` → 네이티브 탭)는 한 글자도 바뀌지 않았다(아래 "회귀 증거" 참조).
+2. `src/webview/coordinates.ts` — `webRectToDevicePoint`의 모듈 주석만 갱신(코드 라인 변경 없음). "scrolling them into view is SPEC-04 territory, out of scope here"를 이 SPEC이 그 유예를 뒤집었다는 사실 + 스크롤 판단은 여전히 호출자(`web-support.ts`) 몫이라는 사실로 교체.
+
+**method 어휘 설계 결정(B-4)**: 스크롤이 실제로 일어났는지(`scrollIntoView` eval이 `true`를 반환했는지)와 최종적으로 어느 경로로 눌렸는지(네이티브 재탭 vs JS 폴백)를 독립된 두 축으로 보고 4가지 조합을 모두 구분했다 — `native`(무스크롤 네이티브), `native-scrolled`(스크롤 후 네이티브), `js-click`(무스크롤 JS 폴백), `js-click-scrolled`(스크롤 후에도 안 돼 JS 폴백, 그러나 스크롤은 일어났으므로 부작용 표기 의무는 여전히 짐). REQ-GEST-WEB-002가 "스크롤이 일어났을 때 그 사실을 표기"하라고 명시했으므로 최종 경로와 무관하게 스크롤 발생 여부를 표기해야 한다고 해석했다 — plan.md/spec.md는 정확한 문자열 값을 지정하지 않았으므로 이는 스스로 내린 설계 결정이다(아래 "블로커/서프라이즈" 5번 참조).
+
+### AC PASS/FAIL 매트릭스 (M4 스코프)
+
+| AC ID | 상태 | 검증 명령 | 실제 결과 |
+|-------|------|-----------|-----------|
+| AC-GEST-012 | **PASS**(unit + 실기기 둘 다 확증) | `pnpm vitest run src/cli/commands/web-support.test.ts -t "AC-GEST-012"` + 아래 "실기기 확인" | unit: 뷰포트 밖 rect(`y:2000`, innerHeight 714)가 스크롤 후 rect(`y:300`)로 재측정되어 `native-scrolled`로 탭, 좌표 `(50,382)` 정확히 일치. **실기기**: 부팅된 iPhone 17 Pro 시뮬레이터에서 Wikipedia "JavaScript" 문서(`en.wikipedia.org/wiki/JavaScript`)의 `y:1246.96875`(뷰포트 밖) "Netscape" 링크를 `tap --web 'a[href*="Netscape"]'`로 눌렀더니 응답이 `"method":"native-scrolled","x":243,"y":419`를 반환했고, **전/후 스크린샷에서 브라우저가 실제로 "Netscape" 위키백과 문서로 전환**됨을 확인(단순 스크롤 확인을 넘어 링크 탭 자체가 성공했다는 가장 강한 증거) |
+| AC-GEST-013 | PASS | `pnpm vitest run -t "AC-GEST-013"` | 동일 셀렉터·동일 요소 기준으로 스크롤 없이 눌린 응답(`method:"native"`)과 스크롤 후 눌린 응답(`method:"native-scrolled"`)이 서로 다름을 명시적으로 단언(`.not.toEqual`). 페이지 스크롤 위치 변경이 조용히 넘어가지 않음을 실기기 확인에서도 확증(전/후 스크린샷이 다른 문서를 보여줌) |
+| AC-GEST-014 | PASS | `pnpm vitest run -t "AC-GEST-014"` | 스크롤 후에도 rect가 그대로(여전히 뷰포트 밖)인 픽스처 → `method:"js-click"`이 아니라 `method:"js-click-scrolled"`로 폴백 경로가 표기됨(스크롤이 일어났다는 사실은 최종 경로가 JS 폴백이어도 유지). SPEC-WEBVIEW-001의 기존 회귀 테스트("falls back to JS click for an element outside the viewport... AC-WEB-013")도 동일 어휘 확장을 반영하도록 갱신 — JS `click()` 폴백 자체(REQ-WEB-ACT-002)는 불변 |
+| AC-GEST-015 | PASS | `pnpm vitest run -t "AC-GEST-015"` | 스크롤 경로 포함 모든 성공 응답이 `JSON.parse(JSON.stringify(result))`에서 예외 없음(신규 테스트) + 기존 `runWebDump`/`runWebTap`/`runWebText` 전체 JSON 계약 테스트 그대로 통과 |
+
+### 테스트 스위트
+
+```
+$ pnpm vitest run src/cli/commands/web-support.test.ts
+ Test Files  1 passed (1)
+      Tests  34 passed (34)
+
+$ pnpm vitest run
+ Test Files  29 passed (29)
+      Tests  510 passed (510)
+```
+
+기준선(M3 종료) 503 → 510(+7), 전부 `web-support.test.ts`에 추가: off-viewport 스크롤+재측정+네이티브 탭(AC-GEST-012) 1건, 스크롤-vs-직접 응답 구분(AC-GEST-013) 1건, 스크롤 후에도 폴백(AC-GEST-014) 1건, `scrollIntoView` 자체가 실패했을 때 스크롤 미크레딧 1건, 뷰포트 안 요소는 스크롤을 시도하지 않는다는 회귀 확인(B-3) 1건, JSON 봉투(AC-GEST-015) 1건, `runWebText`의 동일 스크롤 경로 1건. 파일 수는 29로 불변(신규 파일 없음, 기존 파일만 확장).
+
+### RED 확인 (TDD 사이클 증거)
+
+M4 착수 시 위 7건의 신규 테스트(및 하네스의 `postScrollCollected`/`scrollResult` 옵션)를 먼저 작성한 뒤 실행 — `activateElement`가 아직 스크롤 분기를 모르므로 4건이 `"js-click"`(기대값 `"native-scrolled"`/`"js-click-scrolled"`) 로 실패함을 확인(RED: `34 tests | 4 failed`). `web-support.ts`를 구현한 뒤 재실행 — 신규 4건은 GREEN으로 전환됐으나 기존 회귀 테스트 1건("falls back to JS click for an element outside the viewport... AC-WEB-013")이 새로 실패(기대값 `"js-click"`, 실제 `"js-click-scrolled"`)함을 발견 — 이는 코드 결함이 아니라 REQ-GEST-WEB-002가 요구하는 정확한 동작 변화였으므로, 그 테스트의 기대값을 `"js-click-scrolled"`로 갱신하고 왜 바뀌었는지 설명하는 주석을 남겼다(아래 "블로커/서프라이즈" 참조). 이후 `pnpm typecheck`에서 한 곳(`.not.toEqual` 좌우 피연산자의 판별 유니온 좁히기 실패) 추가 수정 후 전체 GREEN 확정.
+
+### Typecheck + Build
+
+```
+$ pnpm typecheck  → exit 0
+$ pnpm build      → exit 0
+```
+
+### 회귀 증거 — 뷰포트 안 경로 불변 (B-3)
+
+`git diff src/cli/commands/web-support.ts`에서 `if (point !== null) { await backend.tap(ctx.serial, point.x, point.y); return { method: "native", x: point.x, y: point.y }; }` 블록은 diff에 `-`/`+` 없이 컨텍스트 라인으로만 나타난다 — 즉 뷰포트 안 요소의 첫 분기는 바이트 단위로 무변경이다. 새 분기(스크롤+재측정)는 그 뒤에 **추가**됐을 뿐이다(plan.md §B.4 "화면 안 요소는 코드 경로가 바뀌지 않도록 분기를 뒤에 붙인다" 그대로). 이를 뒷받침하는 신규 회귀 테스트("does not attempt a scroll for an element already inside the viewport (regression, B-3)")도 `scrollIntoView` eval이 전혀 호출되지 않음을 명시적으로 단언한다.
+
+### 제로 상호작용 보존 증거 (B-7)
+
+기존 테스트("rejects an unmatched selector without tapping or clicking (AC-WEB-015)")가 그대로 통과 — `findWebElement`가 `null`을 반환하면 `activateElement`(스크롤 분기 포함) 자체가 호출되지 않으므로 `backend.tap` 0회, `.click()` eval 0회가 그대로 유지된다. `@MX:NOTE`가 명시한 "요소 조회가 뷰포트 보정보다 먼저 실행된다"는 순서도 손대지 않았다 — M4의 스크롤 분기는 `activateElement` 내부(요소 조회·보정 모두 끝난 뒤)에 있으므로 이 순서 보장에 영향을 주지 않는다.
+
+### 실기기 확인 (Section E 항목 6 — M4의 진짜 증거: 화면 밖 웹 요소 네이티브 탭)
+
+**환경 메모(플랜과 무관한 세션 변동성)**: 지시문이 예고한 대로 `--web` 세션은 호출마다 독립적이라, 준비된 clip.naver.com 2페이지 상태에서 여러 차례 `dump --web --page 1`이 `NO_WEB_PAGE`를 반환했다(페이지 리스트가 진동하는 현상 — SPEC-WEBVIEW-001의 알려진 표면, 이번 M4에서 고치지 않았다). naver 클립 페이지의 "Donate Now"류 요소는 `x`가 음수(가로 방향 오프스크린 드로어)라 세로 스크롤 검증에 부적합했으므로, 지시문이 허용한 대안대로 Safari를 `en.wikipedia.org/wiki/JavaScript`(`xcrun simctl openurl`)로 재진입시켜 안정적인 세로 롱페이지 픽스처를 확보했다.
+
+```
+$ node dist/cli/bin.js dump --web 'a[href*="Netscape"]' --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":true,...,"elements":[{"role":"a","text":"Netscape","bounds":{"x":211,"y":1246.96875,"w":63.15...,"h":18},"tappable":true,...}]}
+```
+
+`y:1246.96875`는 실제 웹뷰 innerHeight를 훌쩍 넘는 뷰포트 밖 좌표다.
+
+```
+$ node dist/cli/bin.js tap --web 'a[href*="Netscape"]' --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":true,"command":"tap","data":{"serial":"D0B3A18C-...","page":{"index":0,"title":"JavaScript - Wikipedia","url":"https://en.wikipedia.org/wiki/JavaScript"},"selector":{"css":"a[href*=\"Netscape\"]","index":0},"tappable":true,"method":"native-scrolled","x":243,"y":419}}
+```
+
+전/후 스크린샷(`/private/tmp/.../scratchpad/m4-before-tap.png`, `m4-after-tap.png`) 비교: 이전 화면은 "JavaScript" 위키백과 문서 상단, 이후 화면은 **"Netscape" 위키백과 문서 상단**(제목·본문 모두 변경) — 이는 SSIM/해시 비교보다 강한 증거다. 링크가 실제로 눌리지 않았다면 페이지 전환 자체가 일어날 수 없다. `method:"native-scrolled"`가 보고한 좌표(243,419)로 네이티브 탭이 전송됐고, 그 좌표가 스크롤된 뒤의 "Netscape" 링크 위치와 실제로 일치했다는 뜻이다. AC-GEST-012의 "실기기에서 페이지가 실제로 전환된 것이 확증된다" 요건을 정식으로 충족한다 — M5로 미룰 필요 없이 이번 M4에서 확증됐다.
+
+### `coordinates.ts` diff (주석만)
+
+```
+$ git diff src/webview/coordinates.ts
+```
+
+위 diff는 `webRectToDevicePoint` 함수 위 JSDoc 블록의 텍스트 교체만 포함하며, `export function webRectToDevicePoint(...)` 이하 실행 코드는 `-`/`+` 없이 전부 컨텍스트로 나타난다 — 지시문 Section D의 "module comment only — not one line of executable code" 제약을 충족한다.
+
+### Scope Check
+
+```
+$ git status --porcelain --untracked-files=no
+ M src/cli/commands/web-support.test.ts
+ M src/cli/commands/web-support.ts
+ M src/webview/coordinates.ts
+```
+
+plan.md §A.6 M4 행: `src/cli/commands/web-support.ts`, `src/webview/coordinates.ts`(주석만) — 정확히 일치. `src/cli/commands/web-support.test.ts`는 지시문 Section D가 허용한 4개 파일 중 하나. `src/webview/inspector-client.ts`/`proxy-service.ts`/`calibration.ts`, `src/normalize/*`(PRESERVE 목록) 미변경 확인. M1-M3 산출물(`src/schema/device-backend.ts`, `src/backend/*`, `src/cli/commands/{swipe,scroll,scroll-geometry}.ts` 등)도 미변경 확인.
+
+### 커밋
+
+아래 커밋 완료 후 SHA를 이 절에 backfill한다.
+
+## §E.3 Run-phase Audit-Ready Signal (M4 갱신)
+
+```yaml
+run_status: M4-complete
+ac_pass_count: 16     # 누적(M1-M4 자체 판정, PARTIAL/조기확증 제외): 001,002,003,004,005,007,008,009,010,012,013,014,015,016,017 + 004(M4 회귀)
+ac_fail_count: 0
+ac_partial_count: 1   # AC-GEST-006 (adb 미설치, M1과 동일 상태 유지)
+ac_deferred_count: 0
+ac_early_verification_count: 1   # AC-GEST-011 -- 조기 부분 확증(실기기), 정식 PASS 판정은 M5에서
+total_run_phase_files: 20   # M4는 기존 파일 3개만 수정(신규 파일 없음) -- M3까지의 20에서 변화 없음
+new_warnings_or_lints_introduced: false
+preserve_list_post_run_count: 0   # src/normalize/*, src/webview/{inspector-client,proxy-service,calibration}.ts 미변경
+```
+
+## 블로커 / 서프라이즈 (M4 종료 시점, M5 참고)
+
+1. **[가장 중요] method 어휘의 정확한 문자열은 plan.md/spec.md 어디에도 없었다 — 스스로 결정**: REQ-GEST-WEB-002·plan.md §F M4 item 1은 "스크롤 발생을 `method`에 구분 표기"라고만 적었을 뿐 정확한 값(`"native-scrolled"` 등)을 지정하지 않았다. `native`/`native-scrolled`/`js-click`/`js-click-scrolled` 4값 체계를 스스로 설계했다 — 스크롤 발생 여부와 최종 탭 방식을 독립된 두 축으로 본 것. **M5가 e2e 어설션을 작성할 때 이 정확한 문자열에 의존하게 되므로, 이 4값 문자열 자체가 이번 M4가 굳힌 안정된 계약이라는 점을 M5는 알아야 한다** — 지시문 항목 10이 명시적으로 물은 질문에 대한 답이다.
+2. **기존 SPEC-WEBVIEW-001 회귀 테스트 1건의 기대값이 바뀌었다(결함 아님)**: "falls back to JS click for an element outside the viewport, and says so (AC-WEB-013)" 테스트가 M4 구현 후 실패했다 — 뷰포트 밖 픽스처가 스크롤 시도 후에도 여전히 뷰포트 밖이므로 `method`가 `"js-click"`에서 `"js-click-scrolled"`로 정확히 바뀌었기 때문이다. 이는 REQ-GEST-WEB-001이 모든 뷰포트 밖 탭에 대해 먼저 스크롤을 시도하도록 요구하는 데서 오는 **의도된 동작 변화**이며, JS `click()` 폴백 자체(SPEC-WEBVIEW-001 REQ-WEB-ACT-002)는 불변이다. 테스트의 기대값과 설명 주석을 갱신했다 — "모든 기존 웹 테스트가 그대로 통과해야 한다"는 지시문 B-3 게이트는 **뷰포트 안** 경로를 겨냥한 것이었고, 이 테스트는 뷰포트 밖 경로(M4의 변경 대상 그 자체)를 검증하므로 갱신이 합당하다고 판단했다 — 사용자 입력 없이 스스로 내린 판단이다.
+3. **`--web` 세션 페이지 선택 불안정성을 실측으로 재확인**: 지시문 Section A가 이미 경고한 현상(별개 CLI 호출 간 페이지 정체성 변동)을 이번 M4 실기기 검증에서도 그대로 관측했다 — `dump --web --page 1`이 연속 호출 중 무작위로 `NO_WEB_PAGE`/`AMBIGUOUS_PAGE`/성공을 오갔다. 근본 원인을 조사하거나 고치려 시도하지 않았다(지시문이 "페이지 선택 고치려 하지 말 것 — SPEC-WEBVIEW-001의 표면"이라고 명시). 대신 Safari를 단일 탭(Wikipedia)으로 재시작해 안정성을 높이는 우회로 해결했다.
+4. **naver 클립 페이지는 세로 스크롤 검증 픽스처로 부적합했다**: 화면 밖 후보로 처음 시도한 "Donate Now" 링크는 `x:-261.98`(가로 방향 오프스크린 드로어)이라 REQ-GEST-WEB-001이 다루는 "아래로 스크롤해서 끌어오기" 시나리오와 무관했다. 지시문이 명시적으로 허용한 대안("naver 페이지가 픽스처로 부적합하면 더 단순한 긴 페이지로 내비게이션해도 된다")에 따라 Wikipedia로 전환했다 — 이 판단도 사용자 입력 없이 스스로 내렸다.
+5. **범위 이탈 없음**: `src/normalize/*`, `src/webview/{inspector-client,proxy-service,calibration}.ts`(PRESERVE 목록) 미변경 확인. `src/webview/coordinates.ts`는 주석만 변경(실행 코드 0줄 변경) 확인. M1-M3 산출물 미변경 확인. M5 전용 파일(e2e 스크립트 등, 아직 미생성)에는 손대지 않았다.
+6. **M5 참고**: `method` 4값(`native`/`native-scrolled`/`js-click`/`js-click-scrolled`) 문자열은 안정된 계약으로 취급해도 된다 — 이번 M4의 unit 테스트와 실기기 확인 양쪽에서 정확히 이 문자열들로 검증됐다. e2e에서 이 문자열에 직접 의존한 어설션을 작성해도 안전하다.

@@ -81,7 +81,13 @@ export function deriveTopOffset(deviceY: number, pageY: number, scrollY: number)
  *   - zero- or negative-size rects (invisible; AC-WEB-010 saw many such
  *     links on naver.com)
  *   - centers outside the viewport (scrolled out of view, or off-screen) —
- *     scrolling them into view is SPEC-04 territory, out of scope here
+ *     this function still returns `null` for these. SPEC-GESTURE-001
+ *     (REQ-GEST-WEB-001) has the caller (`web-support.ts`) scroll such an
+ *     element into view and re-measure before retrying, falling back to the
+ *     JS `click()` path only if it is still unconvertible afterward. The
+ *     scroll decision belongs to the caller, not to this pure converter —
+ *     this function's contract (reject what it cannot stand behind) is
+ *     unchanged.
  */
 export function webRectToDevicePoint(rect: WebRect, viewport: ViewportMetrics): DevicePoint | null {
   if (rect.w <= 0 || rect.h <= 0) return null;

@@ -59,6 +59,10 @@ function harness(
   options: {
     device?: DeviceInfo;
     collected?: unknown;
+    /** What the M4 re-measure (the second `buildCollectExpression` call, after a scroll) returns. Defaults to `collected` — i.e. scrolling changed nothing. */
+    postScrollCollected?: unknown;
+    /** Overrides the `scrollIntoView` eval's return. Defaults to `true` (element found and scrolled). */
+    scrollResult?: unknown;
     clickResult?: unknown;
     proxyError?: Error;
     onOpenProxy?: (opts: { pageIndex?: number }) => void;
@@ -71,6 +75,7 @@ function harness(
   const evaluated: string[] = [];
   let disposed = false;
   let clientClosed = false;
+  let collectCalls = 0;
 
   const backend = {
     listDevices: async (): Promise<DeviceInfo[]> => [device],
@@ -96,7 +101,14 @@ function harness(
     evaluate: async <T>(expression: string): Promise<T> => {
       evaluated.push(expression);
       if (expression.includes("screenHeight")) return VIEWPORT_SIGNATURE as T;
+      if (expression.includes("scrollIntoView")) return (options.scrollResult ?? true) as T;
       if (expression.includes(".click()")) return (options.clickResult ?? true) as T;
+      // buildCollectExpression: the first call is the initial lookup: later
+      // calls are the M4 re-measure after a scroll (REQ-GEST-WEB-001).
+      collectCalls += 1;
+      if (collectCalls > 1 && options.postScrollCollected !== undefined) {
+        return options.postScrollCollected as T;
+      }
       return collected as T;
     },
   };
@@ -275,11 +287,18 @@ describe("runWebTap", () => {
   });
 
   it("falls back to JS click for an element outside the viewport, and says so (AC-WEB-013)", async () => {
+    // SPEC-GESTURE-001 M4 (REQ-GEST-WEB-001) now attempts a scrollIntoView +
+    // re-measure before this fallback; since this fixture reports the same
+    // off-viewport rect both before and after (no `postScrollCollected`
+    // override), the coordinate is still unconvertible and the JS click path
+    // that SPEC-WEBVIEW-001 established is unchanged — only the `method`
+    // label gains the `-scrolled` suffix (REQ-GEST-WEB-002) to record that a
+    // scroll was attempted. See AC-GEST-014 below for the dedicated M4 test.
     const h = harness({ collected: [rawEl({ rect: { x: 719, y: 142, w: 64, h: 45 } })] });
     const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
 
     expect(result.ok).toBe(true);
-    expect(result.ok && (result.data as { method: string }).method).toBe("js-click");
+    expect(result.ok && (result.data as { method: string }).method).toBe("js-click-scrolled");
     expect(h.taps).toEqual([]);
   });
 
@@ -356,6 +375,75 @@ describe("runWebTap", () => {
   });
 });
 
+describe("runWebTap — off-viewport scroll (SPEC-GESTURE-001 M4, REQ-GEST-WEB-001..003)", () => {
+  it("scrolls an off-viewport element into view, re-measures, and taps natively (AC-GEST-012)", async () => {
+    const h = harness({
+      collected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })], // centerY 2020 > innerHeight 714 -> off-viewport
+      postScrollCollected: [rawEl({ rect: { x: 20, y: 300, w: 60, h: 40 } })], // centre (50,320) -> +62 -> (50,382)
+    });
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && (result.data as { method: string }).method).toBe("native-scrolled");
+    expect(h.taps).toEqual([{ x: 50, y: 382 }]);
+    expect(h.evaluated.some((e) => e.includes("scrollIntoView"))).toBe(true);
+  });
+
+  it("reports a scrolled-then-tapped response that is not the same as a tapped-directly response (AC-GEST-013)", async () => {
+    const direct = harness();
+    const directResult = await runWebTap(parseCommandArgs(["--web", "a"]), direct.backend, direct.deps);
+
+    const scrolled = harness({
+      collected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })],
+      postScrollCollected: [rawEl({ rect: { x: 20, y: 300, w: 60, h: 40 } })],
+    });
+    const scrolledResult = await runWebTap(parseCommandArgs(["--web", "a"]), scrolled.backend, scrolled.deps);
+
+    expect(directResult.ok && (directResult.data as { method: string }).method).toBe("native");
+    expect(scrolledResult.ok && (scrolledResult.data as { method: string }).method).toBe("native-scrolled");
+    expect(directResult.ok && directResult.data).not.toEqual(scrolledResult.ok && scrolledResult.data);
+  });
+
+  it("falls back to a JS click marked as scrolled when the coordinate is still unconvertible after scrolling in (AC-GEST-014)", async () => {
+    const h = harness({
+      collected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })],
+      postScrollCollected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })], // unchanged -- still off-viewport
+    });
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && (result.data as { method: string }).method).toBe("js-click-scrolled");
+    expect(h.taps).toEqual([]);
+  });
+
+  it("does not credit a scroll that never happened when scrollIntoView finds no node", async () => {
+    const h = harness({
+      collected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })],
+      scrollResult: false,
+    });
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && (result.data as { method: string }).method).toBe("js-click");
+    expect(h.taps).toEqual([]);
+  });
+
+  it("does not attempt a scroll for an element already inside the viewport (regression, B-3)", async () => {
+    const h = harness();
+    await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    expect(h.evaluated.some((e) => e.includes("scrollIntoView"))).toBe(false);
+  });
+
+  it("emits a single parseable JSON document on the scrolled path (AC-GEST-015)", async () => {
+    const h = harness({
+      collected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })],
+      postScrollCollected: [rawEl({ rect: { x: 20, y: 300, w: 60, h: 40 } })],
+    });
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    expect(() => JSON.parse(JSON.stringify(result))).not.toThrow();
+  });
+});
+
 describe("runWebText", () => {
   it("activates the element, then types (REQ-WEB-ACT-003)", async () => {
     const h = harness({ collected: [rawEl({ tag: "input", placeholder: "검색" })] });
@@ -393,5 +481,18 @@ describe("runWebText", () => {
     await runWebText(parseCommandArgs(["안녕", "--web", "#nope"]), h.backend, h.deps);
     expect(h.disposed()).toBe(true);
     expect(h.clientClosed()).toBe(true);
+  });
+
+  it("scrolls an off-viewport field into view before typing (SPEC-GESTURE-001 M4, REQ-GEST-WEB-001)", async () => {
+    const h = harness({
+      collected: [rawEl({ tag: "input", placeholder: "검색", rect: { x: 20, y: 2000, w: 60, h: 40 } })],
+      postScrollCollected: [rawEl({ tag: "input", placeholder: "검색", rect: { x: 20, y: 300, w: 60, h: 40 } })],
+    });
+    const result = await runWebText(parseCommandArgs(["안녕", "--web", "#query"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && (result.data as { method: string }).method).toBe("native-scrolled");
+    expect(h.taps).toEqual([{ x: 50, y: 382 }]);
+    expect(h.typed).toEqual(["안녕"]);
   });
 });
