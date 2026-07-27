@@ -249,7 +249,7 @@ coverage: 전체 92.99% stmts / 88.6% branch (목표 85% 상회), src/webview 86
 ```
 sync_status: audit-ready
 sync_complete_at: 2026-07-27
-sync_commit_sha: pending-backfill-sync
+sync_commit_sha: b469c58
 lifecycle: in-progress → implemented → completed (단일 sync 커밋, 3-phase close)
 ```
 
