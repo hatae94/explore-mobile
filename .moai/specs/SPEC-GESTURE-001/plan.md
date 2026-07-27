@@ -1,7 +1,7 @@
 ---
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 구현 계획"
-version: "0.2.0"
+version: "0.3.0"
 status: draft
 created: 2026-07-27
 updated: 2026-07-27
@@ -77,11 +77,14 @@ Safari가 전면일 때 `idb ui describe-all`은 **브라우저 크롬 6개만**
 
 그런데 **AC-GEST-011(iOS 실기기 스크롤)은 "긴 웹 페이지"에서 도는 시나리오**다. 크롬 6개 중 화면 전체 크기를 가진 항목이 없으면 `scroll`은 규칙대로 `SCREEN_SIZE_UNKNOWN`을 반환한다 — 즉 **본 SPEC의 대표 사용례가 설계대로 거부될 수 있다.**
 
-**대응**: M3 설계에 들어가기 **전에** §C 사전 점검에서 Safari를 띄운 채 `dump`를 떠 화면 전체 크기 항목의 유무를 실측한다. 결과에 따라 세 갈래다.
+**대응**: M3 설계에 들어가기 **전에** §C 사전 점검에서 Safari를 띄운 채 `dump`를 떠 **witness 요소**(bounds가 정확히 `{0,0,W,H}`인 최상위 항목)의 유무를 실측한다. 결과에 따라 네 갈래다.
 
-1. 전체 크기 항목이 있다 → 현행 설계 그대로.
-2. 없다 → `SCREEN_SIZE_UNKNOWN`이 정상 동작임을 AC-GEST-011에 명시하고, 웹 페이지 스크롤은 `swipe`(좌표 직접 지정)로 검증한다. **크기를 추측하는 폴백은 넣지 않는다**(REQ-GEST-SCROLL-004 불변).
+1. witness가 있다 → 현행 설계 그대로.
+2. `dump`가 빈 배열이거나 모든 bounds가 0 → 퇴화 검사(REQ-GEST-SCROLL-002 ①)에서 걸린다. `SCREEN_SIZE_UNKNOWN`.
 3. 판정 불가 → 블로커로 올린다. 추측해서 진행하지 않는다.
+4. **크기는 나오지만 witness가 없다 → 크롬-only 케이스. 여기서는 이것이 예외가 아니라 예상 결과다.** 조각들의 외접 상자(예: 402x120)는 양수이고 비퇴화라 ①만으로는 통과하므로, **막는 것은 witness 검증(REQ-GEST-SCROLL-002 ②) 하나뿐이다.** 이 갈래에서 `SCREEN_SIZE_UNKNOWN`이 나오는 것은 설계대로다. 웹 페이지 스크롤은 `swipe`(좌표 직접 지정)로 검증하고, **크기를 추측하는 폴백은 넣지 않는다**(REQ-GEST-SCROLL-004 불변, spec.md §D "화면 크기 추측 폴백").
+
+> 0.2.0의 이 항목은 "witness 없음 → 퇴화 검사가 잡아준다"고 적었는데 **그 전제가 틀렸다.** max-extent는 크기 0이 아닌 요소가 하나라도 있으면 언제나 양수를 낸다. 0.1.0의 "루트 요소" 규칙은 최소한 아무것도 못 돌려줄 수 있었지만, max-extent는 사실상 항상 무언가를 돌려준다 — 결정성을 얻는 대가로 조용한 오답 가능성이 **커졌다.** witness 요건이 그 대가를 되갚는 부분이다.
 
 이 점검을 M3 뒤로 미루면 M3 설계 전체가 헛돌 수 있다.
 
@@ -131,11 +134,13 @@ node dist/bin.js dump --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
 2. `src/backend/adb-backend.ts` — `["-s", serial, "shell", "input", "swipe", ...]`. `--duration`은 **ms 그대로 통과**.
 3. `src/backend/idb-backend.ts` — `["ui", "swipe", "--udid", serial, ...]`. `--duration`은 **ms → 초(float) 환산 후** argv에 넣는다(spec.md §C.1-⑦). 이 저장소는 이미 초 의미에 의존한다(`idb-backend.ts:100` `MODIFIER_HOLD_SECONDS = 2`를 `--duration 2`로 전달).
 4. **`src/backend/registry.ts` — `swipe` 파사드 위임.** `BackendRegistry implements DeviceBackend`(`registry.ts:40`)이고 `bin.ts`가 `runCli`에 넘기는 것이 이 파사드다. 빠뜨리면 (a) 타입 체크가 깨지고 (b) `swipe`가 프로덕션 경로에서 기기에 도달하지 못한다. 형태는 `stopApp`(`registry.ts:160-162`)과 동일한 resolve-then-delegate.
-5. **테스트 더블 5개 지점 보강** — 9번째 메서드가 생기면 전부 타입 체크가 깨진다:
-   - `src/schema/device-backend.test.ts:12` — `Record<keyof DeviceBackend, true>` + `toHaveLength(8)` → 9. 이건 **의도된 트립와이어**(주석이 "if DeviceBackend grows a 9th"라고 명시)다. 결함이 아니라 설계된 알림이므로 끄지 말고 갱신한다.
-   - `src/cli/router.test.ts:35` `createMockIosBackend()`, `:68` `createMockBackend()`, `:345`·`:424` 객체 리터럴
-   - `src/backend/registry.test.ts:31` `mockBackend()`
-   - `src/cli/commands/web-support.test.ts:88` `satisfies DeviceBackend`
+5. **테스트 더블 보강 — 4개 파일 7개 지점.** 9번째 메서드가 생기면 전부 타입 체크가 깨진다:
+   - `src/schema/device-backend.test.ts:12` — `Record<keyof DeviceBackend, true>` + `toHaveLength(8)` → 9. 이건 **의도된 트립와이어**(주석이 "if DeviceBackend grows a 9th"라고 명시)다. 결함이 아니라 설계된 알림이므로 끄지 말고 갱신한다. **(1지점)**
+   - `src/cli/router.test.ts:35` `createMockIosBackend()`, `:68` `createMockBackend()`, `:345`·`:424` 객체 리터럴 **(4지점)**
+   - `src/backend/registry.test.ts:31` `mockBackend()` **(1지점)**
+   - `src/cli/commands/web-support.test.ts:88` `satisfies DeviceBackend` **(1지점)**
+
+   **제외 — 세는 대상이 아니다**: `registry.test.ts:156`·`:164`·`:175`·`:186`·`:204`와 `router.test.ts:365`·`:440`의 `const registry: DeviceBackend = new BackendRegistry(...)`는 객체 리터럴이 아니라 **클래스 인스턴스**다. 산출물 4(`registry.ts`에 `swipe` 추가)가 끝나면 자동으로 컴파일되므로 손댈 것이 없다. 이 7줄을 더해 "12지점"이라고 세면 AC-GEST-004가 틀린 수를 검증하게 된다.
 6. **"8-method" 문구 3곳 갱신 → 9**: `src/schema/device-backend.ts:16`("this exact 8-method surface"), `src/backend/idb-backend.ts:5`("Implements all 8 methods"), `src/backend/idb-backend.ts:25`("the exact same 8-method interface"). `@MX:ANCHOR` 본문이므로 갱신하지 않으면 앵커가 거짓이 된다.
 7. argv 구성 단위 테스트. iOS는 시뮬레이터로 즉시 실측(AC-GEST-005), Android는 argv까지만(AC-GEST-006 PARTIAL).
 
@@ -147,6 +152,7 @@ node dist/bin.js dump --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
 
 1. `src/cli/args.ts` — `duration: { type: "string" }` 옵션 추가. 현재 선언 목록(`args.ts:87-99`)에 `duration`이 **없어서** `--duration`은 지금 그대로면 미인식 플래그로 throw → `INVALID_ARGS`가 된다(`args.ts:79-81` → `router.ts:81-83`).
 2. `swipe <x1> <y1> <x2> <y2> [--duration <ms>]` 라우터 배선 + 좌표 검증(`INVALID_COORDINATES`). REQ-GEST-SWIPE-001~003.
+3. **`--duration` 검증(REQ-GEST-SWIPE-005) — 음이 아닌 정수가 아니면 `INVALID_DURATION`.** 검증은 M1이 넣은 ms → 초 환산 **앞**에 둔다. 뒤에 두면 `Number("abc")`가 `NaN`이 되어 `NaN/1000 = NaN`이 그대로 argv에 실린다. `--amount`(M3)와 좌표(위 2번)와 **같은 구조**로 짠다 — 세 옵션의 거부 경로가 서로 다르게 생기면 안 된다.
 
 **음수 좌표 처리 — 결정: AC를 좁힌다(전처리 추가 안 함).**
 
@@ -164,11 +170,11 @@ node dist/bin.js dump --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
 **산출물**
 
 1. `src/cli/args.ts` — `amount: { type: "string" }` 옵션 추가.
-2. **`src/cli/validators.ts` — 0..1 비율 파서 추가.** 기존 `parseCoordinate`/`parseIndex`는 둘 다 `parseNonNegativeInteger`(정규식 `^\d+$`, `validators.ts:17-31`)를 감싸므로 **소수를 통과시킬 수 없다.** `--amount 0.25`를 받으려면 새 파서가 필요하다. 범위 밖·비수치는 `INVALID_AMOUNT`.
-3. 방향·비율 → 좌표 변환 **순수 함수** + 화면 크기 파생(REQ-GEST-SCROLL-002의 max-extent 규칙). 기기 없이 테스트 가능해야 한다. 크기 불명 시 거부.
+2. **`src/cli/validators.ts` — 비율 파서 추가(0 초과 1 이하).** 기존 `parseCoordinate`/`parseIndex`는 둘 다 `parseNonNegativeInteger`(정규식 `^\d+$`, `validators.ts:17-31`)를 감싸므로 **소수를 통과시킬 수 없다.** `--amount 0.25`를 받으려면 새 파서가 필요하다. 범위 밖·비수치는 `INVALID_AMOUNT`(REQ-GEST-SCROLL-006). M2의 `--duration` 검증과 같은 구조로 짠다.
+3. 방향·비율 → 좌표 변환 **순수 함수** + 화면 크기 파생. **두 단계 모두 구현한다**: ① max-extent 후보 산출, ② witness 검증(bounds가 정확히 `{0,0,W,H}`인 최상위 항목 존재). ②를 빠뜨리면 조각들의 외접 상자가 화면 크기로 통과한다(B.5 갈래 4). 기기 없이 테스트 가능해야 한다. 크기 불명 시 거부.
 4. 성공 응답에 방향 + 실제 시작·끝 좌표 표기(REQ-GEST-SCROLL-005).
 
-순수 함수로 떼는 이유: 방향 의미(B.2)가 조용히 틀리기 쉬운 부분이라 픽스처로 못박아야 한다. 화면 크기 파생도 같은 함수 경계 안에 두어 **최상위 항목이 여러 개인 픽스처**로 인덱스 0 가정을 배제한다(AC-GEST-008).
+순수 함수로 떼는 이유: 방향 의미(B.2)가 조용히 틀리기 쉬운 부분이라 픽스처로 못박아야 한다. 화면 크기 파생도 같은 함수 경계 안에 두어 두 픽스처로 두 실수를 각각 잡는다 — **최상위 여러 개 + witness 있음**으로 인덱스 0 가정을 배제하고(AC-GEST-008), **조각들만 있고 witness 없음**으로 witness 누락을 배제한다(AC-GEST-017).
 
 ### M4 — `tap --web` 화면 밖 요소 보강 [중간 · 회귀 주의]
 

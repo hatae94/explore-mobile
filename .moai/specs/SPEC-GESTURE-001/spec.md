@@ -1,7 +1,7 @@
 ---
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — swipe · scroll, 그리고 화면 밖 웹 요소 도달"
-version: "0.2.0"
+version: "0.3.0"
 status: draft
 created: 2026-07-27
 updated: 2026-07-27
@@ -23,6 +23,7 @@ depends_on: [SPEC-ANDROID-001, SPEC-IOS-001, SPEC-WEBVIEW-001]
 |------|------|--------|-----------|
 | 0.1.0 | 2026-07-27 | hatae | 최초 작성. SPEC-04 선행 스파이크로 iOS 쪽을 실측한 뒤 작성 — §C.1. SPEC-WEBVIEW-001 §D가 SPEC-04로 미뤄둔 제스처 항목을 분리해 먼저 처리한다. |
 | 0.2.0 | 2026-07-27 | hatae | plan-auditor 1차 감사 **FAIL(0.66 / Tier M 기준 0.80)** 반영. 주요 수정: ① `--duration` 단위 비대칭 명시(CLI ms / iOS 초 — 그대로 흘리면 500초 스와이프, §C.1-⑦) ② `BackendRegistry`를 세 번째 구현체로 명시(§A.4) ③ 화면 크기 파생 규칙을 `CommonElement[]`에 대해 결정적으로 재정의(REQ-GEST-SCROLL-002) ④ `--amount` 범위 오류에 `INVALID_AMOUNT` 코드 부여 ⑤ `adb` 미설치 사실 정정(§C.2) ⑥ REQ-GEST-SCROLL-001에 섞여 있던 응답 표기 요구를 REQ-GEST-SCROLL-005로 분리 ⑦ GEARS 패턴 라벨 정정(Where→When/While, When→Ubiquitous) ⑧ `related_specs` → `depends_on`. |
+| 0.3.0 | 2026-07-27 | hatae | plan-auditor 2차 감사 **PASS(0.84 / 기준 0.80)** + must-fix 3건 반영. **MF-1** max-extent가 조각들로부터 그럴듯하지만 틀린 크기를 만들어내는 구멍을 **witness 요건**으로 막음(REQ-GEST-SCROLL-002/004) — Safari 크롬-only 상태에서 402x120을 반환하고 성공을 보고하던 경로가 이제 `SCREEN_SIZE_UNKNOWN`으로 간다. **MF-2** `--amount 0` 경계가 REQ와 AC에서 서로 반대였던 모순 해소(§B.2). **MF-3** `--duration` 검증 부재 → `INVALID_DURATION` 신설. 부수: 오류 경로 REQ 분리(SWIPE-005·SCROLL-006), §C.1-④ 다중 최상위로 완화 + ⑨ 신설, 테스트 더블 수 정정(5 → 4파일 7지점), §D 불릿화. |
 
 ## §A. 개요 (Context & Goal)
 
@@ -48,7 +49,7 @@ depends_on: [SPEC-ANDROID-001, SPEC-IOS-001, SPEC-WEBVIEW-001]
 |---|------|------|
 | D1 | **CLI는 원시 동작만, 판단은 에이전트** | 사용자 확정(2026-07-27). "에이전트 무관 CLI 코어 + 얇은 스킬"이라는 프로젝트 정체성과 일치. 자율 탐색 로직은 SPEC-04로 분리 |
 | D2 | **`swipe`(좌표) + `scroll`(방향) 둘 다 제공** | `swipe`만 두면 호출자가 화면 크기를 알아야 해 추측을 강요한다. `scroll`은 그 계산을 CLI가 대신하는 얇은 편의층 |
-| D3 | **화면 크기는 기존 `dump`의 루트 요소에서 파생** | 새 백엔드 메서드를 만들지 않는다. 루트 요소 bounds가 양 플랫폼 모두 화면 전체다(§C.1-③) |
+| D3 | **화면 크기는 기존 `dump`의 루트 요소에서 파생** | 새 백엔드 메서드를 만들지 않는다. 루트 요소 bounds가 양 플랫폼 모두 화면 전체다(§C.1-③)(운용 주석 참조) |
 | D4 | **화면 밖 웹 요소는 끌어온 뒤 네이티브 탭** | 스파이크에서 성립 확인(§C.1-②). 실패 시에만 기존 JS 폴백 |
 
 > **D3 운용 주석(0.2.0 추가 — 결정 자체는 불변)**: D3의 "루트 요소"는 `dumpUiHierarchy`가 `CommonElement[]`(배열)를 돌려주므로 그대로는 결정적이지 않다. iOS는 `describe-all`이 **중첩 없는 평탄 배열**을 주고(§C.1-⑧) 최상위 항목이 여럿일 수 있어 "루트"가 유일하지 않다. D3을 실행 가능한 규칙으로 만드는 산식은 REQ-GEST-SCROLL-002에 둔다. **새 백엔드 메서드를 만들지 않는다는 D3의 결정은 그대로다.**
@@ -81,18 +82,22 @@ DeviceBackend      ← swipe() 1개 추가 (8 → 9 메서드). 기존 8개 동�
   - `IdbBackend`는 argv를 만들기 **전에 ms → 초(float)로 환산**한다 — `idb`의 `--duration`은 **초**다(§C.1-⑦). 이 환산을 빠뜨리면 오류 없이 `--duration 500`이 **500초 스와이프**가 되어 e2e에서 정지처럼 보인다.
 - **REQ-GEST-SWIPE-003** (When 감지된-이상상태): **When** 좌표가 음이 아닌 정수 4개가 아닐 때, the CLI **shall** `INVALID_COORDINATES`로 거부한다 — 기존 `tap`과 동일한 계약.
 - **REQ-GEST-SWIPE-004** (Ubiquitous): the `DeviceBackend` 인터페이스 **shall** `swipe`를 얻되 **기존 8개 메서드의 시그니처·동작은 변경하지 않는다**(가법 확장). 구현체는 `AdbBackend`·`IdbBackend`·`BackendRegistry` **세 개 전부**다(§A.4).
+- **REQ-GEST-SWIPE-005** (When 감지된-이상상태): **When** `--duration` 값이 **음이 아닌 정수로 파싱되지 않을** 때, the CLI **shall** `INVALID_DURATION`으로 거부하고 **어떤 제스처도 전송하지 않는다**. 검증은 ms → 초 환산 **이전**에 끝난다 — 그러지 않으면 `NaN`이 나눗셈을 통과해 `--duration NaN`(iOS) 또는 `"NaN"`(Android)이 그대로 도구에 전달된다. `--amount`(REQ-GEST-SCROLL-006)·좌표(REQ-GEST-SWIPE-003)와 동일한 계열의 거부 계약이다.
 
 ### B.2 스크롤 편의 (REQ-GEST-SCROLL)
 
 - **REQ-GEST-SCROLL-001** (When 이벤트): **When** `scroll <up|down|left|right>`가 호출될 때, the CLI **shall** 해당 방향으로 내용이 움직이도록 스와이프를 전송한다. **`scroll down`은 아래 내용을 보기 위해 손가락을 위로 미는 동작이다.**
 - **REQ-GEST-SCROLL-002** (When 이벤트): **When** 스와이프 좌표를 계산할 때, the CLI **shall** 화면 크기를 기존 `dumpUiHierarchy`의 결과에서 얻는다 — 새 백엔드 메서드를 추가하지 않는다. 파생 규칙은 결정적이어야 한다:
-  - `dumpUiHierarchy`는 `CommonElement[]`를 돌려준다. **최상위 항목 전체를 훑어** `width = max(x + w)`, `height = max(y + h)`로 화면 크기를 정한다.
-  - 최상위 항목이 하나뿐일 때도 같은 식이 적용된다(그 항목의 `x+w`, `y+h`). 즉 단일 루트는 이 규칙의 특수한 경우이지 별도 분기가 아니다.
-  - **인덱스 0을 루트로 가정하지 않는다.** iOS `describe-all`은 평탄 배열이라 최상위가 여럿일 수 있고(§C.1-⑧), 첫 항목이 화면 전체라는 보장이 없다.
-  - 산출된 `width` 또는 `height`가 0 이하이거나 배열이 비어 있으면 REQ-GEST-SCROLL-004로 넘어간다.
-- **REQ-GEST-SCROLL-003** (When 이벤트): **When** `--amount <0..1>`이 주어질 때, the CLI **shall** 화면의 그 비율만큼 스크롤한다. 생략 시 기본 비율을 쓴다. **When** 값이 0..1 범위 밖이거나 수로 파싱되지 않을 때, the CLI **shall** `INVALID_AMOUNT`로 거부하고 **어떤 제스처도 전송하지 않는다** — 기존 `INVALID_COORDINATES`/`INVALID_INDEX`/`INVALID_PAGE`와 같은 명명 계열.
-- **REQ-GEST-SCROLL-004** (When 감지된-이상상태): **When** 화면 크기를 신뢰할 수 없을 때(루트 bounds가 0이거나 요소가 없을 때), the CLI **shall** `SCREEN_SIZE_UNKNOWN`으로 거부한다 — **추측한 좌표로 스와이프하지 않는다.** 엉뚱한 제스처는 되돌릴 수 없다.
+  - **① 후보 산출**: `dumpUiHierarchy`는 `CommonElement[]`를 돌려준다. **최상위 항목 전체를 훑어** `width = max(x + w)`, `height = max(y + h)`로 후보 크기를 정한다.
+  - **② witness 검증**: 후보를 채택하려면 그 크기를 **한 요소가 통째로 증명**해야 한다 — 최상위 항목 중 bounds가 **정확히 `{x:0, y:0, w:width, h:height}`인 것이 하나 이상** 있어야 한다. 없으면 후보를 버리고 REQ-GEST-SCROLL-004로 넘어간다.
+  - **왜 ②가 필요한가**: max-extent는 **아무 요소든 크기가 0이 아니면 양수를 만든다.** 흩어진 조각들의 외접 상자는 언제나 계산되지만 그것은 화면이 아니다. Safari 전면 상태(§C.1-⑧, 크롬 6개)에서 이 규칙이 없으면 402x120 같은 **양수이고 비퇴화이며 틀린** 값이 나오고, `scroll down --amount 0.8`은 0.8 × 120 = 96px를 상태 표시줄 안에서만 움직인 뒤 **성공을 보고한다.** 되돌릴 수 없는 제스처를 추측으로 보내는 것 — 이 SPEC이 세운 refuse-don't-guess 계약의 정반대다.
+  - **원점 조건(`x === 0 && y === 0`)은 필수다.** 이것을 빼고 `x+w === width && y+h === height`만 보면 위 크롬 예시에서 URL 바 `{0,60,402,60}`이 `x+w=402`, `y+h=120`을 만족해 **witness로 통과해 버린다**. 화면은 원점에서 시작하는 하나의 직사각형이지, 우하단 모서리에 닿는 아무 조각이 아니다.
+  - 최상위 항목이 하나뿐이고 그것이 `{0,0,W,H}`이면 ①②를 모두 자명하게 만족한다 — 단일 루트는 이 규칙의 특수한 경우이지 별도 분기가 아니다.
+  - **인덱스 0을 루트로 가정하지 않는다.** iOS `describe-all`은 평탄 배열이라 최상위가 여럿이고(§C.1-⑧), Android도 `hierarchy`의 자식들을 그대로 배열로 돌려주므로 최상위가 여럿일 수 있다(§C.1-⑨). 어느 플랫폼에서도 첫 항목이 화면 전체라는 보장이 없다.
+- **REQ-GEST-SCROLL-003** (When 이벤트): **When** `--amount <0 초과 1 이하>`가 주어질 때, the CLI **shall** 화면의 그 비율만큼 스크롤한다. 생략 시 기본 비율을 쓴다.
+- **REQ-GEST-SCROLL-004** (When 감지된-이상상태): **When** 화면 크기를 신뢰할 수 없을 때(REQ-GEST-SCROLL-002의 파생 결과 `width` 또는 `height`가 0 이하이거나, witness 요소가 없거나, `dumpUiHierarchy`가 빈 배열일 때), the CLI **shall** `SCREEN_SIZE_UNKNOWN`으로 거부한다 — **추측한 좌표로 스와이프하지 않는다.** 엉뚱한 제스처는 되돌릴 수 없다.
 - **REQ-GEST-SCROLL-005** (When 이벤트): **When** `scroll`이 성공할 때, the CLI **shall** 응답에 **방향과 실제 시작·끝 좌표를 함께** 싣는다. 방향 의미는 반대로 구현해도 오류가 나지 않으므로(plan.md §B.2), 호출자가 응답만 보고 즉시 검증할 수 있어야 한다.
+- **REQ-GEST-SCROLL-006** (When 감지된-이상상태): **When** `--amount` 값이 **0 이하이거나 1을 초과하거나 수로 파싱되지 않을** 때, the CLI **shall** `INVALID_AMOUNT`으로 거부하고 **어떤 제스처도 전송하지 않는다** — 기존 `INVALID_COORDINATES`/`INVALID_INDEX`/`INVALID_PAGE`와 같은 명명 계열. `0`은 이동 거리 0인 제스처라 거부하고, `1`은 화면 한 장 분량이므로 허용한다.
 
 ### B.3 화면 밖 웹 요소 도달 (REQ-GEST-WEB)
 
@@ -111,15 +116,16 @@ DeviceBackend      ← swipe() 1개 추가 (8 → 9 메서드). 기존 8개 동�
 | ① | `idb ui swipe x_start y_start x_end y_end [--duration] [--delta] [--udid]` | `idb ui swipe --help` 재확인(2026-07-27) + SPEC-WEBVIEW-001 e2e에서 실제 스크롤 성공 | **실측** |
 | ② | `scrollIntoView({block:"center"})`로 화면 밖 요소가 들어오고 사각형이 갱신됨. `y:1672.5`(밖) → `y:212.5`(안), `scrollY 0→1460` | SPEC-04 선행 스파이크 | **실측** |
 | ③ | `dump` 루트 요소 bounds가 화면 전체 — iOS `{0,0,402,874}` | 시뮬레이터 실측 | **실측(iOS)** |
-| ④ | 같은 규칙이 Android에도 성립 — 루트 노드 bounds `{0,0,1080,2280}` | uiautomator 정규화 테스트 픽스처 | **픽스처만** |
+| ④ | 같은 규칙이 Android에도 성립 — **최상위 노드** bounds `{0,0,1080,2280}` | uiautomator 정규화 테스트 픽스처 | **픽스처만** |
 | ⑤ | 스크롤 후에도 상단 크롬 오프셋 62 불변 | 스파이크 재보정 | **실측** |
 | ⑥ | `adb shell input swipe x1 y1 x2 y2 [duration]` — 지속시간 단위는 **밀리초** | adb 문서 | **미실측** |
 | ⑦ | **`idb`의 `--duration`은 초(float)다** — `adb`의 ms와 단위가 다르다 | fb-idb `idb/common/hid.py`(`duration: Optional[float]` → `HIDDelay(duration=duration)`), 그리고 이 저장소가 이미 그 의미에 의존한다: `src/backend/idb-backend.ts:100` `MODIFIER_HOLD_SECONDS = 2`를 `--duration 2`로 넘겨(`:239-247`) "2초 홀드"로 동작 중 | **실측(iOS)** |
 | ⑧ | iOS `describe-all`은 **중첩 없는 평탄 배열**이고, Safari로 웹 페이지를 띄우면 **브라우저 크롬 6개만** 돌아온다(페이지 내용 0) | `src/backend/idb-backend.ts:154-159` @MX:NOTE/@MX:WARN(SPEC-IOS-001 실측 기록) | **실측(iOS)** |
+| ⑨ | **Android도 최상위 항목이 여럿일 수 있다** — 단일 루트가 아니다. ④의 "루트 노드 하나"는 그 픽스처의 성질일 뿐 규칙이 아니다 | `src/normalize/uiautomator.ts:119`가 `collectChildNodes(hierarchy).map(toCommonElement)` — `hierarchy`의 **자식들을 배열로** 반환한다. `src/normalize/uiautomator.test.ts:77`은 `expect(result).toHaveLength(2)`로 최상위 2개를 단언한다 | **실측(테스트 픽스처)** |
 
 ### C.2 Android는 실측하지 못했다
 
-작성 시점에 이 머신에 **`adb`가 설치돼 있지 않다**(`command -v adb` → `command not found`, 2026-07-27 확인). 기기 연결 여부 이전에 도구 자체가 없다. 따라서 ⑥(adb swipe 문법·단위)과 ④(루트 노드가 화면 전체)는 **문서·픽스처 근거일 뿐 기기 확인이 아니다**.
+작성 시점에 이 머신에 **`adb`가 설치돼 있지 않다**(`command -v adb` → `command not found`, 2026-07-27 확인). 기기 연결 여부 이전에 도구 자체가 없다. 따라서 ⑥(adb swipe 문법·단위)과 ④(최상위 노드가 화면 전체)는 **문서·픽스처 근거일 뿐 기기 확인이 아니다**. ⑨가 보여주듯 ④의 "노드 하나"조차 그 픽스처의 성질이지 규칙이 아니다.
 
 이 프로젝트는 문서 기반 가정이 틀렸던 전례가 있다 — SPEC-IOS-001에서 idb 가정 3건이 **전부** 틀렸다. 따라서 Android 관련 인수 기준은 기기가 연결되기 전까지 **PARTIAL로 남긴다.** 통과했다고 쓰지 않는다.
 
@@ -135,25 +141,41 @@ DeviceBackend      ← swipe() 1개 추가 (8 → 9 메서드). 기존 8개 동�
 ## §D. 범위에서 제외 (Exclusions)
 
 ### Out of Scope — 멀티터치 제스처
-핀치·줌·회전은 두 손가락 입력이라 전송 계층이 다르다(`idb`는 지원하지 않는다). 필요해지면 별도 SPEC.
+
+- 핀치·줌·회전을 넣지 않는다. 두 손가락 입력이라 전송 계층이 다르다(`idb`는 지원하지 않는다).
+- 필요해지면 별도 SPEC으로 뗀다.
 
 ### Out of Scope — 롱프레스 · 드래그앤드롭
-`--duration`이 긴 스와이프로 흉내낼 수 있으나 의미가 다르다. SPEC-WEBVIEW-001에서 롱프레스 붙여넣기 메뉴 시도가 실패한 전례가 있어(재시도 금지 기록) 별도 검증이 필요하다.
+
+- `--duration`이 긴 스와이프로 흉내낼 수 있으나 의미가 다르므로 제공하지 않는다.
+- SPEC-WEBVIEW-001에서 롱프레스 붙여넣기 메뉴 시도가 실패한 전례가 있어(재시도 금지 기록) 별도 검증이 필요하다.
 
 ### Out of Scope — 자율 탐색 루프
-무엇을 언제 스크롤할지 결정하는 로직은 **SPEC-04**다. 본 SPEC은 그 재료만 만든다(D1).
+
+- 무엇을 언제 스크롤할지 결정하는 로직은 **SPEC-04**다. 본 SPEC은 그 재료만 만든다(D1).
 
 ### Out of Scope — 다중 기기 상호작용
-SPEC-04.
+
+- 두 기기를 엮는 시나리오는 SPEC-04로 미룬다.
 
 ### Out of Scope — 네이티브 요소의 화면 밖 도달
-`tap --id`/`--text`가 화면 밖 네이티브 요소를 스크롤해서 찾아내는 동작은 탐색 루프 영역이다.
+
+- `tap --id`/`--text`가 화면 밖 네이티브 요소를 스크롤해서 찾아내는 동작은 넣지 않는다 — 탐색 루프 영역이다.
+- `scrollIntoView`는 웹 경로 전용이며, 네이티브 대응물을 만들지 않는다.
 
 ### Out of Scope — 스크롤 성공 여부 판정
-스와이프 후 화면이 실제로 움직였는지 CLI가 재확인·재시도하는 동작은 넣지 않는다(§C.3, D1).
+
+- 스와이프 후 화면이 실제로 움직였는지 CLI가 재확인·재시도하지 않는다(§C.3, D1).
+- 판정과 재시도는 호출자(에이전트)가 `dump`를 다시 떠서 한다.
+
+### Out of Scope — 화면 크기 추측 폴백
+
+- witness가 없을 때 기본 해상도·크롬 오프셋 등으로 화면 크기를 **추정하는 경로를 만들지 않는다**(REQ-GEST-SCROLL-004).
+- 크기를 모르면 거부한다. 되돌릴 수 없는 제스처에 추측을 섞지 않는 것이 이 SPEC의 기본 계약이다.
 
 ### Out of Scope — 구현 세부(HOW)
-plan.md 소관.
+
+- 함수 분해·모듈 배치·시그니처 확정은 plan.md 소관이다.
 
 ## §E. 로드맵 위치
 
