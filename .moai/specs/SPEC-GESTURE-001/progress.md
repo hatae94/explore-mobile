@@ -644,7 +644,9 @@ M5의 모든 기준(17개 AC 전부 PASS 또는 PARTIAL로 판정 완료, 완전
 
 #### 커밋
 
-이 `progress.md` 갱신(M5 e2e 기록 + M4 커밋 SHA backfill 정정)만을 커밋한다 — 프로덕션/테스트 코드 변경이 없으므로 커밋 대상은 이 파일 하나다. 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인한 뒤 커밋한다(L44 사전 체크). SHA는 커밋 완료 후 이 절과 아래 §E.3 `m1_to_mN_commit_strategy` 줄에 backfill한다. push는 지시문 §Section D("Do not push")에 따라 수행하지 않는다.
+이 `progress.md` 갱신(M5 e2e 기록 + M4 커밋 SHA backfill 정정)만을 커밋한다 — 프로덕션/테스트 코드 변경이 없으므로 커밋 대상은 이 파일 하나다. 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인했다(결과 `0 7` — origin 미분기, local 7 커밋 앞섬, 안전). push는 지시문 §Section D("Do not push")에 따라 수행하지 않는다.
+
+M5 커밋 SHA: `d929f6b`(이 SHA를 담은 커밋 자체가 progress.md를 수정하는 자기참조 문제는 spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3)이 허용하는 배치 방식대로, 이 값을 이어지는 별도의 후속 backfill 커밋에 기록해 해소한다).
 
 ## §E.3 Run-phase Audit-Ready Signal (M5 최종)
 
@@ -661,7 +663,7 @@ preserve_list_post_run_count: 0   # src/normalize/*, src/webview/* 등 PRESERVE 
 l44_pre_commit_fetch: pending    # 커밋 직전 실행 예정, 아래 §커밋 절 참조
 l44_post_push_fetch: pending     # 이 SPEC은 push하지 않음(지시문 §Section D "Do not push") — n/a로 남김
 cross_platform_build: { windows: not_applicable, note: "TypeScript/Node 프로젝트, GOOS 교차빌드 대상 아님" }
-m1_to_mN_commit_strategy: "M1-M5 마일스톤별 개별 커밋(M1 9c98e3a, M2 2e5e210, M3 319ec9b, M4 0463337, M5 이 커밋)"
+m1_to_mN_commit_strategy: "M1-M5 마일스톤별 개별 커밋(M1 9c98e3a, M2 2e5e210, M3 319ec9b, M4 0463337, M5 d929f6b + 이 backfill 커밋)"
 ```
 
 ## 블로커 / 서프라이즈 (M5 종료 시점 — 최종, 마감 게이트 통과)
