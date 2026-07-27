@@ -29,3 +29,15 @@ export function parseCoordinate(value: string): number | undefined {
 export function parseIndex(value: string): number | undefined {
   return parseNonNegativeInteger(value);
 }
+
+/**
+ * Parses a `swipe --duration` string into a non-negative integer of
+ * milliseconds, or undefined if invalid (REQ-GEST-SWIPE-005,
+ * SPEC-GESTURE-001 M2). Deliberately reuses the same
+ * `parseNonNegativeInteger` seam as `parseCoordinate`/`parseIndex` — the
+ * three rejection paths (coordinates, `--duration`, and M3's `--amount`)
+ * must not diverge in shape (plan.md §F M2 item 3).
+ */
+export function parseDurationMs(value: string): number | undefined {
+  return parseNonNegativeInteger(value);
+}

@@ -21,6 +21,7 @@ import { launchCommand } from "./commands/launch.js";
 import { resetCommand } from "./commands/reset.js";
 import { screenshotCommand } from "./commands/screenshot.js";
 import { stopCommand } from "./commands/stop.js";
+import { swipeCommand } from "./commands/swipe.js";
 import { tapCommand } from "./commands/tap.js";
 import { textCommand } from "./commands/text.js";
 import type { CommandHandler } from "./commands/types.js";
@@ -36,6 +37,7 @@ const COMMANDS: Record<string, CommandHandler> = {
   tap: tapCommand,
   key: keyCommand,
   dump: dumpCommand,
+  swipe: swipeCommand,
   text: textCommand,
   doctor: doctorCommand,
   reset: resetCommand,

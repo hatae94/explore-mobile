@@ -40,6 +40,15 @@ export interface ParsedCommandArgs {
    * a raw string here and parsed by the handler, matching `--index`.
    */
   page: string | undefined;
+  /**
+   * `swipe --duration <ms>` (SPEC-GESTURE-001 M2, REQ-GEST-SWIPE-002/005):
+   * gesture duration in milliseconds — the CLI's single contract unit
+   * regardless of backend (`IdbBackend` converts to seconds internally,
+   * spec.md §C.1-⑦). Kept as a raw string here and validated by the handler
+   * (`parseDurationMs` in `validators.ts`), matching the `--index`/`--id`
+   * pattern.
+   */
+  duration: string | undefined;
 }
 
 /**
@@ -96,6 +105,7 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
       id: { type: "string" },
       text: { type: "string" },
       index: { type: "string" },
+      duration: { type: "string" },
     },
     allowPositionals: true,
   });
@@ -112,5 +122,6 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
     index: typeof values.index === "string" ? values.index : undefined,
     web: typeof values.web === "string" ? values.web : undefined,
     page: typeof values.page === "string" ? values.page : undefined,
+    duration: typeof values.duration === "string" ? values.duration : undefined,
   };
 }
