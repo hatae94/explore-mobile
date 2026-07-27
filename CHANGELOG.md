@@ -144,6 +144,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--duration` while a second invocation presses HID 25, since idb has no
   chord command). Verified on a booted simulator with `"네이버 한글 🎉"`
   and `"안녕하세요"`.
+- Web content recognition and interaction on the iOS Simulator
+  (SPEC-WEBVIEW-001), closing the gap SPEC-IOS-001 measured: the native
+  accessibility tree contains the browser chrome and nothing from the
+  page, so a loaded web page could only be driven by blind coordinate
+  taps. `dump`, `tap`, and `text` now accept `--web`; without it every
+  command behaves exactly as before.
+  - **`dump --web [<CSS>]`** returns the page's interactive elements in
+    the same `CommonElement` schema the native path uses, so a caller
+    handles native and web results identically. Elements with no visible
+    geometry are dropped — on one naver.com screen that removed 175 of
+    508 matches, which would otherwise be selector targets that cannot be
+    tapped.
+  - **`tap --web "<CSS>"`** converts the element's position to a device
+    coordinate and sends a **real touch**, so sites that require genuine
+    touch events behave normally. When the element is outside the
+    viewport that conversion cannot be trusted, and the command falls
+    back to an in-page `click()`. The response reports which path ran
+    (`"method": "native" | "js-click"`) — a fallback is never silent.
+  - **`text "<string>" --web "<CSS>"`** activates the field first (a real
+    tap, which also raises the soft keyboard where a programmatic
+    `focus()` would not) and then types through the existing input path,
+    so Korean works on the web path for free.
+  - **Runtime viewport calibration.** The coordinate conversion needs the
+    chrome height above the page. It is measured on the device rather
+    than hardcoded — the 62pt observed here is one device's status bar,
+    not a property of iOS. The measurement covers the page with a
+    transparent overlay so the probe tap cannot reach a real element, and
+    the result is cached per device (`<cache-dir>/web-calibration.json`)
+    and re-measured automatically when the page geometry changes. On a
+    cache hit nothing is injected into the page and no probe tap is sent.
+  - **Proxy lifecycle.** `ios_webkit_debug_proxy` is started and stopped
+    for the caller. An already-running proxy is reused and left running;
+    only a proxy this CLI started is killed, and that cleanup runs in a
+    `finally` so a failed command cannot leak one. The live inspector
+    socket is chosen by whether a process holds it open, not by the file
+    existing — five socket files were present on the test host and one
+    was live.
+  - **WebKit Inspector client** (`src/webview/inspector-client.ts`). Not
+    CDP: every command is wrapped in `Target.sendMessageToTarget` and its
+    reply unwrapped from `Target.dispatchMessageFromTarget`. The
+    `targetId` is read from the announcement event rather than assumed —
+    it changes between sessions (`page-1` in one, `page-12` in the next),
+    so a hardcoded value addresses a target that no longer exists. A
+    thrown page value is detected via `wasThrown`, which is what WebKit
+    sends instead of CDP's `exceptionDetails`.
+  - **`doctor`** now reports `idbEnvironment.webInspectorProxy`
+    (installed + live socket count, with the install command when
+    missing), so a missing prerequisite surfaces from `doctor` rather
+    than from a failed `tap --web`.
+  - New graceful error codes: `IWDP_NOT_INSTALLED`, `NO_WEB_PAGE`,
+    `UNSUPPORTED_ON_PLATFORM` (`--web` aimed at Android), plus
+    `MISSING_SELECTOR` and `TARGET_CONFLICT` (combining `--web` with
+    coordinates or `--id`/`--text` is refused rather than silently
+    dropping one).
+  - 123 new tests (426 total, up from the 303-test baseline), coverage
+    92.99% statements.
 
 ### Fixed
 
@@ -166,6 +222,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Minimum Node.js raised from `>= 20` to `>= 22`** (`engines.node`).
+  The web path's transport is Node's built-in `WebSocket`, available from
+  22.4, which keeps the runtime dependency count at one rather than
+  adding a WebSocket library. Node 20 and 21 users will now see an
+  engines warning on install; only the `--web` commands actually need
+  the newer runtime, but the package declares the floor honestly rather
+  than failing at call time.
 - `REQ-IOS-BACKEND-006` / `AC-IOS-016` amended: the original
   "`idb ui text` is Unicode-native" premise was disproved by reading
   fb-idb's own keycode table and is replaced by the ASCII / pasteboard
@@ -198,14 +261,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `text "naver"` into `ㅜㅁㅍㄷㄱ` with no error, and idb offers no way to
   read or set the input mode); and `dump` sees native UI only — with a web
   page loaded, `idb ui describe-all` returns the browser chrome alone, so
-  selector targeting cannot reach web content. The latter confirms
-  SPEC-03 (WebView/DOM via CDP/`ios-webkit-debug-proxy`) is required
-  rather than optional.
+  selector targeting cannot reach web content. The latter is what
+  SPEC-WEBVIEW-001 (`--web`) now addresses — see the web-content entry
+  under **Added**.
 - A post-sync quality audit also caught a real CLI-level gap in `key`
   (AC-IOS-017) and a stale grep-literal wording in two AC descriptions
   (AC-IOS-003/AC-IOS-024); both are fixed and reflected above.
 - Android real-device verification remains outstanding — the Android
   implementation is still unit/mock-verified only.
-- WebView/DOM recognition (SPEC-03), the exploration loop (SPEC-04), and
-  the Codex wrapper (SPEC-05) remain committed roadmap items, not yet
-  implemented.
+- iOS web-path verification is **done** (2026-07-27, same simulator):
+  `dump --web` returned 333 visible elements of 508 matched; a selector
+  tap navigated to `shopping.naver.com`, confirmed by screenshot; an
+  element below the fold fell back to an in-page click and navigated; and
+  `text "네이버 웹뷰" --web "#query"` was confirmed by reading the field's
+  value back rather than trusting the command's own success report.
+  `IWDP_NOT_INSTALLED` and `NO_WEB_PAGE` were both reproduced against the
+  real device.
+- One web-path acceptance criterion is **not** device-verified: refusing
+  `--web` against an Android device (`UNSUPPORTED_ON_PLATFORM`) is
+  covered by unit tests only, because no Android device was connected
+  during the run. Recorded as PARTIAL in
+  `.moai/specs/SPEC-WEBVIEW-001/progress.md` (19 PASS / 1 PARTIAL / 0
+  FAIL) rather than claimed as verified.
+- The roadmap had assumed the iOS webview protocol was the Chrome
+  DevTools Protocol. It is not: bare `Runtime.evaluate` /
+  `DOM.getDocument` / `Page.enable` are rejected with
+  `'<domain>' domain was not found`. A throwaway spike established the
+  real shape (WebKit Inspector Protocol multiplexed through
+  `Target.sendMessageToTarget`) before the SPEC was written, so the SPEC
+  was not built on the wrong premise.
+- `doctor` returns early when `adb` is absent, so on a host with no `adb`
+  installed the iOS section — including the new
+  `webInspectorProxy` check — is never reached. This predates the web
+  path and is not fixed here; it is recorded in the SPEC's residual-risk
+  notes.
+- The exploration loop (SPEC-04) and the Codex wrapper (SPEC-05) remain
+  committed roadmap items, not yet implemented. Android WebView (CDP over
+  `adb forward`) and iOS physical-device webviews are deliberately out of
+  SPEC-WEBVIEW-001's scope — different transports, separate SPECs.

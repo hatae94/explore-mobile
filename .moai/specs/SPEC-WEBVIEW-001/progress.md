@@ -2,7 +2,7 @@
 id: SPEC-WEBVIEW-001
 title: "iOS 시뮬레이터 웹뷰 DOM 인지 · 조작 — 진행 기록"
 version: "0.1.0"
-status: in-progress
+status: completed
 created: 2026-07-27
 updated: 2026-07-27
 author: hatae
@@ -243,6 +243,42 @@ coverage: 전체 92.99% stmts / 88.6% branch (목표 85% 상회), src/webview 86
 - **`src/webview` 커버리지 86.4%의 미커버는 실 I/O 어댑터**(`nativeWebSocketFactory`, `spawnProxyProcess`, `nativeFetchJson`, `defaultWebDeps`)다. 단위 테스트 대신 M6 e2e로 검증했다 — 가짜 테스트로 숫자를 채우지 않았다.
 - 다중 페이지일 때 "첫 번째 페이지" 규칙(plan.md §B.2)은 그대로다. 탭이 여러 개인 상황은 미검증.
 - 관측 중 `src/backend/idb-doctor.ts`의 모듈 주석이 여전히 "idb `ui text`는 Unicode-native"라고 기술한다. SPEC-IOS-001에서 거짓으로 확인·개정된 전제다. 본 SPEC 범위 밖이라 수정하지 않았다.
+
+## §E.4 Sync-phase Audit-Ready Signal
+
+```
+sync_status: audit-ready
+sync_complete_at: 2026-07-27
+sync_commit_sha: pending-backfill-sync
+lifecycle: in-progress → implemented → completed (단일 sync 커밋, 3-phase close)
+```
+
+### 문서 반영
+
+| 문서 | 반영 내용 |
+|------|-----------|
+| `README.md` | 상단 Status(426 테스트 + 웹 경로 검증) · Requirements(**Node >= 22**, `ios-webkit-debug-proxy`) · 명령 표에 `--web` 안내 · **신규 섹션 "Web content on the iOS Simulator"**(사용법 / native·js-click 경로 표기 / 런타임 보정 / 프록시 생명주기 / 오류 표 / 범위) · `dump`·`tap`·`text` 각 절에 상호 링크 · `doctor`의 `idbEnvironment.webInspectorProxy` + **adb 부재 시 iOS 구간 미도달 주의** · Status 절에 웹 경로 실측 결과와 CDP 오전제 정정 · Roadmap에서 SPEC-03 → SPEC-WEBVIEW-001 Completed |
+| `CHANGELOG.md` | `[Unreleased] Added`에 SPEC-WEBVIEW-001 항목 · `Changed`에 **engines `>=20` → `>=22`**(소비자 파급 변경) · `Notes`의 낡은 기술 3건 정정(SPEC-03 미구현 / CDP 전제 / 웹 경로 미검증) + AC-WEB-019 PARTIAL 명시 |
+
+### @MX 태그 검증
+
+신규 7개 파일 전부 규약 충족. ANCHOR 3건(`inspector-client.ts` 래핑 계약, `webdom.ts` 매핑 계약 + `sourceIndex` 계약), WARN 4건(프록시 외부 프로세스 기동/종료, 보정 리스너 바인딩 대상, 선택자 JS 삽입, `wasThrown` 오인), NOTE 5건. **ANCHOR/WARN 전건에 `@MX:REASON` 동반**(기계 검증), 신규 코드에 잔여 `@MX:TODO` 0건.
+
+### 최종 검증 (실제 명령 출력)
+
+```
+pnpm vitest run  → exit 0 — Test Files 26 passed, Tests 426 passed
+pnpm typecheck   → exit 0
+pnpm build       → exit 0
+coverage         → 92.99% stmts / 88.6% branch (목표 85% 상회)
+grep '"page-' src --include=*.ts (테스트 제외) → 0건 (AC-WEB-006)
+```
+
+로그: `.moai/state/verify/webview-m0/`
+
+### 마감 판정
+
+AC-WEB-020(실 시뮬레이터 e2e)이 PASS이므로 acceptance.md가 건 마감 조건이 충족되었다. **19 PASS / 1 PARTIAL / 0 FAIL**로 마감하며, PARTIAL인 AC-WEB-019(Android 대상 `--web` 거부)는 단위 테스트만 통과했고 기기 미연결로 실측하지 못했음을 README·CHANGELOG·본 문서에 **보수적으로 기재**했다 — 검증하지 않은 것을 PASS로 올리지 않는다는 SPEC-IOS-001의 원칙을 따른다.
 
 ## §F Phase 4 Mode Selection
 

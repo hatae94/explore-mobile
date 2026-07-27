@@ -6,16 +6,18 @@ control an emulator, simulator, or real device through a single, stable
 **JSON in/out** command surface. The end goal is mobile test automation,
 including multi-device interaction testing.
 
-> **Status**: core Android/adb primitives + environment bootstrap, and
-> the iOS Simulator/idb backend, are implemented and unit/mock-tested
-> (303 tests, all green). The **iOS backend has been verified end-to-end
-> against a booted simulator** (2026-07-26, iPhone 17 Pro / iOS 26.0):
-> launch Safari, dump the element tree, tap by selector, type, send
-> keys, screenshot, navigate. Android real-device verification is still
-> pending — see [Status](#status) below before relying on this in
-> production. The Unicode-IME APK (ADBKeyBoard, GPL-2.0) is never
-> bundled — `doctor` downloads it from its official release on first
-> use.
+> **Status**: core Android/adb primitives + environment bootstrap, the
+> iOS Simulator/idb backend, and the iOS **web content** path are
+> implemented and unit/mock-tested (426 tests, all green). The **iOS
+> backend has been verified end-to-end against a booted simulator**
+> (2026-07-26, iPhone 17 Pro / iOS 26.0): launch Safari, dump the element
+> tree, tap by selector, type, send keys, screenshot, navigate. The
+> **`--web` path was verified on the same simulator** (2026-07-27): read
+> a page's DOM, tap a link by CSS selector, and type Korean into a field.
+> Android real-device verification is still pending — see
+> [Status](#status) below before relying on this in production. The
+> Unicode-IME APK (ADBKeyBoard, GPL-2.0) is never bundled — `doctor`
+> downloads it from its official release on first use.
 
 ## Why
 
@@ -31,9 +33,15 @@ including multi-device interaction testing.
 
 ## Requirements
 
-- **Node.js >= 20 LTS**
+- **Node.js >= 22** — raised from `>= 20`. The iOS web path uses Node's
+  built-in `WebSocket` (available from 22.4) rather than adding a
+  dependency for it.
 - **adb** (Android SDK Platform Tools) on `PATH` — install it yourself,
   or let `doctor` do it (see [`doctor`](#doctor-yesinstall-clean) below)
+- **ios-webkit-debug-proxy** — only for the iOS
+  [`--web` commands](#web-content-on-the-ios-simulator). Install with
+  `brew install ios-webkit-debug-proxy`; `doctor` reports whether it is
+  present. Everything else works without it.
 
 ## Install & Usage
 
@@ -79,6 +87,10 @@ text — the JSON body is the only contract:
 | [`dump`](#dump) | Dump the current UI hierarchy, normalized. |
 | [`doctor [--yes\|--install] [--clean]`](#doctor-yesinstall-clean) | Diagnose / bootstrap the environment. |
 | [`reset`](#reset) | Restore the device to its pre-`doctor` state. |
+
+`dump`, `tap`, and `text` also accept
+[`--web`](#web-content-on-the-ios-simulator) to reach **web page content**
+on the iOS Simulator, which the native accessibility tree does not expose.
 
 Every device-facing command accepts `--device <serial>`. Omit it when
 exactly one device is connected — it is auto-selected. With 2+ devices
@@ -153,6 +165,9 @@ Selector mode is platform-agnostic: the same flags work against an
 Android device and an iOS simulator, because each backend normalizes its
 own tree before the selector runs.
 
+These selectors match the **native** tree. To tap something inside a web
+page, use [`tap --web "<CSS>"`](#web-content-on-the-ios-simulator).
+
 ### `key <alias>`
 
 Supported aliases: `back`, `home`, `enter`, `menu`, `app_switch`, `up`,
@@ -187,6 +202,9 @@ cover the next element you want to tap. Pass `--keep-keyboard` to opt out.
 See [Korean / emoji / Unicode text input](#korean--emoji--unicode-text-input)
 below for how non-ASCII strings are handled.
 
+To type into a field inside a web page, use
+[`text "<string>" --web "<CSS>"`](#web-content-on-the-ios-simulator).
+
 ### `dump`
 
 Dumps the current UI hierarchy and normalizes it to the common element
@@ -197,6 +215,10 @@ enabled, children }`):
 $ npx explore-mobile dump
 {"ok":true,"command":"dump","data":{"serial":"emulator-5554","elements":[{"role":"android.widget.Button","text":"OK","id":"com.example:id/btn_ok","bounds":{"x":0,"y":0,"w":100,"h":50},"tappable":true,"enabled":true,"children":[]}]}}
 ```
+
+This is the **native** tree. Web page content does not appear in it — use
+[`dump --web`](#web-content-on-the-ios-simulator) on the iOS Simulator to
+read the page's DOM instead.
 
 ### `doctor [--yes|--install] [--clean]`
 
@@ -219,6 +241,25 @@ under `data` — inspect `data.adb.installed`, `data.daemon.healthy`, and
 `data.adbKeyboard` rather than the top-level `ok` flag to see whether the
 environment itself is healthy.
 
+With an **iOS** target, the report carries `data.idbEnvironment` instead
+of `adbKeyboard`, covering `idb`, `idb_companion`, whether a simulator is
+booted, and the web path's prerequisite:
+
+```json
+"idbEnvironment": {
+  "idbInstalled": { "installed": true, "version": null },
+  "companion": { "present": true },
+  "simulatorBooted": { "booted": true },
+  "webInspectorProxy": { "installed": true, "liveSocketCount": 1 }
+}
+```
+
+> **Caveat**: `doctor` checks `adb` first and returns early when it is
+> missing, so on a host with **no `adb` installed** the iOS section is
+> never reached — an iOS-only user does not see `idbEnvironment` at all.
+> This predates the web path; until it is fixed, put `adb` on `PATH` to
+> get the iOS report.
+
 ### `reset`
 
 Restores the device to its pre-`doctor` state: disables and uninstalls
@@ -237,6 +278,90 @@ Errors are always structured JSON, never free text:
 $ npx explore-mobile tap 10 10
 {"ok":false,"command":"tap","error":{"code":"AMBIGUOUS_DEVICE","message":"2 devices connected; specify --device <serial>.","details":{"availableDevices":[...]}}}
 ```
+
+## Web content on the iOS Simulator
+
+`dump` sees the **native** accessibility tree. With a web page open, that
+tree contains the browser chrome and nothing from the page — so a selector
+can never reach a link inside it, and only blind coordinate taps are left.
+`--web` closes that gap by reading the page's DOM directly.
+
+Add `--web` to `dump`, `tap`, or `text`. It targets the **iOS Simulator
+only**; against an Android device it is refused with
+`UNSUPPORTED_ON_PLATFORM` (Android WebView speaks a different protocol and
+is a separate SPEC). Without `--web`, every command behaves exactly as
+before.
+
+```bash
+# every interactive element on the page, in the common element schema
+$ npx explore-mobile dump --web
+{"ok":true,"command":"dump","data":{"serial":"D0B3A18C-…","mode":"web","elements":[{"role":"input","text":"검색어를 입력해 주세요.","id":"query","bounds":{"x":62,"y":10,"w":282,"h":52},"tappable":true,"enabled":true,"children":[]}]}}
+
+# narrow it with a CSS selector
+$ npx explore-mobile dump --web "a[href*='news']"
+
+# tap an element by CSS selector
+$ npx explore-mobile tap --web "a[href*='shopping.naver.com']"
+{"ok":true,"command":"tap","data":{"serial":"D0B3A18C-…","selector":{"css":"a[href*='shopping.naver.com']","index":0},"tappable":true,"method":"native","x":183,"y":434}}
+
+# type into a field (Korean included — same input path as the native `text`)
+$ npx explore-mobile text "네이버 웹뷰" --web "#query"
+{"ok":true,"command":"text","data":{"serial":"D0B3A18C-…","selector":{"css":"#query","index":0},"method":"native","x":203,"y":98}}
+```
+
+`--index <n>` picks the n-th match when a selector matches several
+elements, exactly like the native selector flags.
+
+### How an element is reached, and why the response says so
+
+A web element is tapped **natively by default** — its position is
+converted to a device coordinate and a real touch is sent, so sites that
+require genuine touch events behave normally. When the element sits
+outside the viewport, that conversion cannot be trusted, and the command
+falls back to an in-page `click()`.
+
+The response always reports which path ran, so a fallback is never
+silent:
+
+```bash
+$ npx explore-mobile tap --web "a" --index 50     # element below the fold
+{"ok":true,"command":"tap","data":{...,"method":"js-click"}}
+```
+
+The coordinate conversion needs the height of the browser chrome above
+the page. That number is **measured on the device at runtime**, not
+hardcoded: it is one device's status-bar height, not a property of iOS.
+The measurement covers the page with a transparent overlay first, so the
+probe tap cannot reach any real element, and the result is cached per
+device and re-measured automatically whenever the page geometry changes
+(rotation, chrome resize). On a cache hit nothing is injected into the
+page and no probe tap is sent.
+
+### Proxy lifecycle
+
+`ios_webkit_debug_proxy` is started and stopped for you. A proxy that is
+**already running is reused and left running** — only a proxy this CLI
+started is stopped, and that cleanup runs even when the command fails, so
+a failure does not leave one behind.
+
+### Errors
+
+| Code | Meaning |
+|---|---|
+| `IWDP_NOT_INSTALLED` | `ios_webkit_debug_proxy` is not on `PATH`; the message carries the install command. |
+| `NO_WEB_PAGE` | No simulator is exposing a Web Inspector socket, or none has a page open. |
+| `ELEMENT_NOT_FOUND` | The CSS selector matched no visible element. Nothing is tapped and, for `text`, nothing is typed. |
+| `TARGET_CONFLICT` | `--web` was combined with coordinates or `--id`/`--text`; one is not silently dropped. |
+| `MISSING_SELECTOR` | `tap`/`text` was given `--web` with no CSS selector. |
+| `UNSUPPORTED_ON_PLATFORM` | `--web` was aimed at an Android device. |
+
+### Scope
+
+Safari on the **iOS Simulator**, where Web Inspector is on by default.
+Not covered: Android WebView, iOS physical devices (USB transport plus
+manual Web Inspector activation), app-embedded webviews that do not opt
+into debugging, and scrolling an off-screen element into view — the
+fallback clicks it in place instead.
 
 ## Korean / emoji / Unicode text input
 
@@ -298,9 +423,9 @@ contaminate either device's input-method state.
 
 ## Status
 
-Android (SPEC-ANDROID-001, all 8 milestones) and iOS Simulator
-(SPEC-IOS-001) backends are both implemented, with 303 unit/mock tests
-green.
+Android (SPEC-ANDROID-001, all 8 milestones), the iOS Simulator backend
+(SPEC-IOS-001), and the iOS web content path (SPEC-WEBVIEW-001) are
+implemented, with 426 unit/mock tests green.
 
 **iOS: verified against a real simulator** (2026-07-26, iPhone 17 Pro /
 iOS 26.0, fb-idb 1.1.7). A full Safari journey — `doctor` → `devices` →
@@ -324,8 +449,32 @@ Known iOS limitations found during that run:
   a Korean layout selected, `text "naver"` silently lands as `ㅜㅁㅍㄷㄱ`.
   idb exposes no way to read or set the input mode.
 - `dump` sees native UI only. With a web page loaded, it returns the
-  browser chrome alone — web content is not in the accessibility tree,
-  so selector targeting cannot reach it (that is SPEC-03's scope).
+  browser chrome alone — web content is not in the accessibility tree.
+  This is what
+  [`--web`](#web-content-on-the-ios-simulator) (SPEC-WEBVIEW-001) now
+  addresses.
+
+**iOS web path: verified against the same simulator** (2026-07-27). On
+naver.com: `dump --web` returned 333 visible elements out of 508 matched
+(175 were zero-size and dropped); a selector tap navigated to
+`shopping.naver.com` and was confirmed by screenshot; an element below
+the fold fell back to an in-page click and navigated; and
+`text "네이버 웹뷰" --web "#query"` was confirmed by reading the field's
+value back. `IWDP_NOT_INSTALLED` and `NO_WEB_PAGE` were both reproduced
+on the real device, and no proxy leaked when a command failed.
+
+The protocol turned out **not** to be the Chrome DevTools Protocol, as
+the roadmap had assumed: bare `Runtime.evaluate` / `DOM.getDocument` /
+`Page.enable` are all rejected with `'<domain>' domain was not found`.
+It is the WebKit Inspector Protocol multiplexed through
+`Target.sendMessageToTarget`, and a thrown value is signalled by
+`wasThrown` rather than CDP's `exceptionDetails` — a CDP-shaped reader
+reports a thrown error as success. This was found by a throwaway spike
+before the SPEC was written, not during implementation.
+
+One web-path criterion is **not** device-verified: rejecting `--web`
+against an Android device (`UNSUPPORTED_ON_PLATFORM`) is covered by unit
+tests only, because no Android device was connected during the run.
 
 Still pending before this is production-ready:
 
@@ -349,9 +498,10 @@ hardware.
 |---|---|---|
 | SPEC-ANDROID-001 | Android/adb device-control primitives + environment bootstrap | Implemented, e2e pending |
 | SPEC-IOS-001 | iOS Simulator backend (`idb`) — common schema + registry extension | Completed, verified on a real simulator |
-| SPEC-03 | WebView/DOM recognition (Chrome DevTools Protocol / `ios-webkit-debug-proxy`) | Committed |
+| SPEC-WEBVIEW-001 | iOS Simulator web content — DOM recognition + interaction (`ios-webkit-debug-proxy`) | Completed, verified on a real simulator |
 | SPEC-04 | Prompt-driven exploration loop + multi-device scenario orchestration | Committed |
 | SPEC-05 | Codex skill wrapper + broader packaging | Committed |
+| — | Android WebView (CDP over `adb forward`) and iOS **physical-device** webviews | Committed — separate transports, separate SPECs |
 
 The common element schema and the device-backend interface were
 designed so the iOS backend could plug in without a redesign of the CLI
