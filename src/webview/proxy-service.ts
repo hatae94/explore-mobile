@@ -21,7 +21,13 @@
 
 import { spawn } from "node:child_process";
 import type { ProcessExecutor } from "../backend/process-executor.js";
-import { IwdpNotInstalledError, NoWebPageError, WebInspectorConnectionError } from "./webkit-errors.js";
+import {
+  AmbiguousWebPageError,
+  IwdpNotInstalledError,
+  NoWebPageError,
+  WebInspectorConnectionError,
+  type WebPageSummary,
+} from "./webkit-errors.js";
 
 const IWDP_BINARY = "ios_webkit_debug_proxy";
 const SOCKET_MARKER = "com.apple.webinspectord_sim.socket";
@@ -39,6 +45,11 @@ export interface ProxyProcess {
 export type ProxyLauncher = (command: string, args: string[]) => ProxyProcess;
 export type JsonFetcher = (url: string) => Promise<unknown>;
 
+/** A debuggable page plus the socket to reach it on. */
+export interface WebPageTarget extends WebPageSummary {
+  webSocketDebuggerUrl: string;
+}
+
 export interface OpenWebProxyOptions {
   /** Runs `which` and `lsof`. */
   exec: ProcessExecutor;
@@ -47,11 +58,15 @@ export interface OpenWebProxyOptions {
   sleep?: (ms: number) => Promise<void>;
   port?: number;
   maxStartAttempts?: number;
+  /** `--page <n>`: which debuggable page to attach to. Required once more than one exists. */
+  pageIndex?: number;
 }
 
 export interface WebProxySession {
   /** Debugger URL of the page to attach to. */
   readonly pageWebSocketUrl: string;
+  /** Which page this session attached to — always reported, even when there was only one (REQ-WEB-CLI-004). */
+  readonly page: WebPageTarget;
   /** False when an already-running proxy was reused — `dispose` then leaves it alone. */
   readonly startedByUs: boolean;
   dispose(): void;
@@ -91,7 +106,7 @@ export function parseLiveInspectorSockets(lsofStdout: string): string[] {
  * unreachable case is expected control flow during startup polling, not a
  * swallowed failure: exhausting the poll budget raises.
  */
-async function probePages(fetchJson: JsonFetcher, port: number): Promise<string[] | null> {
+async function probePages(fetchJson: JsonFetcher, port: number): Promise<WebPageTarget[] | null> {
   let payload: unknown;
   try {
     payload = await fetchJson(`http://localhost:${port}/json`);
@@ -101,16 +116,58 @@ async function probePages(fetchJson: JsonFetcher, port: number): Promise<string[
 
   if (!Array.isArray(payload)) return [];
 
+  // Index over the DEBUGGABLE pages only, so the number a caller passes to
+  // `--page` matches the list `AMBIGUOUS_PAGE` showed them.
   return payload
     .filter(isRecord)
-    .map((page) => page.webSocketDebuggerUrl)
-    .filter((url): url is string => typeof url === "string" && url.length > 0);
+    .filter((page) => typeof page.webSocketDebuggerUrl === "string" && page.webSocketDebuggerUrl.length > 0)
+    .map((page, index) => ({
+      index,
+      title: typeof page.title === "string" ? page.title : "",
+      url: typeof page.url === "string" ? page.url : "",
+      webSocketDebuggerUrl: page.webSocketDebuggerUrl as string,
+    }));
 }
 
-function createSession(pageWebSocketUrl: string, startedByUs: boolean, proc: ProxyProcess | undefined): WebProxySession {
+/**
+ * Picks the page to attach to, refusing to guess between several
+ * (REQ-WEB-PROXY-005).
+ *
+ * The caller is told every candidate rather than being handed one the proxy
+ * happened to list first — which, after a single link tap, is a page that is
+ * no longer on screen.
+ */
+function selectPage(pages: WebPageTarget[], pageIndex: number | undefined): WebPageTarget {
+  if (pageIndex !== undefined) {
+    const chosen = pages[pageIndex];
+    if (chosen === undefined) {
+      throw new AmbiguousWebPageError(
+        `--page ${pageIndex} is out of range; ${pages.length} debuggable page(s) are open.`,
+        pages.map(toPageSummary),
+      );
+    }
+    return chosen;
+  }
+
+  const only = pages[0];
+  if (pages.length === 1 && only !== undefined) return only;
+
+  throw new AmbiguousWebPageError(
+    `${pages.length} debuggable pages are open; specify --page <n>. The proxy does not report which one is on screen, so no page is chosen for you.`,
+    pages.map(toPageSummary),
+  );
+}
+
+/** Drops the debugger socket, which is transport plumbing rather than something a caller acts on. */
+export function toPageSummary(page: WebPageTarget): WebPageSummary {
+  return { index: page.index, title: page.title, url: page.url };
+}
+
+function createSession(page: WebPageTarget, startedByUs: boolean, proc: ProxyProcess | undefined): WebProxySession {
   let disposed = false;
   return {
-    pageWebSocketUrl,
+    pageWebSocketUrl: page.webSocketDebuggerUrl,
+    page,
     startedByUs,
     dispose(): void {
       if (disposed) return;
@@ -196,13 +253,12 @@ export async function openWebProxy(options: OpenWebProxyOptions): Promise<WebPro
 
   const existing = await probePages(fetchJson, port);
   if (existing !== null) {
-    const url = existing[0];
-    if (url === undefined) {
+    if (existing.length === 0) {
       throw new NoWebPageError(
         `A proxy is running on port ${port} but no debuggable page is open. Open a page in Safari on the simulator and retry.`,
       );
     }
-    return createSession(url, false, undefined);
+    return createSession(selectPage(existing, options.pageIndex), false, undefined);
   }
 
   const which = await options.exec("which", [IWDP_BINARY]);
@@ -232,14 +288,20 @@ export async function openWebProxy(options: OpenWebProxyOptions): Promise<WebPro
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const pages = await probePages(fetchJson, port);
     if (pages !== null) {
-      const url = pages[0];
-      if (url === undefined) {
+      if (pages.length === 0) {
         proc.kill();
         throw new NoWebPageError(
           "The simulator has no debuggable page open. Open a page in Safari on the simulator and retry.",
         );
       }
-      return createSession(url, true, proc);
+      try {
+        return createSession(selectPage(pages, options.pageIndex), true, proc);
+      } catch (err) {
+        // The proxy we just started is ours to clean up even when the page
+        // choice is what failed.
+        proc.kill();
+        throw err;
+      }
     }
     await sleep(START_POLL_INTERVAL_MS);
   }

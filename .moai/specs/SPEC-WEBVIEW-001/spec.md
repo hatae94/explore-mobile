@@ -1,11 +1,12 @@
 ---
 id: SPEC-WEBVIEW-001
 title: "iOS 시뮬레이터 웹뷰 DOM 인지 · 조작 — WebKit Inspector 백엔드"
-version: "0.1.0"
+version: "0.2.0"
 status: completed
 created: 2026-07-27
 updated: 2026-07-27
 author: hatae
+amendment_of: SPEC-WEBVIEW-001
 priority: P1
 phase: "v0.3.0 target"
 module: "src/"
@@ -22,6 +23,39 @@ related_specs: [SPEC-ANDROID-001, SPEC-IOS-001]
 | 버전 | 날짜 | 작성자 | 변경 내용 |
 |------|------|--------|-----------|
 | 0.1.0 | 2026-07-27 | hatae | 최초 작성. **선행 스파이크(버리는 코드)로 프로토콜을 실측한 뒤** 작성됨 — §C.1 참조. 로드맵의 "SPEC-03"에 해당하며, 범위를 iOS 시뮬레이터로 한정한다. |
+| 0.2.0 | 2026-07-27 | hatae | **제자리 개정** — 다중 페이지 선택 규칙 오류 수정. 아래 §Amendments 참조. |
+
+## Amendments
+
+### 0.2.0 — "첫 번째 페이지를 쓴다" 규칙 폐기
+
+| 항목 | 값 |
+|------|-----|
+| 직전 completed 버전 | 0.1.0 |
+| `prior_completed_sha` | `b469c58` |
+| 개정 범위 | REQ-WEB-PROXY-005 · REQ-WEB-CLI-004 신설, plan.md §B.2 규칙 대체, AC 4건 추가 |
+
+**무엇이 틀렸나.** 0.1.0은 디버그 대상이 여러 개일 때 "첫 번째 페이지"를 쓰기로 했다(plan.md §B.2). 이 규칙은 마감 시점에 **미검증**으로 기록돼 있었고, SPEC-04 선행 스파이크(2026-07-27) 중 **틀린 것으로 확인**됐다.
+
+**재현.** 시뮬레이터에서 `tap --web`으로 링크를 한 번 눌러 새 대상이 생긴 직후:
+
+```
+프록시가 보는 대상 2개
+  [0] page/1 | "NAVER"            | m.naver.com     ← 화면에 없음
+  [1] page/2 | "여름에만 느낄 수…" | clip.naver.com  ← 실제 화면
+
+$ dump --web        (화면은 clip.naver.com)
+elements: 338, m.naver.com 고유 요소(메일/카페/추천) 4건 발견
+→ 화면에 없는 낡은 페이지를 보고
+```
+
+오류도 경고도 없다. **링크를 한 번 누른 뒤부터 모든 `--web` 명령이 다른 페이지를 조작한다.**
+
+**왜 규칙 자체가 틀렸나.** 어느 대상이 화면에 떠 있는지 프록시의 `/json`은 알려주지 않는다. 순서에 의미가 있다는 근거도 없다(관측 1건뿐). 즉 **어떤 추측 규칙을 골라도 조용히 틀릴 수 있다** — 추측을 고르는 것 자체가 오류다.
+
+**무엇으로 바꾸나.** 이 프로젝트가 기기 다중 연결에 이미 쓰는 규칙을 그대로 확장한다: 기기가 2대이고 `--device`가 없으면 첫 번째를 고르지 않고 `AMBIGUOUS_DEVICE`로 거부한다(REQ-MULTIDEV-002). 페이지도 동일하게 — 여러 개면 목록과 함께 거부하고 `--page <n>`으로 지정하게 한다. 새 개념이 아니라 기존 원칙의 적용이다.
+
+덧붙여, 페이지가 하나뿐일 때도 **어느 페이지를 조작했는지 응답에 밝힌다**(REQ-WEB-CLI-004). 이 결함이 조용했던 이유가 바로 그것이 응답에 없었기 때문이다.
 
 ## §A. 개요 (Context & Goal)
 
@@ -72,6 +106,7 @@ iwdp 프로세스 (자동 기동/정리)      ← 신규
 - **REQ-WEB-PROXY-002** (When 이벤트): **When** 명령이 끝날 때, the CLI **shall** 자신이 기동한 프록시를 종료한다. 자신이 기동하지 않은(이미 떠 있던) 프록시는 **종료하지 않는다**.
 - **REQ-WEB-PROXY-003** (When 감지된-이상상태): **When** `ios_webkit_debug_proxy`가 미설치일 때, the CLI **shall** graceful 오류(`IWDP_NOT_INSTALLED`)로 설치 안내를 반환한다 — 크래시 금지. `doctor`도 이 항목을 점검·보고한다.
 - **REQ-WEB-PROXY-004** (While 상태): **While** 시뮬레이터에 열린 웹 페이지가 하나도 없을 때, the CLI **shall** graceful 오류(`NO_WEB_PAGE`)를 반환한다.
+- **REQ-WEB-PROXY-005** (Where 조건, 0.2.0 신설): **Where** 디버그 가능한 페이지가 둘 이상이고 `--page`가 주어지지 않았을 때, the CLI **shall** 어느 하나를 고르지 않고 `AMBIGUOUS_PAGE`로 거부하며 전체 목록(인덱스·제목·URL)을 함께 반환한다. `--page <n>`이 주어지면 그 페이지를 쓰고, 범위를 벗어나면 graceful 오류로 거부한다. **어느 대상이 화면에 떠 있는지 프록시는 알려주지 않으므로 추측은 조용히 틀린다** — REQ-MULTIDEV-002(`AMBIGUOUS_DEVICE`)와 동일한 원칙이다.
 
 ### B.2 WebKit Inspector 프로토콜 (REQ-WEB-PROTO)
 
@@ -100,6 +135,7 @@ iwdp 프로세스 (자동 기동/정리)      ← 신규
 - **REQ-WEB-CLI-001** (When 이벤트): the CLI **shall** `dump --web`, `tap --web "<CSS>"`, `text "<문자열>" --web "<CSS>"` 세 조합을 지원한다. 기존 명령·플래그 동작은 **변경하지 않는다**(가법 확장).
 - **REQ-WEB-CLI-002** (When 이벤트): the CLI **shall** 기존 JSON 봉투 계약을 그대로 지킨다 — 성공/오류 모두 단일 JSON 문서.
 - **REQ-WEB-CLI-003** (Where 조건): **Where** `--web`이 Android 기기를 대상으로 쓰일 때, the CLI **shall** `UNSUPPORTED_ON_PLATFORM`으로 거부한다 — 본 SPEC 범위는 iOS 시뮬레이터다.
+- **REQ-WEB-CLI-004** (When 이벤트, 0.2.0 신설): **When** 웹 명령이 성공할 때, the CLI **shall** 조작한 페이지(인덱스·제목·URL)를 응답에 포함한다 — 페이지가 하나뿐일 때도 포함한다. 0.2.0 개정의 결함이 조용했던 원인이 응답에 이 정보가 없었기 때문이다.
 
 ## §C. 제약 (Constraints)
 

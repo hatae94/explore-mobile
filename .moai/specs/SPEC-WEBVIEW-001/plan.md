@@ -1,7 +1,7 @@
 ---
 id: SPEC-WEBVIEW-001
 title: "iOS 시뮬레이터 웹뷰 DOM 인지 · 조작 — 구현 계획"
-version: "0.1.0"
+version: "0.2.0"
 status: completed
 created: 2026-07-27
 updated: 2026-07-27
@@ -37,7 +37,9 @@ author: hatae
 - 페이지 이동(navigation) 중 `targetId` 유효성
 - 연결 재사용 vs 명령마다 재연결
 
-**대응**: M2에서 단일 페이지·단일 명령 경로를 먼저 확정하고, 다중 페이지는 "첫 번째 페이지" 규칙으로 시작한다(REQ-WEB-PROXY-004의 `NO_WEB_PAGE`와 짝).
+**대응 (0.1.0)**: M2에서 단일 페이지·단일 명령 경로를 먼저 확정하고, 다중 페이지는 "첫 번째 페이지" 규칙으로 시작한다(REQ-WEB-PROXY-004의 `NO_WEB_PAGE`와 짝).
+
+> **0.2.0 개정 — 위 "첫 번째 페이지" 규칙은 폐기됨.** 실측 결과 링크를 한 번만 눌러도 대상이 2개가 되고, 첫 번째가 화면에 없는 낡은 페이지였다(spec.md §Amendments). 어느 대상이 화면에 있는지 프록시가 알려주지 않으므로 **어떤 추측 규칙도 조용히 틀린다**. 대체 규칙: 여럿이면 `AMBIGUOUS_PAGE`로 거부 + `--page <n>` 지정(REQ-WEB-PROXY-005) — `AMBIGUOUS_DEVICE`와 동일 원칙. 구현은 M7 참조.
 
 ### B.3 프로세스 생명주기 [중간]
 
@@ -105,6 +107,19 @@ lsof -U | grep webinspectord_sim   # 살아있는 소켓 확인
 SPEC-IOS-001과 동일한 원칙으로, 실제 시뮬레이터에서 시나리오를 돌리고 관측 결과를 기록한다: naver.com 로드 → `dump --web`으로 요소 확인 → `tap --web`으로 섹션 이동 → 스크린샷 확증.
 
 **이 마일스톤 없이는 `completed` 마감하지 않는다.**
+
+### M7 — 페이지 선택 규칙 교체 [0.2.0 개정]
+
+`openWebProxy`가 `pages[0]`을 고르던 것을 대체한다. 산출물:
+
+- `probePages`가 ws URL 문자열 대신 **페이지 요약**(인덱스·제목·URL·ws URL)을 반환하도록 확장.
+- 0개 → `NO_WEB_PAGE`(불변), 1개 → 그대로 사용, 2개 이상 + `--page` 없음 → **`AMBIGUOUS_PAGE`**(목록 동봉, 무동작), `--page <n>` → 해당 페이지(범위 밖은 graceful 거부).
+- `WebProxySession.page`를 노출하고 `dump`/`tap`/`text --web` 응답에 `page`를 실어 **어느 페이지를 조작했는지 항상 보이게** 한다(REQ-WEB-CLI-004).
+- `--page`는 `args.ts`에 추가. 값이 필수인 일반 문자열 플래그라 `--web`과 달리 argv 정규화가 필요 없다.
+
+**재현 우선**: 손대기 전에 다중 페이지 상황을 재현하는 실패 테스트를 먼저 쓴다(이 프로젝트 Rule 4). 실기기 재현 조건은 이미 확보돼 있다 — 시뮬레이터가 현재 2대상 상태다.
+
+**이 마일스톤 없이는 0.2.0을 `completed`로 재마감하지 않는다** (AC-WEB-024).
 
 ## §G. 마일스톤 의존 관계
 

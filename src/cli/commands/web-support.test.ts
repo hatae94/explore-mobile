@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import type { CommonElement, DeviceBackend, DeviceInfo } from "../../schema/device-backend.js";
 import type { ProcessExecResult } from "../../backend/process-executor.js";
 import { CalibrationStore } from "../../webview/calibration.js";
-import { IwdpNotInstalledError } from "../../webview/webkit-errors.js";
+import { AmbiguousWebPageError, IwdpNotInstalledError } from "../../webview/webkit-errors.js";
 import type { WebInspectorClient } from "../../webview/inspector-client.js";
 import type { WebProxySession } from "../../webview/proxy-service.js";
 import { parseCommandArgs } from "../args.js";
@@ -55,7 +55,15 @@ interface Harness {
   clientClosed: () => boolean;
 }
 
-function harness(options: { device?: DeviceInfo; collected?: unknown; clickResult?: unknown; proxyError?: Error } = {}): Harness {
+function harness(
+  options: {
+    device?: DeviceInfo;
+    collected?: unknown;
+    clickResult?: unknown;
+    proxyError?: Error;
+    onOpenProxy?: (opts: { pageIndex?: number }) => void;
+  } = {},
+): Harness {
   const device = options.device ?? IOS_DEVICE;
   const collected = options.collected ?? [rawEl()];
   const taps: { x: number; y: number }[] = [];
@@ -94,6 +102,12 @@ function harness(options: { device?: DeviceInfo; collected?: unknown; clickResul
 
   const session: WebProxySession = {
     pageWebSocketUrl: "ws://localhost:9222/devtools/page/1",
+    page: {
+      index: 0,
+      title: "NAVER",
+      url: "https://m.naver.com/",
+      webSocketDebuggerUrl: "ws://localhost:9222/devtools/page/1",
+    },
     startedByUs: true,
     dispose: () => {
       disposed = true;
@@ -113,7 +127,8 @@ function harness(options: { device?: DeviceInfo; collected?: unknown; clickResul
 
   return {
     deps: {
-      openProxy: async (): Promise<WebProxySession> => {
+      openProxy: async (opts): Promise<WebProxySession> => {
+        options.onOpenProxy?.(opts);
         if (options.proxyError) throw options.proxyError;
         return session;
       },
@@ -164,6 +179,63 @@ describe("runWebDump", () => {
     await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
     expect(h.disposed()).toBe(true);
     expect(h.clientClosed()).toBe(true);
+  });
+});
+
+describe("page selection (0.2.0 amendment, AC-WEB-021..023)", () => {
+  it("names the page it acted on in every success response", async () => {
+    const h = harness();
+    const dumped = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+    const tapped = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const typed = await runWebText(parseCommandArgs(["안녕", "--web", "a"]), h.backend, h.deps);
+
+    for (const result of [dumped, tapped, typed]) {
+      expect(result.ok).toBe(true);
+      // toEqual: the debugger socket is transport plumbing and must not reach
+      // the caller's envelope.
+      expect(result.ok && (result.data as { page: unknown }).page).toEqual({
+        index: 0,
+        title: "NAVER",
+        url: "https://m.naver.com/",
+      });
+    }
+  });
+
+  it("surfaces AMBIGUOUS_PAGE with the candidate list so the caller can choose", async () => {
+    const pages = [
+      { index: 0, title: "NAVER", url: "https://m.naver.com/" },
+      { index: 1, title: "클립", url: "https://clip.naver.com/" },
+    ];
+    const h = harness({ proxyError: new AmbiguousWebPageError("2 debuggable pages are open", pages) });
+    const result = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("AMBIGUOUS_PAGE");
+    expect(result.error.details).toEqual({ pages });
+  });
+
+  it("passes --page through to the proxy", async () => {
+    const seen: { pageIndex?: number }[] = [];
+    const h = harness({ onOpenProxy: (opts) => seen.push(opts) });
+    await runWebDump(parseCommandArgs(["--web", "--page", "1"]), h.backend, h.deps);
+    expect(seen[0]?.pageIndex).toBe(1);
+  });
+
+  it("omits pageIndex entirely when --page is absent", async () => {
+    const seen: { pageIndex?: number }[] = [];
+    const h = harness({ onOpenProxy: (opts) => seen.push(opts) });
+    await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+    expect(seen[0]?.pageIndex).toBeUndefined();
+  });
+
+  it("rejects a non-numeric --page without opening a proxy", async () => {
+    const seen: { pageIndex?: number }[] = [];
+    const h = harness({ onOpenProxy: (opts) => seen.push(opts) });
+    const result = await runWebDump(parseCommandArgs(["--web", "--page", "abc"]), h.backend, h.deps);
+
+    expect(!result.ok && result.error.code).toBe("INVALID_PAGE");
+    expect(seen).toEqual([]);
   });
 });
 

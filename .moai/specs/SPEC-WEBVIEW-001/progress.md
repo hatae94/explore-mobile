@@ -1,7 +1,7 @@
 ---
 id: SPEC-WEBVIEW-001
 title: "iOS 시뮬레이터 웹뷰 DOM 인지 · 조작 — 진행 기록"
-version: "0.1.0"
+version: "0.2.0"
 status: completed
 created: 2026-07-27
 updated: 2026-07-27
@@ -198,15 +198,60 @@ role 분포     {"a":265,"input":2,"button":66}
 
 스크린샷: `m6-before.png`, `m6-after.png`(쇼핑 이동 확증), `m6-fallback.png`, `m6-text.png`.
 
+### M7 — 페이지 선택 규칙 교체 [0.2.0 개정 · 완료]
+
+0.1.0의 "첫 번째 페이지를 쓴다" 규칙이 틀렸음이 **SPEC-04 선행 스파이크 중 확인**됐다. 발견 경위와 근본 원인은 spec.md §Amendments.
+
+#### 재현 (수정 전, 배포된 CLI)
+
+시뮬레이터에서 `tap --web`으로 링크를 한 번 눌러 대상이 2개가 된 직후:
+
+```
+[0] "NAVER"            | m.naver.com      ← 화면에 없음
+[1] "여름에만 느낄 수…" | clip.naver.com   ← 실제 화면
+
+$ dump --web        (화면은 clip.naver.com)
+elements: 338
+m.naver.com 고유 요소(메일/카페/추천) 4건 발견
+→ 화면에 없는 낡은 페이지를 오류 없이 보고
+```
+
+#### 수정 (재현 테스트 선행)
+
+손대기 전에 다중 페이지 상황의 실패 테스트 7건을 먼저 작성해 RED를 확인했다(Rule 4).
+
+- 페이지 0개 → `NO_WEB_PAGE`(불변), 1개 → 사용, **2개 이상 + `--page` 없음 → `AMBIGUOUS_PAGE`**(목록 동봉, 무동작), `--page <n>` → 지정 선택(범위 밖은 거부).
+- 인덱스는 **디버그 가능한 페이지만 걸러낸 뒤** 부여한다 — 사용자가 `AMBIGUOUS_PAGE` 목록에서 본 번호와 `--page`에 넣는 번호가 어긋나지 않게.
+- `WebProxySession.page` 노출 → `dump`/`tap`/`text --web` 응답에 `page` 포함(REQ-WEB-CLI-004).
+- 응답·오류에는 `webSocketDebuggerUrl`을 **싣지 않는다**(전송 계층 배관). e2e 1차에서 새어 나오는 걸 보고 걷어냈고, 테스트를 `toMatchObject`에서 `toEqual`로 조여 재발을 막았다.
+
+#### 실기기 검증 (결함이 살아있는 그 상태 그대로)
+
+| AC | 명령 | 관측 |
+|---|---|---|
+| AC-WEB-021·024 | `dump --web` | `AMBIGUOUS_PAGE` + 후보 2건 목록. **낡은 페이지를 조용히 읽지 않음** |
+| AC-WEB-022·023 | `dump --web --page 1` | `page: {index:1, title:"여름에만…", url:"clip.naver.com/…"}`, 요소 61개, **m.naver.com 고유 요소 0건** |
+| — | `--page 9` | `AMBIGUOUS_PAGE` — "out of range; 2 debuggable page(s) are open" |
+| — | `--page abc` | `INVALID_PAGE` |
+| — | 전 경로 | `webSocketDebuggerUrl` 누출 없음 |
+
+#### 산출물
+
+`webkit-errors.ts`(+`AmbiguousWebPageError`), `proxy-service.ts`(`WebPageTarget`·`selectPage`·`toPageSummary`), `args.ts`(`--page`), `web-support.ts`(전달·응답·오류 details). 테스트 438건(개정 전 426 → +12).
+
+#### 남긴 것
+
+`@MX:WARN` + `@MX:REASON`을 `AmbiguousWebPageError`에 달아 **"휴리스틱으로 하나를 고르도록 되돌리지 말 것"** 과 그 이유를 코드에 박았다. 이 결함의 본질은 규칙 선택 실수가 아니라 **추측 자체가 조용히 틀린다**는 점이라, 다음 사람이 같은 유혹에 빠지는 걸 막아야 한다.
+
 ## §E.3 Run-phase Audit-Ready Signal
 
 ```
 run_status: audit-ready
-run_complete_at: 2026-07-27
-tests: 426 passed / 26 files   (기준선 303 → +123)
+run_complete_at: 2026-07-27   (0.2.0 개정 포함)
+tests: 438 passed / 26 files   (기준선 303 → +135; 0.1.0 426 → 개정 +12)
 typecheck: exit 0
 build: exit 0
-coverage: 전체 92.99% stmts / 88.6% branch (목표 85% 상회), src/webview 86.4% stmts
+coverage: 전체 92.95% stmts / 88.67% branch (목표 85% 상회), src/webview 86.41% stmts
 ```
 
 ### AC 매트릭스 (20건)
@@ -234,14 +279,19 @@ coverage: 전체 92.99% stmts / 88.6% branch (목표 85% 상회), src/webview 86
 | AC-WEB-019 Android → UNSUPPORTED_ON_PLATFORM | **PARTIAL** | 단위 2건 PASS. **실기기 e2e 미실시 — Android 기기 미연결** |
 | AC-WEB-020 실 시뮬레이터 e2e | **PASS** | M6 표 7행 |
 
-**19 PASS / 1 PARTIAL / 0 FAIL.**
+| AC-WEB-021 페이지 여럿 → 거부, 무동작 | **PASS** | 단위 3건 + e2e(실 2페이지 상태) |
+| AC-WEB-022 `--page <n>` 지정 선택 | **PASS** | 단위 3건 + e2e(정상/범위밖/비숫자) |
+| AC-WEB-023 조작 페이지 응답 명시 | **PASS** | 단위 2건 + e2e(3개 명령 전부) |
+| AC-WEB-024 낡은 대상 결함 재현·해소 | **PASS** | 수정 전 재현 → 수정 후 해소, 동일 기기·동일 상태 |
+
+**0.1.0: 19 PASS / 1 PARTIAL / 0 FAIL → 0.2.0: 23 PASS / 1 PARTIAL / 0 FAIL** (AC 24건).
 
 ### 잔여 위험 · 알려진 한계
 
 - **AC-WEB-019는 단위 테스트만**이다. Android 기기가 연결되면 실측으로 승격해야 한다(SPEC-ANDROID-001의 실기기 e2e 미기록 항목과 같은 성격).
 - **`doctor`의 iOS 구간은 adb가 PATH에 없으면 도달하지 않는다.** `doctor`는 adb 미설치 시 조기 반환하므로(SPEC-IOS-001에서 확립된 기존 동작, `doctor.ts` @MX:NOTE에 명시) iOS 전용 사용자는 `webInspectorProxy` 보고를 못 본다. 본 SPEC 범위 밖이나 실사용 갭이다.
 - **`src/webview` 커버리지 86.4%의 미커버는 실 I/O 어댑터**(`nativeWebSocketFactory`, `spawnProxyProcess`, `nativeFetchJson`, `defaultWebDeps`)다. 단위 테스트 대신 M6 e2e로 검증했다 — 가짜 테스트로 숫자를 채우지 않았다.
-- 다중 페이지일 때 "첫 번째 페이지" 규칙(plan.md §B.2)은 그대로다. 탭이 여러 개인 상황은 미검증.
+- ~~다중 페이지일 때 "첫 번째 페이지" 규칙(plan.md §B.2)은 그대로다. 탭이 여러 개인 상황은 미검증.~~ → **0.2.0에서 검증됐고 틀린 것으로 판명되어 폐기**. 위 M7 참조. 이 항목을 "미검증"으로만 적고 마감한 것이 실제 결함으로 이어졌다 — 미검증 가정은 기록만으로 안전해지지 않는다.
 - 관측 중 `src/backend/idb-doctor.ts`의 모듈 주석이 여전히 "idb `ui text`는 Unicode-native"라고 기술한다. SPEC-IOS-001에서 거짓으로 확인·개정된 전제다. 본 SPEC 범위 밖이라 수정하지 않았다.
 
 ## §E.4 Sync-phase Audit-Ready Signal
@@ -249,9 +299,15 @@ coverage: 전체 92.99% stmts / 88.6% branch (목표 85% 상회), src/webview 86
 ```
 sync_status: audit-ready
 sync_complete_at: 2026-07-27
-sync_commit_sha: b469c58
-lifecycle: in-progress → implemented → completed (단일 sync 커밋, 3-phase close)
+sync_commit_sha: b469c58                    (0.1.0 최초 마감)
+amendment_sync_commit_sha: pending-backfill-amendment   (0.2.0 재마감)
+lifecycle: in-progress → implemented → completed (0.1.0)
+           → in-progress (amendment 0.2.0) → completed
 ```
+
+### 0.2.0 개정 재마감
+
+`README.md`에 **"Which page? — `--page <n>`"** 절 신설(왜 CLI가 고르지 않는지 + 실제 출력 예시), 오류 표에 `AMBIGUOUS_PAGE`·`INVALID_PAGE` 추가. `CHANGELOG.md` `Fixed`에 결함·재현·수정 근거 기재, `Notes`에 **"미검증 가정을 기록만 하고 마감한 것이 실제 결함으로 이어졌다"** 를 남김 — 같은 판단을 반복하지 않기 위한 기록이다.
 
 ### 문서 반영
 

@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { ProcessExecResult } from "../backend/process-executor.js";
-import { IwdpNotInstalledError, NoWebPageError } from "./webkit-errors.js";
+import { AmbiguousWebPageError, IwdpNotInstalledError, NoWebPageError } from "./webkit-errors.js";
 import {
   checkWebInspectorProxy,
   openWebProxy,
@@ -25,6 +25,19 @@ const LIVE_SOCKET = "/private/tmp/com.apple.launchd.a594appE48/com.apple.webinsp
 
 const PAGE_LIST = [
   { title: "NAVER", url: "https://m.naver.com/", webSocketDebuggerUrl: "ws://localhost:9222/devtools/page/1" },
+];
+
+/**
+ * The real two-target state observed after one link tap (spec.md §Amendments
+ * 0.2.0): index 0 is the stale page that is NOT on screen, index 1 is.
+ */
+const TWO_PAGE_LIST = [
+  { title: "NAVER", url: "https://m.naver.com/", webSocketDebuggerUrl: "ws://localhost:9222/devtools/page/1" },
+  {
+    title: "여름에만 느낄 수 있는 풍경",
+    url: "https://clip.naver.com/contents?recType=CLIP_PC",
+    webSocketDebuggerUrl: "ws://localhost:9222/devtools/page/2",
+  },
 ];
 
 function execResult(exitCode: number, stdout = ""): ProcessExecResult {
@@ -118,10 +131,22 @@ describe("openWebProxy — starting", () => {
     session.dispose();
   });
 
-  it("resolves the first page's debugger URL", async () => {
+  it("resolves the only page's debugger URL", async () => {
     const { options } = deps();
     const session = await openWebProxy(options);
     expect(session.pageWebSocketUrl).toBe("ws://localhost:9222/devtools/page/1");
+    session.dispose();
+  });
+
+  it("reports which page it attached to, even when there is only one (AC-WEB-023)", async () => {
+    const { options } = deps();
+    const session = await openWebProxy(options);
+    expect(session.page).toEqual({
+      index: 0,
+      title: "NAVER",
+      url: "https://m.naver.com/",
+      webSocketDebuggerUrl: "ws://localhost:9222/devtools/page/1",
+    });
     session.dispose();
   });
 
@@ -155,6 +180,53 @@ describe("openWebProxy — reuse (REQ-WEB-PROXY-002)", () => {
     const session = await openWebProxy(options);
     session.dispose();
     expect(proc.killed).toBe(false);
+  });
+});
+
+describe("openWebProxy — multiple pages (0.2.0 amendment, AC-WEB-021/022)", () => {
+  it("refuses to guess when more than one page is debuggable", async () => {
+    const { options } = deps({ fetchJson: async () => TWO_PAGE_LIST });
+    await expect(openWebProxy(options)).rejects.toBeInstanceOf(AmbiguousWebPageError);
+  });
+
+  it("lists every candidate, without leaking the debugger socket into the report", async () => {
+    const { options } = deps({ fetchJson: async () => TWO_PAGE_LIST });
+    const error = await openWebProxy(options).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(AmbiguousWebPageError);
+    if (!(error instanceof AmbiguousWebPageError)) return;
+    // toEqual, not toMatchObject: the ws URL is transport plumbing and must
+    // NOT appear in what the caller is shown.
+    expect(error.pages).toEqual([
+      { index: 0, title: "NAVER", url: "https://m.naver.com/" },
+      { index: 1, title: "여름에만 느낄 수 있는 풍경", url: "https://clip.naver.com/contents?recType=CLIP_PC" },
+    ]);
+  });
+
+  it("does not start a proxy of its own while refusing", async () => {
+    const { options, launched } = deps({ fetchJson: async () => TWO_PAGE_LIST });
+    await expect(openWebProxy(options)).rejects.toBeInstanceOf(AmbiguousWebPageError);
+    expect(launched).toHaveLength(0);
+  });
+
+  it("selects the requested page when --page is given", async () => {
+    const { options } = deps({ fetchJson: async () => TWO_PAGE_LIST });
+    const session = await openWebProxy({ ...options, pageIndex: 1 });
+    expect(session.pageWebSocketUrl).toBe("ws://localhost:9222/devtools/page/2");
+    expect(session.page.title).toBe("여름에만 느낄 수 있는 풍경");
+    session.dispose();
+  });
+
+  it("accepts --page even when only one page exists", async () => {
+    const { options } = deps();
+    const session = await openWebProxy({ ...options, pageIndex: 0 });
+    expect(session.page.index).toBe(0);
+    session.dispose();
+  });
+
+  it("refuses an out-of-range --page rather than falling back to another page", async () => {
+    const { options } = deps({ fetchJson: async () => TWO_PAGE_LIST });
+    await expect(openWebProxy({ ...options, pageIndex: 5 })).rejects.toBeInstanceOf(AmbiguousWebPageError);
   });
 });
 

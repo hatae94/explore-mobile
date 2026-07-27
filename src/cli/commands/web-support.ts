@@ -22,7 +22,14 @@ import type { DeviceBackend, DeviceInfo } from "../../schema/device-backend.js";
 import { CalibrationStore, resolveViewport } from "../../webview/calibration.js";
 import { webRectToDevicePoint, type ViewportMetrics } from "../../webview/coordinates.js";
 import { connectWebInspector, type WebInspectorClient } from "../../webview/inspector-client.js";
-import { openWebProxy, type OpenWebProxyOptions, type WebProxySession } from "../../webview/proxy-service.js";
+import {
+  openWebProxy,
+  toPageSummary,
+  type OpenWebProxyOptions,
+  type WebPageTarget,
+  type WebProxySession,
+} from "../../webview/proxy-service.js";
+import { AmbiguousWebPageError } from "../../webview/webkit-errors.js";
 import type { ParsedCommandArgs } from "../args.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success, type CommandError, type CommandResult } from "../envelope.js";
@@ -50,14 +57,25 @@ export function defaultWebDeps(): WebRunDeps {
 interface WebContext {
   serial: string;
   client: WebInspectorClient;
+  /** Which page this command is acting on — echoed into every success response (REQ-WEB-CLI-004). */
+  page: WebPageTarget;
 }
 
-/** Maps a thrown value to the envelope, preserving the error type's own `code` when it has one. */
+/**
+ * Maps a thrown value to the envelope, preserving the error type's own
+ * `code` and — for an ambiguous page — the candidate list, so the caller can
+ * act on the error without a second command.
+ */
 function webFailure(command: string, err: unknown): CommandError {
   const code =
     typeof err === "object" && err !== null && typeof (err as { code?: unknown }).code === "string"
       ? (err as { code: string }).code
       : "WEB_SESSION_FAILED";
+
+  if (err instanceof AmbiguousWebPageError) {
+    return failure(command, code, err.message, { pages: err.pages });
+  }
+
   return failure(command, code, errorMessage(err));
 }
 
@@ -106,9 +124,19 @@ async function runInWebSession(
   const target = await resolveIosTarget(command, args, backend);
   if (!target.ok) return target.error;
 
+  let pageIndex: number | undefined;
+  if (args.page !== undefined) {
+    pageIndex = parseIndex(args.page);
+    if (pageIndex === undefined) {
+      return failure(command, "INVALID_PAGE", `${command} --page requires a non-negative integer.`, {
+        received: args.page,
+      });
+    }
+  }
+
   let session: WebProxySession;
   try {
-    session = await deps.openProxy({ exec: deps.exec });
+    session = await deps.openProxy({ exec: deps.exec, ...(pageIndex !== undefined ? { pageIndex } : {}) });
   } catch (err) {
     return webFailure(command, err);
   }
@@ -122,7 +150,7 @@ async function runInWebSession(
   }
 
   try {
-    return await body({ serial: target.serial, client });
+    return await body({ serial: target.serial, client, page: session.page });
   } catch (err) {
     return webFailure(command, err);
   } finally {
@@ -241,7 +269,7 @@ export async function runWebDump(
 
   return runInWebSession("dump", args, backend, deps, async (ctx) => {
     const collected = await ctx.client.evaluate<unknown>(buildCollectExpression(css));
-    return success("dump", { serial: ctx.serial, mode: "web", elements: normalizeWebDom(collected) });
+    return success("dump", { serial: ctx.serial, mode: "web", page: toPageSummary(ctx.page), elements: normalizeWebDom(collected) });
   });
 }
 
@@ -281,6 +309,7 @@ export async function runWebTap(
 
     return success("tap", {
       serial: ctx.serial,
+      page: toPageSummary(ctx.page),
       selector: { css: selector.css, index: selector.index },
       tappable: entry.element.tappable,
       ...activation,
@@ -333,6 +362,7 @@ export async function runWebText(
 
     return success("text", {
       serial: ctx.serial,
+      page: toPageSummary(ctx.page),
       selector: { css: selector.css, index: selector.index },
       ...activation,
     });

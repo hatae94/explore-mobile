@@ -81,3 +81,34 @@ export class NoWebPageError extends Error {
     this.name = "NoWebPageError";
   }
 }
+
+/** One debuggable page, as listed for the caller to choose from. */
+export interface WebPageSummary {
+  index: number;
+  title: string;
+  url: string;
+}
+
+/**
+ * Thrown when several pages are debuggable and none was chosen
+ * (REQ-WEB-PROXY-005, 0.2.0 amendment).
+ *
+ * @MX:WARN — do NOT replace this with a heuristic that picks one.
+ * @MX:REASON — 0.1.0 took the first page, and one link tap was enough to
+ * make the first page a stale target that was no longer on screen: every
+ * later `--web` command then read and tapped a page the user could not see,
+ * with no error. The proxy does not report which target is frontmost, so
+ * any guess can be silently wrong; refusing with the list is the same
+ * contract `AMBIGUOUS_DEVICE` already uses for multiple devices.
+ */
+export class AmbiguousWebPageError extends Error {
+  public readonly code = "AMBIGUOUS_PAGE";
+
+  constructor(
+    message: string,
+    public readonly pages: WebPageSummary[],
+  ) {
+    super(message);
+    this.name = "AmbiguousWebPageError";
+  }
+}

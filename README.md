@@ -337,6 +337,26 @@ device and re-measured automatically whenever the page geometry changes
 (rotation, chrome resize). On a cache hit nothing is injected into the
 page and no probe tap is sent.
 
+### Which page? — `--page <n>`
+
+Safari can expose more than one debuggable page, and **one link tap is
+enough to create a second**. The proxy does not report which of them is on
+screen, so the CLI does not choose for you: with two or more pages it
+refuses and lists them, exactly as it refuses to guess between two
+connected devices.
+
+```bash
+$ npx explore-mobile dump --web
+{"ok":false,"command":"dump","error":{"code":"AMBIGUOUS_PAGE","message":"2 debuggable pages are open; specify --page <n>. …","details":{"pages":[{"index":0,"title":"NAVER","url":"https://m.naver.com/"},{"index":1,"title":"여름에만 느낄 수 있는 풍경","url":"https://clip.naver.com/…"}]}}}
+
+$ npx explore-mobile dump --web --page 1
+{"ok":true,"command":"dump","data":{"serial":"D0B3A18C-…","mode":"web","page":{"index":1,"title":"여름에만 느낄 수 있는 풍경","url":"https://clip.naver.com/…"},"elements":[…]}}
+```
+
+Every successful web command reports the page it acted on under
+`data.page` — **including when there is only one**. Leaving that out is
+what let an earlier version read the wrong page without anyone noticing.
+
 ### Proxy lifecycle
 
 `ios_webkit_debug_proxy` is started and stopped for you. A proxy that is
@@ -350,6 +370,8 @@ a failure does not leave one behind.
 |---|---|
 | `IWDP_NOT_INSTALLED` | `ios_webkit_debug_proxy` is not on `PATH`; the message carries the install command. |
 | `NO_WEB_PAGE` | No simulator is exposing a Web Inspector socket, or none has a page open. |
+| `AMBIGUOUS_PAGE` | Two or more pages are debuggable and no `--page <n>` was given; `details.pages` lists them. Also returned for an out-of-range `--page`. |
+| `INVALID_PAGE` | `--page` was not a non-negative integer. |
 | `ELEMENT_NOT_FOUND` | The CSS selector matched no visible element. Nothing is tapped and, for `text`, nothing is typed. |
 | `TARGET_CONFLICT` | `--web` was combined with coordinates or `--id`/`--text`; one is not silently dropped. |
 | `MISSING_SELECTOR` | `tap`/`text` was given `--web` with no CSS selector. |

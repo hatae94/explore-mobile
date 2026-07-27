@@ -203,6 +203,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`--web` silently acted on the wrong page after any navigation that
+  opened a second debuggable target** (SPEC-WEBVIEW-001 amendment 0.2.0).
+  The first release picked the first page the proxy listed. One link tap
+  was enough to make that a stale page the user could no longer see:
+  with `clip.naver.com` on screen, `dump --web` returned 338 elements
+  from the previous `m.naver.com` document, with no error and no warning.
+  Found while spiking SPEC-04, and reproduced through the shipped CLI
+  before anything was changed.
+  - The rule is gone rather than replaced by a better guess. The proxy
+    does not report which target is frontmost, so any heuristic can be
+    silently wrong. With two or more pages the CLI now returns
+    `AMBIGUOUS_PAGE` listing every candidate, and `--page <n>` selects
+    one — the same contract `AMBIGUOUS_DEVICE` already uses for multiple
+    connected devices.
+  - Every successful web command now reports the page it acted on under
+    `data.page`, including when only one page exists. The absence of that
+    field is why the defect went unnoticed.
+  - New codes: `AMBIGUOUS_PAGE` (also covers an out-of-range `--page`)
+    and `INVALID_PAGE`.
+  - 12 new tests (438 total). Verified on the simulator in the exact
+    two-target state that produced the defect: the ambiguous case is now
+    refused with both candidates listed, and `--page 1` reads the page
+    that is actually on screen (61 elements, zero from the stale one).
 - Four `idb` integration defects that made every iOS command fail with an
   empty device list, all found by the first real-simulator run
   (2026-07-26, iPhone 17 Pro / iOS 26.0, fb-idb 1.1.7):
@@ -281,8 +304,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--web` against an Android device (`UNSUPPORTED_ON_PLATFORM`) is
   covered by unit tests only, because no Android device was connected
   during the run. Recorded as PARTIAL in
-  `.moai/specs/SPEC-WEBVIEW-001/progress.md` (19 PASS / 1 PARTIAL / 0
-  FAIL) rather than claimed as verified.
+  `.moai/specs/SPEC-WEBVIEW-001/progress.md` (0.2.0: 23 PASS / 1 PARTIAL
+  / 0 FAIL, 24 criteria) rather than claimed as verified.
+- The multi-page defect fixed in 0.2.0 had been recorded at first close
+  as an unverified assumption ("multiple pages: first one wins, not
+  checked") rather than treated as work. Writing an assumption down did
+  not make it safe — it shipped and was wrong. Assumptions that govern
+  which page or device a command acts on are now verified before close,
+  not annotated.
 - The roadmap had assumed the iOS webview protocol was the Chrome
   DevTools Protocol. It is not: bare `Runtime.evaluate` /
   `DOM.getDocument` / `Page.enable` are rejected with

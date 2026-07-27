@@ -1,7 +1,7 @@
 ---
 id: SPEC-WEBVIEW-001
 title: "iOS 시뮬레이터 웹뷰 DOM 인지 · 조작 — 인수 기준"
-version: "0.1.0"
+version: "0.2.0"
 status: completed
 created: 2026-07-27
 updated: 2026-07-27
@@ -38,6 +38,10 @@ author: hatae
 | AC-WEB-018 | 모든 웹 명령이 JSON 봉투 계약 준수 | REQ-WEB-CLI-002 | unit(mock) |
 | AC-WEB-019 | Android 대상 `--web` → `UNSUPPORTED_ON_PLATFORM` | REQ-WEB-CLI-003 | unit(mock) |
 | AC-WEB-020 | 실 시뮬레이터 e2e 시나리오 | 전체 | e2e·manual |
+| AC-WEB-021 | 페이지 2개 이상 → `AMBIGUOUS_PAGE`, 무동작 | REQ-WEB-PROXY-005 | unit(mock) + e2e |
+| AC-WEB-022 | `--page <n>`으로 지정 선택 | REQ-WEB-PROXY-005 | unit(mock) + e2e |
+| AC-WEB-023 | 모든 웹 응답이 조작한 페이지를 명시 | REQ-WEB-CLI-004 | unit(mock) + e2e |
+| AC-WEB-024 | 낡은 대상 조작 결함 재현 → 해소 | REQ-WEB-PROXY-005 | e2e·manual |
 
 ---
 
@@ -150,3 +154,32 @@ author: hatae
 - **Then** DOM 요소가 `CommonElement[]`로 반환되고, 선택자 탭으로 **페이지가 실제로 전환된다**.
 - **And** 전환 결과가 스크린샷으로 확증된다.
 - **And** 이 AC가 PASS가 되기 전에는 SPEC을 `completed`로 마감하지 않는다.
+
+---
+
+## 0.2.0 개정 추가분
+
+### AC-WEB-021 — 페이지가 여럿이면 고르지 않고 거부
+- **Given** 디버그 가능한 페이지가 2개 이상이고 `--page`가 주어지지 않은 상태,
+- **When** 웹 명령을 실행하면,
+- **Then** `AMBIGUOUS_PAGE` 오류가 반환되고, `details`에 전체 목록(인덱스·제목·URL)이 담긴다.
+- **And** 어떤 페이지도 조작되지 않는다 — 탭도 입력도 평가도 발생하지 않는다.
+- **And** 기기 다중 연결 시의 `AMBIGUOUS_DEVICE`와 동일한 형태를 취한다.
+
+### AC-WEB-022 — `--page <n>`으로 명시 선택
+- **Given** 페이지가 여러 개인 상태,
+- **When** `--page <n>`을 함께 주면,
+- **Then** n번 페이지가 선택되어 명령이 정상 수행된다.
+- **And** 범위를 벗어난 n은 graceful 오류로 거부되고, 아무 페이지도 조작되지 않는다.
+
+### AC-WEB-023 — 조작한 페이지를 응답에 명시
+- **Given** 임의의 성공하는 웹 명령(`dump`/`tap`/`text` + `--web`),
+- **When** 실행하면,
+- **Then** 응답 `data.page`에 조작한 페이지의 인덱스·제목·URL이 포함된다.
+- **And** 페이지가 하나뿐일 때도 포함된다(0.2.0 결함이 조용했던 원인이므로 생략하지 않는다).
+
+### AC-WEB-024 — 낡은 대상 결함의 재현과 해소
+- **Given** 실 시뮬레이터에서 `tap --web`으로 링크를 눌러 디버그 대상이 2개가 된 상태(0.1.0에서 재현된 조건),
+- **When** `dump --web`을 실행하면,
+- **Then** 0.1.0처럼 화면에 없는 낡은 페이지를 조용히 보고하지 **않는다** — `AMBIGUOUS_PAGE`로 거부하거나, `--page`로 지정된 페이지를 보고한다.
+- **And** 이 AC가 PASS가 되기 전에는 개정을 `completed`로 재마감하지 않는다.

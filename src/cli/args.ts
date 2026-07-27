@@ -33,6 +33,13 @@ export interface ParsedCommandArgs {
    *   non-empty    — `tap --web "<CSS>"`, the CSS selector to act on
    */
   web: string | undefined;
+  /**
+   * `--page <n>` (SPEC-WEBVIEW-001 0.2.0, REQ-WEB-PROXY-005): which
+   * debuggable web page to act on. Required once the simulator exposes more
+   * than one, because the proxy does not report which is on screen. Kept as
+   * a raw string here and parsed by the handler, matching `--index`.
+   */
+  page: string | undefined;
 }
 
 /**
@@ -79,6 +86,7 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
     args: normalizeWebFlagArgv(argv),
     options: {
       web: { type: "string" },
+      page: { type: "string" },
       device: { type: "string" },
       out: { type: "string" },
       yes: { type: "boolean" },
@@ -103,5 +111,6 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
     selectorText: typeof values.text === "string" ? values.text : undefined,
     index: typeof values.index === "string" ? values.index : undefined,
     web: typeof values.web === "string" ? values.web : undefined,
+    page: typeof values.page === "string" ? values.page : undefined,
   };
 }
