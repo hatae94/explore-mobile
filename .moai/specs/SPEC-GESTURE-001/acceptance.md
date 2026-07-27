@@ -124,10 +124,14 @@ author: hatae
 - **Given** 알려진 화면 크기,
 - **When** `--amount 0.25`와 `--amount 0.75`로 각각 스크롤하면,
 - **Then** 이동 거리가 비율에 비례해 달라진다(0.75 쪽 이동 거리가 0.25 쪽의 3배).
-- **And** **When** 다음 입력들을 주면 각각 `INVALID_AMOUNT`가 반환되고 **어떤 제스처도 전송되지 않는다**: `--amount 0`, `--amount 1.5`, `--amount -0.5`, `--amount abc`, `--amount ""`.
-- **And** `--amount 0.25` / `--amount 1` 같은 유효 입력은 거부되지 않는다(경계 포함 여부를 이 AC가 고정한다: 0 초과 1 이하).
+- **And** **When** 다음 입력들을 주면 각각 `INVALID_AMOUNT`가 반환된다: `--amount 0`, `--amount 1.5`, `--amount abc`, `--amount ""`.
+- **And** **When** `--amount -0.5`(음수 리터럴)을 주면 `INVALID_ARGS`가 반환된다 — AC-GEST-003의 음수 좌표와 **동일한 이유이며 동일한 처리**다.
+- **And** 위 **모든** 갈래에서 **어떤 제스처도 전송되지 않는다**(mock 실행기 호출 0회).
+- **And** `--amount 0.25` / `--amount 1` 같은 유효 입력은 거부되지 않는다. 경계는 이 AC가 고정한다: **0 초과 1 이하**(`0`은 이동 없는 제스처라 거부, `1`은 화면 한 장 분량이라 허용).
 
-> 기존 `parseCoordinate`/`parseIndex`는 정규식 `^\d+$`라 소수를 통과시키지 못한다(`validators.ts:17-31`). 새 비율 파서 없이는 `--amount 0.25`가 유효 입력조차 되지 못한다.
+> 두 갈래로 나뉘는 근거는 실측이다. `node:util.parseArgs`는 `--amount -0.5`에서 `ERR_PARSE_ARGS_INVALID_OPTION_VALUE`를 던지고(`-`로 시작하는 토큰을 옵션 값으로 받지 않는다), 나머지 4개는 정상적으로 문자열 값으로 통과시킨다 — 2026-07-27 확인. 즉 음수는 파서 계층에서, 나머지는 검증 계층에서 걸린다.
+>
+> 그리고 기존 `parseCoordinate`/`parseIndex`는 정규식 `^\d+$`라 소수를 통과시키지 못한다(`validators.ts:17-31`). 새 비율 파서 없이는 `--amount 0.25`가 유효 입력조차 되지 못한다.
 
 ### AC-GEST-010 — 화면 크기 불명
 
