@@ -1,0 +1,115 @@
+/**
+ * `scroll <up|down|left|right> [--amount <ratio>]` 명령 (SPEC-GESTURE-001
+ * M3, REQ-GEST-SCROLL-001~006; AC-GEST-007~010, AC-GEST-016, AC-GEST-017).
+ *
+ * 새 백엔드 메서드를 추가하지 않는다(spec.md §F, plan.md §F M3) — 화면
+ * 크기를 기존 `dumpUiHierarchy()` 결과에서 파생하고(`scroll-geometry.ts`
+ * `deriveScreenSize`), 방향·비율을 좌표로 바꿔(`computeScrollSwipe`) M1이
+ * 이미 배선한 `backend.swipe()`를 그대로 호출한다.
+ *
+ * 거부 경로 순서(B-5, `swipe.ts`와 동일한 구조): 방향 파싱 -> `--amount`
+ * 파싱/검증 -> `resolveTargetDevice` -> `dumpUiHierarchy`(화면 크기 파생)
+ * -> `backend.swipe`. 앞의 두 단계에서 거부되면 어떤 백엔드 호출도
+ * 일어나지 않는다(무동작 보장) — `SCREEN_SIZE_UNKNOWN` 단계에서는
+ * `dumpUiHierarchy`는 이미 호출됐지만 `swipe`는 호출되지 않는다.
+ */
+
+import type { CommonElement } from "../../schema/common-element.js";
+import type { DeviceBackend } from "../../schema/device-backend.js";
+import { resolveTargetDevice } from "../device-targeting.js";
+import { failure, success } from "../envelope.js";
+import { parseRatio } from "../validators.js";
+import { computeScrollSwipe, deriveScreenSize, type ScrollDirection } from "./scroll-geometry.js";
+import { errorMessage, type CommandHandler } from "./types.js";
+
+/**
+ * 생략 시 기본 비율(REQ-GEST-SCROLL-003) — SPEC은 구체적 수치를 정하지
+ * 않았다(구현 세부, spec.md §D "구현 세부(HOW)"). 화면의 절반을
+ * 스크롤하는 값을 택했다 — "한 번에 반 화면"이라는 흔한 관례와
+ * 일치하고, `--amount 1`(전체 화면)의 절반이라는 직관적인 기준점이다.
+ */
+const DEFAULT_AMOUNT = 0.5;
+
+/**
+ * `scroll`이 내부적으로 호출하는 `backend.swipe`에 항상 싣는 지속시간(ms).
+ *
+ * 실기기 실측(2026-07-27, 부팅된 iPhone 17 Pro 시뮬레이터
+ * D0B3A18C-E485-4E7C-A25E-504BF4CA6163, Safari로 긴 페이지 표시 중):
+ * `durationMs`를 생략하면(플랫폼 기본 지속시간) 스크린샷 전/후 SSIM이
+ * **1.000000**(완전 동일) — 스와이프가 전송됐지만 페이지가 전혀
+ * 움직이지 않았다. 같은 좌표에 `durationMs: 500`을 명시하자 SSIM이
+ * **0.52**로 떨어져 실제 스크롤이 확증됐다 — M2의 AC-GEST-005가 같은
+ * 값으로 이미 확증한 결과와 일치한다. `scroll`은 진짜 화면 이동을
+ * 보장할 책임이 있으므로(spec.md §A.2 "기기를 스와이프·스크롤할 수
+ * 있게 한다"), 사용자에게 노출하지 않는 이 내부 기본값을 항상 싣는다.
+ * `swipe` 명령 자체의 `--duration` 옵션(REQ-GEST-SWIPE-002)과는 별개다.
+ */
+const SCROLL_SWIPE_DURATION_MS = 500;
+
+/** `--amount`와 같은 명명 계열(INVALID_COORDINATES/INVALID_INDEX/INVALID_PAGE)의 방향 검증. */
+const DIRECTIONS: ReadonlySet<string> = new Set<ScrollDirection>(["up", "down", "left", "right"]);
+
+function isScrollDirection(value: string | undefined): value is ScrollDirection {
+  return value !== undefined && DIRECTIONS.has(value);
+}
+
+export const scrollCommand: CommandHandler = async (args, backend: DeviceBackend) => {
+  const [directionRaw, ...rest] = args.positionals;
+
+  if (rest.length > 0 || !isScrollDirection(directionRaw)) {
+    return failure(
+      "scroll",
+      "INVALID_DIRECTION",
+      "scroll requires exactly one direction: scroll <up|down|left|right>.",
+      { received: args.positionals },
+    );
+  }
+
+  let ratio = DEFAULT_AMOUNT;
+  if (args.amount !== undefined) {
+    const parsed = parseRatio(args.amount);
+    if (parsed === undefined) {
+      return failure(
+        "scroll",
+        "INVALID_AMOUNT",
+        "scroll --amount requires a number greater than 0 and at most 1.",
+        { received: args.amount },
+      );
+    }
+    ratio = parsed;
+  }
+
+  const devices = await backend.listDevices();
+  const target = resolveTargetDevice(devices, args.device);
+  if (!target.ok) return failure("scroll", target.code, target.message, target.details);
+
+  let elements: CommonElement[];
+  try {
+    elements = await backend.dumpUiHierarchy(target.serial);
+  } catch (err) {
+    return failure("scroll", "BACKEND_COMMAND_FAILED", errorMessage(err));
+  }
+
+  // REQ-GEST-SCROLL-004: 화면 크기를 신뢰할 수 없으면 추측하지 않고
+  // 거부한다 — 되돌릴 수 없는 제스처를 보내지 않는다.
+  const screen = deriveScreenSize(elements);
+  if (!screen) {
+    return failure(
+      "scroll",
+      "SCREEN_SIZE_UNKNOWN",
+      "Could not determine screen size from the device's UI hierarchy (no witness element found).",
+    );
+  }
+
+  const { from, to } = computeScrollSwipe(directionRaw, ratio, screen);
+
+  try {
+    await backend.swipe(target.serial, from, to, { durationMs: SCROLL_SWIPE_DURATION_MS });
+  } catch (err) {
+    return failure("scroll", "BACKEND_COMMAND_FAILED", errorMessage(err));
+  }
+
+  // REQ-GEST-SCROLL-005: 방향과 실제 좌표를 응답에 함께 실어, 호출자가
+  // 응답만 보고 방향 의미가 맞는지 즉시 검증할 수 있게 한다(AC-GEST-016).
+  return success("scroll", { serial: target.serial, direction: directionRaw, from, to });
+};

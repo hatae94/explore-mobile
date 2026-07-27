@@ -49,6 +49,13 @@ export interface ParsedCommandArgs {
    * pattern.
    */
   duration: string | undefined;
+  /**
+   * `scroll --amount <ratio>` (SPEC-GESTURE-001 M3, REQ-GEST-SCROLL-003/006):
+   * 화면의 몇 비율을 스크롤할지(0 초과 1 이하). `--duration`/`--index`와
+   * 같은 패턴으로 원시 문자열만 여기서 들고, 핸들러가 `parseRatio`
+   * (validators.ts)로 검증한다.
+   */
+  amount: string | undefined;
 }
 
 /**
@@ -106,6 +113,7 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
       text: { type: "string" },
       index: { type: "string" },
       duration: { type: "string" },
+      amount: { type: "string" },
     },
     allowPositionals: true,
   });
@@ -123,5 +131,6 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
     web: typeof values.web === "string" ? values.web : undefined,
     page: typeof values.page === "string" ? values.page : undefined,
     duration: typeof values.duration === "string" ? values.duration : undefined,
+    amount: typeof values.amount === "string" ? values.amount : undefined,
   };
 }

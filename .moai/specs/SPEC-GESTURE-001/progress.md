@@ -186,15 +186,170 @@ plan.md §A.6 M2 행: `src/cli/args.ts`(M2·M3), `src/cli/router.ts` + `src/cli/
 
 아래 §E.3 참조(커밋 완료 후 backfill).
 
+### M3 — `scroll` 편의 계층
+
+**선행 조건 이행(plan.md §F M3 선행 조건, spec.md §B.5 해소)**: M3 설계 전 Safari 전면 상태에서 `dump`를 떠 witness 유무를 실측했다.
+
+```
+$ node dist/cli/bin.js dump --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+최상위 요소 2개:
+  [0] {"x":0,"y":0,"w":402,"h":874}                  role=Application  text="Safari"
+  [1] {"x":159,"y":837,"w":84,"h":14.333333333333371} role=TextField    text="주소"
+
+max-extent 후보 = 402 x 874
+witness ({x:0,y:0,w:402,h:874}) = 존재 (인덱스 0)
+```
+
+plan.md §B.5의 네 갈래 중 **1번**(witness 있음 → 현행 설계 그대로)이 성립했다 — 두려워했던 갈래 4(크롬-only, witness 없음)는 이번 실측에서는 발생하지 않았다. AC-GEST-011은 `scroll`로 검증 가능하나(정식 판정은 M5), 이 사전 점검 자체는 plan-auditor가 미해결로 지적한 §B.5 갭을 닫는다. 요소 bounds가 비정수(`h: 14.333333333333371`)일 수 있다는 사실도 이 실측에서 확인됐다 — 아래 "반올림 규칙" 참조.
+
+**산출물 (plan.md §F M3 1-4 모두 완료)**
+
+1. `src/cli/args.ts` — `amount: { type: "string" }` 옵션 추가, `ParsedCommandArgs.amount` 필드 추가.
+2. `src/cli/validators.ts` — `parseRatio` 추가(0 초과 1 이하, 소수 허용). `parseNonNegativeInteger`(정규식 `^\d+$`)는 소수를 통과시키지 못하므로 새 정규식(`^\d+(\.\d+)?$`)이 필요했다(plan.md §F M3 item 2 그대로).
+3. `src/cli/commands/scroll-geometry.ts`(신규, 순수 함수 모듈) — `deriveScreenSize`(화면 크기 파생, ① max-extent 후보 + ② witness 검증 두 단계 모두 구현) + `computeScrollSwipe`(방향·비율·화면 크기 → swipe 좌표) + `roundPixel`(반올림 규칙, 아래 참조).
+4. `src/cli/commands/scroll.ts`(신규) — `scroll <up|down|left|right> [--amount <ratio>]` 핸들러. `swipe.ts`와 동일한 거부 순서(방향 파싱 → `--amount` 파싱/검증 → `resolveTargetDevice` → `dumpUiHierarchy` → `backend.swipe`). `src/cli/router.ts`의 `COMMANDS`에 등록.
+
+**witness 규칙 증거 (B-1, spec.md REQ-GEST-SCROLL-002 ②, 0.3.0 개정의 핵심)**
+
+B-1이 지정한 정확한 조각 픽스처(상단 바 `{0,0,402,60}` + URL 바 `{0,60,402,44}` + 진행 표시 `{0,104,402,16}`)를 빌드된 모듈에 직접 통과시켜 `SCREEN_SIZE_UNKNOWN`으로 귀결됨을 확인했다:
+
+```
+$ node -e '
+import("./dist/cli/commands/scroll-geometry.js").then((m) => {
+  const fragments = [
+    { bounds:{x:0,y:0,w:402,h:60} },
+    { bounds:{x:0,y:60,w:402,h:44} },
+    { bounds:{x:0,y:104,w:402,h:16} },
+  ];
+  console.log("deriveScreenSize(fragments) =", m.deriveScreenSize(fragments));
+});
+'
+deriveScreenSize(fragments) = undefined
+```
+
+후보 산출(①)만으로는 402x120(진행 표시의 `x+w=402`, `y+h=120`)이 비퇴화 양수라 통과해 버린다 — witness 검증(②)이 원점 조건(`x===0 && y===0`)까지 요구해야 이 조각 집합을 거부한다(느슨한 `x+w===width && y+h===height`만 보면 진행 표시가 witness로 통과함). `scroll-geometry.test.ts`에 이 두 가지(엄격/느슨 규칙 비교) 모두 자동화 테스트로 고정했다(AC-GEST-017).
+
+**반올림 규칙 (B-2)**
+
+`Math.round`(사사오입)를 택했다 — 표준 반올림 이외의 정책(올림/버림)을 정당화할 근거가 없고, ±0.5px 오차는 제스처 정확도에 영향이 없다. B.5 사전 점검에서 실측된 정확한 값에 적용한 결과:
+
+```
+$ node -e '
+import("./dist/cli/commands/scroll-geometry.js").then((m) => {
+  console.log(m.roundPixel(14.333333333333371));
+});
+'
+14
+```
+
+화면 크기 자체(402x874)는 정수였으므로 이번 실측에서 화면 크기 파생 결과 자체가 소수가 되는 경우는 없었지만, 함수는 화면 크기·중간 계산이 소수여도 최종 swipe 좌표가 항상 정수이도록 설계됐다(`scroll-geometry.test.ts`의 `roundPixel`/`computeScrollSwipe` 정수 단언 참조).
+
+### AC PASS/FAIL 매트릭스 (M3 스코프)
+
+| AC ID | 상태 | 검증 명령 | 실제 결과 |
+|-------|------|-----------|-----------|
+| AC-GEST-007 | PASS | `pnpm vitest run src/cli/commands/scroll-geometry.test.ts src/cli/commands/scroll.test.ts -t "AC-GEST-007"` | 4방향 모두 좌표 부등호 확인(down: to.y<from.y, up: to.y>from.y, right: to.x<from.x, left: to.x>from.x) + `--amount 1` 포함 전 방향·비율 조합에서 좌표가 [0, width]/[0, height] 안에 머묾 + 좌표는 항상 정수 |
+| AC-GEST-008 | PASS | `pnpm vitest run -t "AC-GEST-008"` | 최상위 3개(인덱스 0 = 402x60, 인덱스 1 = witness 402x874)로 402x874를 파생 — 인덱스 0만 봤다면 402x60이 됐을 것을 CLI 레벨에서도(`from.y`/`to.y` > 60) 확인 |
+| AC-GEST-009 | PASS | `pnpm vitest run -t "AC-GEST-009"` | `--amount 0.75`의 이동 거리가 `--amount 0.25`의 정확히 3배(순수 함수 레벨 + CLI 레벨 양쪽 확인). `0`/`1.5`/`abc`/`""` → `INVALID_AMOUNT` + 무동작(swipe 0회). `-0.5`·값 없는 단독 `--amount` → `INVALID_ARGS`(파서 계층) + 무동작. `0.25`/`1` 허용 확인 |
+| AC-GEST-010 | PASS | `pnpm vitest run -t "AC-GEST-010"` | 빈 배열 / 모든 bounds 0 → `SCREEN_SIZE_UNKNOWN` + 무동작(swipe 0회), 순수 함수·CLI 레벨 모두 확인 |
+| AC-GEST-011 | 조기 부분 확증 (정식 판정은 M5) | 아래 "실기기 확인" 참조 | 정식 AC 판정 대상이 아니지만(acceptance.md 검증 방식 "e2e·manual", plan.md M5 스코프), M3 구현을 신뢰성 있게 검증하기 위해 실기기로 방향 의미까지 조기 확증했다 — 세부는 "실기기 확인" 절 참조 |
+| AC-GEST-015 | PASS | `pnpm vitest run -t "AC-GEST-015"` | `scroll`의 성공/오류 5개 경로 모두 `JSON.parse(JSON.stringify(result))` 예외 없음, `command==="scroll"` |
+| AC-GEST-016 | PASS | `pnpm vitest run -t "AC-GEST-007/016"` | `scroll down` 성공 응답에 `direction:"down"` + 실제 `from`/`to` 좌표가 실리고 `to.y < from.y` |
+| AC-GEST-017 | PASS | `pnpm vitest run -t "AC-GEST-017"` | Safari 크롬-only 픽스처(402x120 후보, witness 없음) → `SCREEN_SIZE_UNKNOWN` + 무동작. 순수 함수 레벨에서 느슨한 witness 규칙이었다면 통과했을 인덱스도 별도로 거부 확인 |
+| AC-GEST-004 | PASS(회귀) | `pnpm vitest run`(exit 0, 460→503) + `pnpm typecheck`(exit 0) + `pnpm build`(exit 0) | 503 tests / 29 files 전부 통과(460 기준선 + M3 신규 43건: scroll-geometry 17 + scroll 21 + parseRatio 5). 기존 9개 백엔드 메서드·시그니처 변경 없음 |
+
+### 테스트 스위트
+
+```
+$ pnpm vitest run src/cli/commands/scroll.test.ts src/cli/commands/scroll-geometry.test.ts
+ Test Files  2 passed (2)
+      Tests  38 passed (38)   # scroll-geometry.test.ts 17 + scroll.test.ts 21 (duration 실측 반영 테스트 포함)
+
+$ pnpm vitest run
+ Test Files  29 passed (29)
+      Tests  503 passed (503)
+```
+
+기준선 460 → 503(+43): `scroll-geometry.test.ts` 신규 17건(`deriveScreenSize` AC-GEST-008/010/017 + 실측 pre-flight 픽스처 + `roundPixel` + `computeScrollSwipe` AC-GEST-007/009/016), `scroll.test.ts` 신규 21건(AC-GEST-007/016/008/009/010/017/015 + duration 실측 반영 테스트 + 백엔드 오류 전파 2건), `validators.test.ts` `parseRatio` 신규 5건.
+
+### RED 확인 (TDD 사이클 증거)
+
+M3 착수 시 `scroll-geometry.test.ts`/`scroll.test.ts`/`validators.test.ts`(`parseRatio` 블록)를 먼저 작성한 뒤 실행 — `scroll-geometry.ts`/`scroll.ts`/`parseRatio` 미구현 상태라 전부 실패(모듈 not-found 또는 `UNKNOWN_COMMAND`/`parseRatio is not a function`)함을 확인(RED, 24 failed / 8 passed). 순수 함수 모듈(`scroll-geometry.ts`) → `parseRatio` → `args.ts` `amount` 필드 → `scroll.ts` → `router.ts` 등록 순으로 구현한 뒤 재실행, 전체 GREEN 전환 확인. 이후 실기기 검증에서 `backend.swipe` 호출에 명시적 `durationMs`가 필요함을 발견해 추가 RED(`backend.swipe에 명시적 durationMs를 실어 보낸다` 1건 실패) → GREEN(스크롤 지속시간 상수 추가) 사이클을 한 번 더 수행했다.
+
+### Typecheck + Build
+
+```
+$ pnpm typecheck  → exit 0
+$ pnpm build      → exit 0
+```
+
+### 실기기 확인 (Section E 항목 6 — `scroll` 서브커맨드 최초 종단 검증 + 방향 의미 실증)
+
+부팅된 iPhone 17 Pro 시뮬레이터(iOS 26.0, D0B3A18C-E485-4E7C-A25E-504BF4CA6163)에서 Safari로 긴 페이지(clip.naver.com, 세로 스크롤/피드형 콘텐츠)가 떠 있는 상태에서 실행.
+
+**1차 시도 — 중요한 발견(진짜 서프라이즈, 아래 블로커 절 1번 참조)**: `--duration`을 신지 않은 채(즉 플랫폼 기본 지속시간) `scroll down`을 실행했더니 명령은 `{"ok":true,...}`를 반환했지만 전/후 스크린샷이 **SSIM 1.000000**(완전 동일 — 상태 표시줄 영역을 제외한 크롭 비교)으로, 페이지가 전혀 움직이지 않았다. 같은 좌표로 `swipe`에 `--duration 500`을 명시하자 SSIM이 **0.52**로 떨어져 실제 스크롤이 확증됐다(M2의 AC-GEST-005가 이미 이 값으로 확증한 것과 일치).
+
+**대응**: `scroll.ts`가 `backend.swipe` 호출 시 사용자에게 노출하지 않는 내부 기본 지속시간(`SCROLL_SWIPE_DURATION_MS = 500`)을 명시적으로 싣도록 수정(RED-GREEN 사이클, 위 참조). REQ-GEST-SCROLL-001~006 어디에도 `scroll`의 duration을 명시하라는 요구는 없지만(구현 세부), 진짜 스크롤을 보장하는 것은 spec.md §A.2("기기를 스와이프·스크롤할 수 있게 한다")의 목표 자체이므로 M3 스코프 안에서 수정했다.
+
+**수정 후 재검증**:
+
+```
+$ pnpm build
+$ node dist/cli/bin.js scroll down --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":true,"command":"scroll","data":{"serial":"D0B3A18C-...","direction":"down","from":{"x":201,"y":634},"to":{"x":201,"y":240}}}
+```
+
+전/후 스크린샷(상태 표시줄 제외 크롭) SSIM = **0.843417** — 명확한 변화 확인. 육안 확인 결과 "아이슬란드에서 보내는 열흘 기록"(21 likes, #링로드) 게시물에서 다음 게시물 "아이슬란드에서 들을 수 있는 소리들🌊"(15 likes, #다이아몬드비치)로 피드가 실제로 아래로 전환됨 — 상단 nav bar(`< sueddu_`)가 스크롤되어 사라지고 하단에 Safari 브라우저 툴바가 나타남(Safari의 스크롤 시 컴팩트 툴바 동작과 일치). `scroll down`이 "아래 내용을 보여준다"는 REQ-GEST-SCROLL-001 계약과 정확히 일치.
+
+```
+$ node dist/cli/bin.js scroll up --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":true,"command":"scroll","data":{"serial":"D0B3A18C-...","direction":"up","from":{"x":201,"y":240},"to":{"x":201,"y":634}}}
+```
+
+전/후(down 이후 vs up 이후) SSIM = 0.704608 — 명확히 다른 상태. 육안 확인 결과 **원래 게시물("아이슬란드에서 보내는 열흘 기록", 21 likes, #링로드, nav bar 재등장)로 정확히 복귀** — `scroll up`이 `scroll down`을 되돌림을 확인. 방향 의미(B-2, REQ-GEST-SCROLL-001)가 실기기에서 양방향 모두 실증됐다.
+
+스크린샷(전/후/최종) SHA-256 및 SSIM 도구(ffmpeg, 상태 표시줄 크롭 후 비교)는 `/private/tmp/.../scratchpad/`에 저장. `dump --web`(WebKit Inspector 경로)은 이 세션에서 `NO_WEB_PAGE`를 반환해(디버깅 가능한 페이지 미노출) `scrollY` 직접 비교는 사용하지 못했고, 스크린샷 SSIM + 육안 확인으로 대체했다 — 지시문이 허용한 대안 경로다.
+
+**AC-GEST-011에 대한 판정**: 위 실증은 M3 구현의 신뢰성을 높이기 위한 조기 검증이며, 정식 AC-GEST-011 PASS 판정은 acceptance.md가 명시한 대로 M5(e2e·manual 마일스톤)에서 내린다 — 이번 결과를 M5가 재확인 없이 그대로 승계할 수 있는 근거로 남긴다.
+
+### Scope Check
+
+```
+$ git status --porcelain --untracked-files=no
+ M src/cli/args.ts
+ M src/cli/router.ts
+ M src/cli/validators.test.ts
+ M src/cli/validators.ts
+
+$ git status --porcelain --untracked-files=all | grep '^??' | grep 'src/cli'
+?? src/cli/commands/scroll-geometry.test.ts
+?? src/cli/commands/scroll-geometry.ts
+?? src/cli/commands/scroll.test.ts
+?? src/cli/commands/scroll.ts
+
+$ git diff --name-only HEAD
+src/cli/args.ts
+src/cli/router.ts
+src/cli/validators.test.ts
+src/cli/validators.ts
+```
+
+plan.md §A.6 M3 행: `src/cli/args.ts`(M2·M3), `src/cli/validators.ts`(M3), `src/cli/router.ts` + `src/cli/commands/` 신규(M2·M3) — 전부 위 목록에 포함. `src/normalize/*`, `src/webview/*`(PRESERVE 목록) 미변경 확인됨. M4-M5 대상 파일(`src/cli/commands/web-support.ts`, `src/webview/coordinates.ts`) 미변경 확인됨. `src/schema/device-backend.ts`(M1 스코프) 등 M1/M2 파일도 미변경.
+
+### 커밋
+
+아래 §E.3 참조(커밋 완료 후 backfill).
+
 ## §E.3 Run-phase Audit-Ready Signal
 
 ```yaml
-run_status: M2-complete
-ac_pass_count: 8      # AC-GEST-001, 002, 003, 004, 005 (M1), 015 (M2 신규 커버) -- 누적: 001,002,003,004,005,015 + M1 유지분
+run_status: M3-complete
+ac_pass_count: 12     # 누적(M1/M2/M3 자체 판정, PARTIAL/조기확증 제외): 001,002,003,004,005,007,008,009,010,015,016,017
 ac_fail_count: 0
 ac_partial_count: 1   # AC-GEST-006 (adb 미설치, M1과 동일 상태 유지)
-ac_deferred_count: 0  # AC-GEST-003이 M2에서 이관되어 deferred 목록에서 제거됨
-total_run_phase_files: 16   # M1의 13 + M2 신규/수정 3(args.ts, validators.ts는 M1에도 있었으므로 실질 순증분은 swipe.ts, swipe.test.ts, router.ts 수정)
+ac_deferred_count: 0
+ac_early_verification_count: 1   # AC-GEST-011 -- 조기 부분 확증(실기기), 정식 PASS 판정은 M5에서
+total_run_phase_files: 20   # M2까지 16 + M3 신규 4(scroll.ts, scroll.test.ts, scroll-geometry.ts, scroll-geometry.test.ts) -- args.ts/validators.ts는 M1/M2에도 있었으므로 파일 수에는 새로 안 더함
 new_warnings_or_lints_introduced: false
 preserve_list_post_run_count: 0   # src/normalize/*, src/webview/* 미변경
 ```
@@ -206,3 +361,12 @@ preserve_list_post_run_count: 0   # src/normalize/*, src/webview/* 미변경
 3. **M2 완료 — M3+ 참고, 재라우팅 구조 재사용 가능성 확인**: `swipe.ts`의 거부 경로 구조(좌표 파싱 → 관련 옵션 파싱/검증 → `resolveTargetDevice` → 백엔드 호출)는 M3의 `--amount` 검증이 그대로 끼워 넣을 수 있는 형태다 — `parseDurationMs`가 `parseNonNegativeInteger` 위에 얹힌 것과 같은 방식으로 M3에서 `--amount`용 0<x≤1 비율 파서를 `validators.ts`에 추가하면 된다(단, `--amount`는 소수를 허용해야 하므로 `parseNonNegativeInteger`를 재사용할 수는 없고 별도 정규식이 필요 — plan.md §F M3 item 2가 이미 명시한 바와 일치). M2는 M3의 이 계획에 반하는 어떤 것도 발견하지 못했다.
 4. **지시문과 실제 코드의 사소한 불일치 없음**: B-1~B-8 전부가 실제 코드베이스와 정확히 일치했다(사전 점검에서 `parseCoordinate`/`parseIndex`/`parseNonNegativeInteger`, `COMMANDS` 레지스트리 등 확인됨). M1과 달리 이번 M2에서는 plan.md 부정확성을 발견하지 못했다.
 5. **범위 이탈 없음**: `src/normalize/*`, `src/webview/*` 등 PRESERVE 대상과 M3-M5 전용 파일(`src/cli/commands/web-support.ts`, `src/webview/coordinates.ts`) 모두 미변경 확인.
+
+## 블로커 / 서프라이즈 (M3 종료 시점, M4-M5 참고)
+
+1. **[가장 중요] `scroll`의 duration 생략이 실기기에서 무동작으로 이어짐 — SPEC/plan.md 어디에도 없던 발견**: 지시문 Section E 항목 6이 요구한 실기기 검증 중, `backend.swipe`를 duration 없이 호출하면(플랫폼 기본 지속시간) Safari 페이지가 SSIM 1.000000(완전 동일)로 전혀 움직이지 않음을 발견했다. `--duration 500`을 명시하자 즉시 진짜 스크롤(SSIM 0.52)로 전환됐다. REQ-GEST-SCROLL-001~006 어디에도 `scroll`의 내부 duration을 규정하지 않으므로 이는 spec.md/plan.md의 부정확성이 아니라 **구현 세부의 공백**이었다 — `scroll.ts`에 `SCROLL_SWIPE_DURATION_MS = 500`(M2의 AC-GEST-005가 이미 실측 확인한 값)을 명시적으로 실어 해결했다(RED-GREEN 사이클 1회 추가 수행, 테스트 1건 추가). 이 결정은 사용자 입력 없이 스스로 내렸다 — plan.md §F M3 어디에도 `scroll`의 duration을 언급하지 않으며, M4-M5는 이 상수가 `scroll.ts` 내부에만 존재하고 CLI에 노출되지 않는다는 점을 알아야 한다.
+2. **plan.md §B.5 사전 점검 갈래 1(witness 있음) 확정** — 두려워했던 갈래 4(크롬-only, witness 없음)는 이번 세션의 실측 상태에서는 나타나지 않았다. 다만 AC-GEST-017(witness 없는 픽스처)은 여전히 unit 테스트로 커버된다 — 갈래 4가 다른 페이지/세션에서 실제로 발생할 가능성에 대비한 방어 코드는 그대로 유효하다.
+3. **`dump --web`을 통한 `scrollY` 직접 비교는 이번 세션에서 사용 불가**: 시뮬레이터에 디버깅 가능한 웹 페이지가 노출되지 않아(`NO_WEB_PAGE`) 지시문이 제시한 1순위 방법을 쓰지 못했다. 지시문이 명시적으로 허용한 대안(스크린샷 전/후 비교)으로 대체했고, 육안 확인에 더해 ffmpeg SSIM으로 정량적 근거를 보강했다 — 단순 SHA-256 해시 비교만으로는 상태 표시줄의 시각(11:48→11:49) 변화만으로도 해시가 달라져(1차 시도에서 실제로 이런 거짓 양성이 관측됨) 오판할 위험이 있었기 때문이다.
+4. **지시문과 실제 코드의 불일치 없음**: B-1~B-9 전부가 실제 코드베이스·실기기 상태와 정확히 일치했다(사전 점검에서 확인된 `parseCoordinate`/`parseIndex`/`parseNonNegativeInteger`, 실측된 witness 상태 등). plan.md 자체의 부정확성은 발견하지 않았다 — 발견한 것은 위 1번(구현 세부의 공백)뿐이다.
+5. **범위 이탈 없음**: `src/normalize/*`, `src/webview/*` 등 PRESERVE 대상과 M4-M5 전용 파일(`src/cli/commands/web-support.ts`, `src/webview/coordinates.ts`) 모두 미변경 확인. M1/M2 산출물(`src/schema/device-backend.ts`, `src/backend/*`, `src/cli/commands/swipe.ts` 등)도 미변경 확인.
+6. **M4+ 참고**: `scroll.ts`가 `backend.swipe`를 `{durationMs: SCROLL_SWIPE_DURATION_MS}`로 호출하는 패턴은 M4(웹 요소 스크롤)에는 직접 적용되지 않는다 — M4는 `scrollIntoView`(JS 경로)를 쓰며 네이티브 `swipe`를 호출하지 않는다(plan.md §F M4). 혼동 방지를 위해 명시한다.
