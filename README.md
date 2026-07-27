@@ -7,14 +7,19 @@ control an emulator, simulator, or real device through a single, stable
 including multi-device interaction testing.
 
 > **Status**: core Android/adb primitives + environment bootstrap, the
-> iOS Simulator/idb backend, and the iOS **web content** path are
-> implemented and unit/mock-tested (426 tests, all green). The **iOS
-> backend has been verified end-to-end against a booted simulator**
-> (2026-07-26, iPhone 17 Pro / iOS 26.0): launch Safari, dump the element
-> tree, tap by selector, type, send keys, screenshot, navigate. The
-> **`--web` path was verified on the same simulator** (2026-07-27): read
-> a page's DOM, tap a link by CSS selector, and type Korean into a field.
-> Android real-device verification is still pending — see
+> iOS Simulator/idb backend, gesture primitives (`swipe`/`scroll`), and
+> the iOS **web content** path are implemented and unit/mock-tested (510
+> tests, all green). The **iOS backend has been verified end-to-end
+> against a booted simulator** (2026-07-26, iPhone 17 Pro / iOS 26.0):
+> launch Safari, dump the element tree, tap by selector, type, send
+> keys, screenshot, navigate. The **`--web` path was verified on the
+> same simulator** (2026-07-27): read a page's DOM, tap a link by CSS
+> selector, and type Korean into a field. **Gesture primitives were
+> verified on the same simulator** (2026-07-27): `swipe`/`scroll` moved
+> the screen, and `tap --web` reached a below-the-fold link with a real
+> touch. Android gesture support is **argv-verified only** — `adb` is
+> not installed on the machine this was built on. Android real-device
+> verification (for every command) is still pending — see
 > [Status](#status) below before relying on this in production. The
 > Unicode-IME APK (ADBKeyBoard, GPL-2.0) is never bundled — `doctor`
 > downloads it from its official release on first use.
@@ -85,6 +90,8 @@ text — the JSON body is the only contract:
 | [`key <alias>`](#key-alias) | Send a key event. |
 | [`text "<string>"`](#text-string) | Type text (ASCII or Unicode — see below). |
 | [`dump`](#dump) | Dump the current UI hierarchy, normalized. |
+| [`swipe <x1> <y1> <x2> <y2> [--duration <ms>]`](#swipe-x1-y1-x2-y2-duration-ms) | Send a raw swipe gesture between two coordinates. |
+| [`scroll <up\|down\|left\|right> [--amount <ratio>]`](#scroll-updownleftright-amount-ratio) | Scroll the screen a direction/ratio, without needing its pixel size. |
 | [`doctor [--yes\|--install] [--clean]`](#doctor-yesinstall-clean) | Diagnose / bootstrap the environment. |
 | [`reset`](#reset) | Restore the device to its pre-`doctor` state. |
 
@@ -220,6 +227,78 @@ This is the **native** tree. Web page content does not appear in it — use
 [`dump --web`](#web-content-on-the-ios-simulator) on the iOS Simulator to
 read the page's DOM instead.
 
+### `swipe <x1> <y1> <x2> <y2> [--duration <ms>]`
+
+Sends a raw swipe/drag gesture from one device-pixel coordinate to
+another, on both platforms. `--duration` is **milliseconds** — the CLI's
+one contract unit regardless of backend; omit it to use the platform
+default duration.
+
+```bash
+$ npx explore-mobile swipe 200 700 200 300 --duration 500
+{"ok":true,"command":"swipe","data":{"serial":"D0B3A18C-…","from":{"x":200,"y":700},"to":{"x":200,"y":300},"durationMs":500}}
+```
+
+Internally, `AdbBackend` passes `--duration` straight through to
+`adb shell input swipe` (already milliseconds); `IdbBackend` converts it
+to seconds before building `idb ui swipe`'s argv, because `idb`'s own
+`--duration` is seconds, not milliseconds. Both conversions are handled
+for you — a caller never has to know which platform it is talking to.
+
+`--duration` must be a non-negative integer: an unparseable or empty
+value is rejected with `INVALID_DURATION`; a value that *looks* negative
+(`--duration -100`) is instead caught earlier by the argument parser as
+`INVALID_ARGS`. Either way, no gesture is sent. The four coordinates
+follow the same non-negative-integer rule as `tap`, returning
+`INVALID_COORDINATES` (or `INVALID_ARGS` for a negative literal).
+
+See [`scroll`](#scroll-updownleftright-amount-ratio) for a direction/ratio
+convenience layer built on this same command, and
+[`tap --web`](#web-content-on-the-ios-simulator) for reaching an
+off-viewport **web** element with a real touch.
+
+### `scroll <up|down|left|right> [--amount <ratio>]`
+
+Scrolls the screen a direction and a ratio of its size, without the
+caller needing to know the screen's pixel dimensions — a convenience
+layer over [`swipe`](#swipe-x1-y1-x2-y2-duration-ms), not a new backend
+capability.
+
+```bash
+$ npx explore-mobile scroll down
+{"ok":true,"command":"scroll","data":{"serial":"D0B3A18C-…","direction":"down","from":{"x":201,"y":634},"to":{"x":201,"y":240}}}
+```
+
+**`scroll down` means "show the content below" — the finger moves *up*.**
+This is the single most silently-invertible thing about this command: get
+it backwards and it still returns `ok: true`. The response always carries
+both the `direction` and the real `from`/`to` points, precisely so a
+caller can check `to.y < from.y` (down) at a glance instead of trusting
+the label alone.
+
+Screen size is derived from the existing [`dump`](#dump) result — there
+is no separate backend method to query it. The rule is deliberately
+strict: the maximum extent of every top-level element's bounds is a
+*candidate* size, but it is accepted only when one of those elements'
+bounds exactly spans `{0, 0, width, height}` (a "witness"). Without a
+witness, `scroll` refuses with `SCREEN_SIZE_UNKNOWN` rather than guess —
+a bare max-extent check would happily accept the bounding box of a
+handful of unrelated status-bar fragments as "the screen", which is a
+real state Safari can be in.
+
+`--amount` scales the swipe distance and must be greater than 0 and at
+most 1 (default `0.5` — half a screen). An out-of-range or unparseable
+value is `INVALID_AMOUNT`; a value that looks negative
+(`--amount -0.5`) is instead caught by the argument parser as
+`INVALID_ARGS`. Both send zero gestures.
+
+`scroll` cannot confirm the screen actually moved — like `swipe`, it
+sends the gesture and returns; re-run [`dump`](#dump) to check. It also
+always sends its swipe with a fixed, non-configurable internal duration:
+a duration-less swipe was found during development to be a **silent
+no-op** on a real device (the command reported success but nothing
+moved), so `scroll` never omits one.
+
 ### `doctor [--yes|--install] [--clean]`
 
 Diagnoses (and, with consent, bootstraps) the device-control
@@ -317,16 +396,36 @@ elements, exactly like the native selector flags.
 A web element is tapped **natively by default** — its position is
 converted to a device coordinate and a real touch is sent, so sites that
 require genuine touch events behave normally. When the element sits
-outside the viewport, that conversion cannot be trusted, and the command
-falls back to an in-page `click()`.
+outside the viewport, that conversion cannot be trusted — so the command
+scrolls the element into view (`scrollIntoView`), **re-measures its
+position**, and retries the native tap against the fresh coordinate.
+Only if it is *still* unconvertible after that does it fall back to an
+in-page `click()`.
 
-The response always reports which path ran, so a fallback is never
-silent:
+The response always reports which of four paths ran, so neither the
+scroll nor the fallback is ever silent:
+
+| `method` | What happened |
+|---|---|
+| `native` | Tapped directly — the page never moved. |
+| `native-scrolled` | Scrolled into view, re-measured, then tapped natively. |
+| `js-click` | JS fallback, no scroll needed. |
+| `js-click-scrolled` | Scrolled, still unconvertible, JS fallback. |
+
+The `-scrolled` suffix exists because the page's scroll position is a
+side effect the caller must not be surprised by — even when the tap
+still ends up going through the JS fallback, the caller needs to know
+the page moved.
 
 ```bash
-$ npx explore-mobile tap --web "a" --index 50     # element below the fold
-{"ok":true,"command":"tap","data":{...,"method":"js-click"}}
+$ npx explore-mobile tap --web 'a[href*="Netscape"]' --page 1
+{"ok":true,"command":"tap","data":{...,"method":"native-scrolled","x":243,"y":419}}
 ```
+
+(The target sat at `y ≈ 1247` against a viewport ≈714px tall — well
+below the fold. It was scrolled into view, re-measured to `y:419`,
+tapped natively, and the browser genuinely navigated to the linked
+page.)
 
 The coordinate conversion needs the height of the browser chrome above
 the page. That number is **measured on the device at runtime**, not
@@ -381,9 +480,11 @@ a failure does not leave one behind.
 
 Safari on the **iOS Simulator**, where Web Inspector is on by default.
 Not covered: Android WebView, iOS physical devices (USB transport plus
-manual Web Inspector activation), app-embedded webviews that do not opt
-into debugging, and scrolling an off-screen element into view — the
-fallback clicks it in place instead.
+manual Web Inspector activation), and app-embedded webviews that do not
+opt into debugging. An off-viewport element **is** reached with a real
+touch — see
+[How an element is reached](#how-an-element-is-reached-and-why-the-response-says-so)
+above.
 
 ## Korean / emoji / Unicode text input
 
@@ -446,8 +547,9 @@ contaminate either device's input-method state.
 ## Status
 
 Android (SPEC-ANDROID-001, all 8 milestones), the iOS Simulator backend
-(SPEC-IOS-001), and the iOS web content path (SPEC-WEBVIEW-001) are
-implemented, with 426 unit/mock tests green.
+(SPEC-IOS-001), the iOS web content path (SPEC-WEBVIEW-001), and gesture
+primitives (SPEC-GESTURE-001) are implemented, with 510 unit/mock tests
+green.
 
 **iOS: verified against a real simulator** (2026-07-26, iPhone 17 Pro /
 iOS 26.0, fb-idb 1.1.7). A full Safari journey — `doctor` → `devices` →
@@ -480,7 +582,9 @@ Known iOS limitations found during that run:
 naver.com: `dump --web` returned 333 visible elements out of 508 matched
 (175 were zero-size and dropped); a selector tap navigated to
 `shopping.naver.com` and was confirmed by screenshot; an element below
-the fold fell back to an in-page click and navigated; and
+the fold fell back to an in-page click and navigated (SPEC-WEBVIEW-001-era
+behavior; SPEC-GESTURE-001 below later reaches it with a real touch
+instead); and
 `text "네이버 웹뷰" --web "#query"` was confirmed by reading the field's
 value back. `IWDP_NOT_INSTALLED` and `NO_WEB_PAGE` were both reproduced
 on the real device, and no proxy leaked when a command failed.
@@ -498,12 +602,35 @@ One web-path criterion is **not** device-verified: rejecting `--web`
 against an Android device (`UNSUPPORTED_ON_PLATFORM`) is covered by unit
 tests only, because no Android device was connected during the run.
 
+**Gesture primitives verified against the same simulator** (2026-07-27,
+same session as the SPEC-WEBVIEW-001 e2e run): `swipe` moved the screen,
+with `--duration 500` confirmed to run in well under a second rather than
+500 seconds — the ms→seconds conversion holds end-to-end; `scroll down`
+then `scroll up` moved a feed down and then back to its starting point,
+confirming both the derived screen size and the "down means the finger
+moves up" direction semantics; and the off-viewport `tap --web` case
+above (`method: "native-scrolled"`) is from this same verification run.
+Android gesture support is **argv-verified only** — `adb` itself is not
+installed on this machine, so neither `adb`'s own swipe syntax nor an
+actual device swipe could be checked. Recorded as 16 PASS / 1 PARTIAL / 0
+FAIL across 17 acceptance criteria in
+`.moai/specs/SPEC-GESTURE-001/progress.md`.
+
+The `--web` proxy session (SPEC-WEBVIEW-001, unrelated to
+SPEC-GESTURE-001's own changes) was found to still be unstable across
+separate CLI invocations during this verification run — alternating
+between success, `AMBIGUOUS_PAGE`, and `NO_WEB_PAGE` even against a
+single browser tab. Spacing calls a few seconds apart was the only
+reliable mitigation found; a real fix is out of scope here.
+
 Still pending before this is production-ready:
 
-- Real-emulator/real-device verification of every Android command
-  (screenshot PNG validity, tap/text landing, `launch`/`stop` observed
-  effects, multi-device isolation with two physically connected
-  devices).
+- Real-emulator/real-device verification of every Android command,
+  including the `swipe`/`scroll` gestures (screenshot PNG validity,
+  tap/text landing, `launch`/`stop` observed effects, multi-device
+  isolation with two physically connected devices). `adb` itself is not
+  installed on the machine this was built on, so even `adb`'s own
+  swipe/scroll syntax could not be checked.
 - Verifying the runtime ADBKeyBoard download end-to-end against a real
   device (the download/cache/validate logic is unit/mock-verified; see
   the Unicode caveat above and `vendor/adbkeyboard/README.md`).
@@ -521,6 +648,7 @@ hardware.
 | SPEC-ANDROID-001 | Android/adb device-control primitives + environment bootstrap | Implemented, e2e pending |
 | SPEC-IOS-001 | iOS Simulator backend (`idb`) — common schema + registry extension | Completed, verified on a real simulator |
 | SPEC-WEBVIEW-001 | iOS Simulator web content — DOM recognition + interaction (`ios-webkit-debug-proxy`) | Completed, verified on a real simulator |
+| SPEC-GESTURE-001 | `swipe`/`scroll` gesture primitives + off-viewport web element reach | Completed — iOS verified on a real simulator, Android argv-only (no `adb` on this machine) |
 | SPEC-04 | Prompt-driven exploration loop + multi-device scenario orchestration | Committed |
 | SPEC-05 | Codex skill wrapper + broader packaging | Committed |
 | — | Android WebView (CDP over `adb forward`) and iOS **physical-device** webviews | Committed — separate transports, separate SPECs |

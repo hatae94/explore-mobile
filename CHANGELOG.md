@@ -200,6 +200,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     dropping one).
   - 123 new tests (426 total, up from the 303-test baseline), coverage
     92.99% statements.
+- Gesture primitives — `swipe` and `scroll` (SPEC-GESTURE-001) — closing
+  the gap the SPEC-WEBVIEW-001 e2e run exposed: verifying that release
+  meant calling `idb ui swipe` directly, bypassing this CLI entirely,
+  because no command could move the screen. `DeviceBackend` gains a 9th
+  method, `swipe(serial, from, to, options?)`, implemented by all three
+  concrete backends (`AdbBackend`, `IdbBackend`, and the `BackendRegistry`
+  facade) — additive only, the existing 8 methods are unchanged in shape
+  or behavior.
+  - **`swipe <x1> <y1> <x2> <y2> [--duration <ms>]`** sends a raw
+    coordinate-to-coordinate gesture on both platforms. The CLI's single
+    contract unit for `--duration` is **milliseconds** regardless of
+    backend: `AdbBackend` passes it straight through to
+    `adb shell input swipe` (already ms), while `IdbBackend` converts it
+    to seconds *before* building argv, because `idb`'s own `--duration`
+    is seconds (confirmed against fb-idb's `hid.py`). Skipping that
+    conversion has no type error and no runtime error — it just silently
+    turns `--duration 500` into a 500-**second** swipe on iOS, which is
+    exactly the asymmetry this SPEC exists to close. An invalid
+    `--duration` (non-numeric, empty) is rejected with
+    `INVALID_DURATION`; a negative-looking literal (`--duration -100`)
+    is instead caught earlier by the argument parser as `INVALID_ARGS`
+    — either branch sends zero gestures.
+  - **`scroll <up|down|left|right> [--amount <ratio>]`** is a convenience
+    layer over the same `swipe` — no new backend method. Screen size is
+    derived from the existing `dump` result via a two-step rule: the max
+    extent of every top-level element's bounds is only *accepted* as the
+    screen size when one of those elements' bounds exactly span
+    `{0,0,width,height}` (a "witness"); without a witness the command
+    refuses with `SCREEN_SIZE_UNKNOWN` rather than guess — guarding
+    against a Safari-chrome-only state where the bounding box of
+    unrelated status-bar fragments is a plausible-looking but wrong
+    screen size. `scroll down` moves the finger **up** to reveal content
+    below; the success response always carries the direction plus the
+    real `from`/`to` coordinates so a caller can verify the semantics
+    without re-dumping the screen. An out-of-range or unparseable
+    `--amount` (0 excluded, 1 included) is `INVALID_AMOUNT`; a
+    negative-looking literal is `INVALID_ARGS`, same as `--duration`.
+  - **`tap --web` now reaches below-the-fold elements with a real
+    touch.** An off-viewport web element previously fell back straight
+    to the JS `click()` path. It is now scrolled into view, re-measured,
+    and tapped natively; JS `click()` still runs only if the element is
+    *still* unconvertible after that. The response's `method` field
+    grows from two values to four — `native`, `native-scrolled`,
+    `js-click`, `js-click-scrolled` — so a caller learns not only which
+    path fired but whether the page's scroll position changed as a side
+    effect, which it never does silently.
+- Android gesture support is **argv-verified only**: `adb` itself is not
+  installed on the machine this SPEC was built on, so not even
+  `adb shell input swipe --help` could be checked. `swipe`/`scroll`
+  argv construction for Android is unit-tested against the documented
+  contract, but no Android device or emulator confirmed either command
+  actually moves a screen — both iOS gestures and the off-viewport web
+  tap were confirmed on a booted simulator.
 
 ### Fixed
 
@@ -328,3 +381,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   committed roadmap items, not yet implemented. Android WebView (CDP over
   `adb forward`) and iOS physical-device webviews are deliberately out of
   SPEC-WEBVIEW-001's scope — different transports, separate SPECs.
+- `scroll` cannot confirm the screen actually moved — like `swipe`, it
+  sends the gesture and returns; the caller re-`dump`s to check
+  (SPEC-GESTURE-001 §C.3, a deliberate design decision — judgment stays
+  with the caller, not the CLI). A duration-less swipe was found during
+  development to be a **silent no-op** on a real simulator — `scroll`
+  reported success but the page never moved until an explicit ~500ms
+  duration was used — so `scroll` always sends a fixed internal
+  duration on the caller's behalf; it is not configurable and is not
+  part of the command's documented contract.
+- The `--web` proxy session (SPEC-WEBVIEW-001) remains unstable across
+  separate CLI invocations, independent of SPEC-GESTURE-001's own
+  changes: repeated `dump --web`/`tap --web` calls in quick succession
+  were found to alternate between success, `AMBIGUOUS_PAGE`,
+  `NO_WEB_PAGE`, and (once) `WEB_INSPECTOR_UNREACHABLE`, even against a
+  single browser tab. Spacing calls a few seconds apart was the only
+  reliable mitigation found during SPEC-GESTURE-001's own verification
+  run; the root cause (proxy attach/detach timing, not only page-count
+  ambiguity) is out of that SPEC's scope and is recorded here so it is
+  not rediscovered as new.
+- Recorded as 16 PASS / 1 PARTIAL / 0 FAIL across 17 acceptance criteria
+  in `.moai/specs/SPEC-GESTURE-001/progress.md` — the PARTIAL is
+  AC-GEST-006 (Android real-device swipe), which cannot be promoted to
+  PASS on this machine because `adb` itself is not installed, not only
+  because no device is connected.

@@ -2,9 +2,9 @@
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 진행 기록"
 version: "0.3.0"
-status: in-progress
+status: completed
 created: 2026-07-27
-updated: 2026-07-27
+updated: 2026-07-28
 author: hatae
 ---
 
@@ -674,3 +674,43 @@ m1_to_mN_commit_strategy: "M1-M5 마일스톤별 개별 커밋(M1 9c98e3a, M2 2e
 4. **M4 커밋 SHA backfill 누락을 정정**: M4 섹션의 "아래 커밋 완료 후 SHA를 이 절에 backfill한다" 플레이스홀더가 실제 커밋(0463337) 이후에도 갱신되지 않은 채 남아 있었다. 이번 M5 기록 시점에 실제 SHA로 정정했다 — SPEC 본문(spec.md/plan.md/acceptance.md)이 아닌 progress.md 메타데이터 정정이므로 범위 이탈이 아니다.
 5. **범위 이탈 없음**: `git status --porcelain --untracked-files=no`가 M5 전 구간에서 빈 출력 — 프로덕션/테스트 코드, SPEC 본문 3종(spec.md/plan.md/acceptance.md) 전부 미변경. 유일한 변경은 이 `progress.md`.
 6. **frontmatter는 `status: in-progress`로 유지**: `implemented → completed` 전이는 manager-docs가 소유하는 sync 단계 소관이며(spec-frontmatter-schema.md § Status Transition Ownership Matrix), M5는 그 전이를 수행하지 않았다.
+
+## §E.4 Sync-phase Audit-Ready Signal
+
+```yaml
+sync_status: audit-ready
+sync_complete_at: "2026-07-28"
+sync_commit_sha: "pending-backfill-single-sync-commit"   # 자기참조 해시 문제(spec-frontmatter-schema.md § SHA placeholder backfill exemption). Route A 단일 sync 커밋이므로 이 커밋 직후 별도 backfill 커밋 1개로 정정한다.
+b12_self_test_a: "grep -c 'SPEC-GESTURE-001' CHANGELOG.md (편집 전) -> 0 -- 중복 없음, 방출 진행"
+b12_self_test_b: "grep -cE '^### AC-GEST-[0-9]+' acceptance.md -> 17 -- CHANGELOG Notes의 '17 acceptance criteria' 표기와 일치"
+b12_self_test_c: "CHANGELOG/README가 인용한 모든 파일 경로를 커밋 전 Read로 실재 확인: device-backend.ts, adb-backend.ts, idb-backend.ts, registry.ts, swipe.ts, scroll.ts, scroll-geometry.ts, web-support.ts, coordinates.ts, args.ts, validators.ts, router.ts"
+changelog_entry_position: "[Unreleased] -> Added(SPEC-WEBVIEW-001 웹 콘텐츠 항목 뒤 신규 블록 2개) + Notes(파일 끝에 3개 불릿 추가)"
+frontmatter_status_transitions:
+  spec_md: "in-progress -> completed"
+  plan_md: "in-progress -> completed"
+  acceptance_md: "in-progress -> completed"
+  progress_md: "in-progress -> completed"
+  updated_date: "2026-07-27 -> 2026-07-28 (4개 아티팩트 전부)"
+canary_compliance_check: not_applicable   # 본 SPEC은 자기 자신의 sync를 테스트하는 전향적 정책을 정의하지 않음
+```
+
+### 문서 반영
+
+| 문서 | 반영 내용 |
+|------|-----------|
+| `CHANGELOG.md` | `[Unreleased] Added`에 SPEC-GESTURE-001 항목(9번째 `swipe` 백엔드 메서드, `--duration` ms/초 비대칭, `scroll`의 witness 화면-크기 파생, `tap --web` 4값 `method` 어휘) + Android argv-only 정직 고지 · `Notes`에 `scroll` 무판정/고정 내부 duration, `--web` 프록시 불안정성 재확인, 17-AC 최종 집계 3건 추가 |
+| `README.md` | 상단 Status(510 테스트 + 제스처 실측) · 명령 표에 `swipe`/`scroll` 신규 행 · 신규 절 `### swipe ...`/`### scroll ...` · "How an element is reached" 절을 4값 `method` 표로 재작성(오전제였던 "js-click 폴백" 서술 정정) · `### Scope`의 낡은 "화면 밖 요소는 폴백만" 서술 정정 · Roadmap에 SPEC-GESTURE-001 행 · Status 절에 제스처 실측 결과 + `--web` 프록시 불안정성 재확인 문단 |
+
+### 잔여 관찰 (sync-auditor 참고)
+
+- `src/cli/commands/{swipe,scroll,scroll-geometry}.ts`에는 `@MX:` 태그가 전혀 없다 — `backend/registry.ts`·`backend/idb-backend.ts` 등 M1 산출물과 대비된다. 지시문 Section C-7("Sync is documentation-only" — `src/` 파일 금지)에 따라 이번 sync에서 태그를 추가하지 않았다. 후속 `/moai mx` 실행 대상으로 남긴다.
+- `spec.md` §E "로드맵 위치" 표의 본 SPEC 자기참조 행이 여전히 `status: draft`로 적혀 있다(body 콘텐츠 — frontmatter 전이 대상 아님). 프런트매터가 SSOT이므로 기능상 문제는 없으나, body 수정은 금지되어 있어 정정하지 않았다.
+
+### 최종 검증 (실제 명령 출력)
+
+```
+$ pnpm vitest run   → exit 0 — Test Files 29 passed, Tests 510 passed
+$ pnpm typecheck    → exit 0
+$ pnpm build        → exit 0
+$ grep -c "SPEC-GESTURE-001" CHANGELOG.md   → 5 (한 항목 블록 내 5회 언급)
+```
