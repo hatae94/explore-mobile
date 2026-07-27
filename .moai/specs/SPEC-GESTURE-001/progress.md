@@ -461,7 +461,7 @@ plan.md §A.6 M4 행: `src/cli/commands/web-support.ts`, `src/webview/coordinate
 
 ### 커밋
 
-아래 커밋 완료 후 SHA를 이 절에 backfill한다.
+M4 커밋 SHA: `0463337`(HEAD, 이번 M5 작업 시작 시점 기준선). M5 착수 시점에 `git rev-parse HEAD`로 재확인 완료(§Pre-flight 참조) — 이전 세션에서 backfill이 누락되어 있었으므로 이번 M5 기록 시점에 정정한다.
 
 ## §E.3 Run-phase Audit-Ready Signal (M4 갱신)
 
@@ -485,3 +485,190 @@ preserve_list_post_run_count: 0   # src/normalize/*, src/webview/{inspector-clie
 4. **naver 클립 페이지는 세로 스크롤 검증 픽스처로 부적합했다**: 화면 밖 후보로 처음 시도한 "Donate Now" 링크는 `x:-261.98`(가로 방향 오프스크린 드로어)이라 REQ-GEST-WEB-001이 다루는 "아래로 스크롤해서 끌어오기" 시나리오와 무관했다. 지시문이 명시적으로 허용한 대안("naver 페이지가 픽스처로 부적합하면 더 단순한 긴 페이지로 내비게이션해도 된다")에 따라 Wikipedia로 전환했다 — 이 판단도 사용자 입력 없이 스스로 내렸다.
 5. **범위 이탈 없음**: `src/normalize/*`, `src/webview/{inspector-client,proxy-service,calibration}.ts`(PRESERVE 목록) 미변경 확인. `src/webview/coordinates.ts`는 주석만 변경(실행 코드 0줄 변경) 확인. M1-M3 산출물 미변경 확인. M5 전용 파일(e2e 스크립트 등, 아직 미생성)에는 손대지 않았다.
 6. **M5 참고**: `method` 4값(`native`/`native-scrolled`/`js-click`/`js-click-scrolled`) 문자열은 안정된 계약으로 취급해도 된다 — 이번 M4의 unit 테스트와 실기기 확인 양쪽에서 정확히 이 문자열들로 검증됐다. e2e에서 이 문자열에 직접 의존한 어설션을 작성해도 안전하다.
+
+### M5 — 실기기 e2e (마감 게이트)
+
+**이 마일스톤은 기능 마일스톤이 아니다 — 검증 + 근거 기록이다(plan.md §F M5).** 프로덕션 코드는 수정하지 않았다(§Scope Check 참조). 아래는 M1-M4 자체 검증을 한 세션에서 이어붙인 재확인이 아니라, 이번 M5 세션 안에서 **하나의 연속된 e2e 시퀀스**로 처음부터 다시 수행한 기록이다.
+
+**환경**: iPhone 17 Pro 시뮬레이터(iOS 26.0, `D0B3A18C-E485-4E7C-A25E-504BF4CA6163`, booted). `command -v adb` → not found(§Pre-flight 참조) — Android 기기·도구 모두 부재, AC-GEST-006은 이번에도 PARTIAL로 마감한다.
+
+#### Pre-flight (지시문 §Section C)
+
+```
+$ git rev-parse HEAD
+0463337eaf0498bc24adb0f7e7b3e98718980cb3   # M4 HEAD와 정확히 일치
+
+$ pnpm vitest run
+ Test Files  29 passed (29)
+      Tests  510 passed (510)
+
+$ pnpm typecheck   → exit 0
+$ pnpm build       → exit 0
+
+$ xcrun simctl list devices booted
+iPhone 17 Pro (D0B3A18C-E485-4E7C-A25E-504BF4CA6163) (Booted)
+
+$ command -v adb || echo "adb absent -> AC-GEST-006 PARTIAL"
+adb absent -> AC-GEST-006 PARTIAL
+```
+
+#### e2e 시퀀스 (지시문 §B-1, 하나의 연속 흐름)
+
+Safari를 `xcrun simctl openurl`로 `en.wikipedia.org/wiki/JavaScript`에 새로 진입(scrollY=0 보장)한 뒤, 전/후 스크린샷을 `/private/tmp/.../scratchpad/`(저장소 밖)에 저장하며 아래 순서로 실행했다.
+
+**1) `swipe` — 화면 이동 확증 + `--duration 500` = 0.5초 눈으로 확인(지시문 §B-2)**
+
+```
+$ time node dist/cli/bin.js swipe 200 700 200 300 --duration 500 --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":true,"command":"swipe","data":{"serial":"D0B3A18C-...","from":{"x":200,"y":700},"to":{"x":200,"y":300},"durationMs":500}}
+   0.65s user 0.20s system 35% cpu 2.457 total   # Node 콜드스타트 포함
+```
+
+`--duration 500`이 500**초**로 오동작했다면 이 한 줄이 500초 이상 걸렸을 것이다. 2.457초는 그 반대를 증명한다. Node 콜드스타트를 걷어낸 순수 idb 계층에서도 별도로 측정했다:
+
+```
+$ time idb ui swipe --udid D0B3A18C-E485-4E7C-A25E-504BF4CA6163 200 700 200 300 --duration 0.5
+   0.09s user 0.02s system 13% cpu 0.818 total
+```
+
+0.818초 — ms→초 환산이 CLI 전 구간(백엔드 + CLI 명령)에서 깨지지 않았음을 재확인. 스크린샷 SHA-256: `288d868...`(스와이프 전, JavaScript 문서 상단) → `0781d11...`(스와이프 후, 다름) — 육안 확인 결과 문서 상단(제목·인트로 문단)에서 TC39 로고·인포박스 상단으로 실제로 스크롤됨을 확인.
+
+**2) `scroll down` → `scroll up` 왕복(지시문 §B-1)**
+
+```
+$ node dist/cli/bin.js scroll down --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":true,"command":"scroll","data":{"serial":"D0B3A18C-...","direction":"down","from":{"x":201,"y":634},"to":{"x":201,"y":240}}}
+
+$ node dist/cli/bin.js scroll up --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":true,"command":"scroll","data":{"serial":"D0B3A18C-...","direction":"up","from":{"x":201,"y":240},"to":{"x":201,"y":634}}}
+```
+
+두 응답 모두 REQ-GEST-SCROLL-002 화면 크기 파생이 `SCREEN_SIZE_UNKNOWN` 없이 성공했음을 보여준다 — 이번 세션에서도 M3 사전 점검과 동일하게 witness가 존재하는 환경이었다(§C.1-⑧의 크롬-only 갈래 4는 이번에도 발생하지 않음). 스크린샷 3장(스와이프 후/스크롤다운 후/스크롤업 후) SHA-256이 매번 다르고(`0781d11...`→`f07f87d...`→`f2a6f82...`), 육안 확인 결과: 스크롤다운 후에는 인포박스 하단(Typing discipline·Memory management·Filename extensions·Website·Major implementations 등)까지 내려갔고, 스크롤업 후에는 TC39 로고·소스코드 스크린샷·Paradigms/Family/Designed by/First appeared 행이 다시 보이는 상태로 복귀했다 — **스와이프 직후 상태와 거의 동일한 화면으로 돌아옴**을 확인, `scroll up`이 `scroll down`을 정확히 되돌림(방향 의미 REQ-GEST-SCROLL-001 재확증).
+
+**3) `tap --web` — 화면 밖 웹 요소 도달 + 페이지 전환(지시문 §B-1)**
+
+```
+$ node dist/cli/bin.js dump --web 'a[href*="Netscape"]' --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":true,...,"page":{"index":0,"title":"JavaScript - Wikipedia",...},
+ "elements":[{"role":"a","text":"Netscape","bounds":{"x":211,"y":1246.96875,"w":63.15...,"h":18},"tappable":true}]}
+```
+
+`y:1246.96875` — 뷰포트(innerHeight ≈ 714pt) 밖. M4의 실측치와 정확히 같은 좌표(같은 페이지·같은 셀렉터이므로 당연히 일치).
+
+```
+$ node dist/cli/bin.js tap --web 'a[href*="Netscape"]' --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":true,"command":"tap","data":{...,"page":{"index":0,"title":"JavaScript - Wikipedia",...},
+ "method":"native-scrolled","x":243,"y":419}}
+```
+
+전(`m5-before-tap.png`, "JavaScript" 문서 상단) → 후(`m5-after-tap.png`, **"Netscape" 문서 상단으로 문서 제목 자체가 바뀜**) 스크린샷 비교로 페이지 전환을 확증 — SSIM/해시보다 강한 증거(문서 제목이 다르면 다른 문서다). `method:"native-scrolled"`가 M4가 확정한 4값 계약과 정확히 일치.
+
+**4) 거부 경로 9종 재확인(지시문 §Section A 표에 언급된 M2 7변형 포함, CLI 레벨에서 직접 재실행)**
+
+```
+swipe 100 800 100                    → INVALID_COORDINATES
+swipe 1.5 800 100 200                → INVALID_COORDINATES
+swipe 100 -50 100 200                → INVALID_ARGS (파서 계층, node:util.parseArgs)
+swipe ... --duration abc             → INVALID_DURATION
+swipe ... --duration ""              → INVALID_DURATION
+swipe ... --duration -100            → INVALID_ARGS (파서 계층)
+scroll down --amount 0               → INVALID_AMOUNT
+scroll down --amount 1.5             → INVALID_AMOUNT
+scroll down --amount -0.5            → INVALID_ARGS (파서 계층)
+```
+
+9개 전부 각각 단일 파싱 가능한 JSON 오류 문서 하나로 응답 — AC-GEST-015(JSON 봉투)를 오류 경로에서도 재확인.
+
+#### `--web` 프록시 불안정성 — 실측 심화(지시문 §Section A "A real obstacle")
+
+지시문이 예고한 현상을 이번 세션에서도 그대로, 그리고 더 상세히 관측했다. 최초 상태(2페이지 남아있던 clip.naver 세션에서 이어진 Safari, 3개 디버그 가능 페이지 — 그중 2개는 이전 세션이 남긴 "Netscape - Wikipedia" 잔여 탭)에서 `dump --web`/`tap --web`은 `AMBIGUOUS_PAGE`(3페이지 목록, 매번 index 2가 JavaScript 문서로 일관됨) ↔ `NO_WEB_PAGE`(디버그 가능 페이지 0개로 보고) 사이를 무작위로 오갔다 — 약 15회 이상 재시도(명시적 `--page 2` 포함) 후에도 안정화되지 않았고, 도중에 `WEB_INSPECTOR_UNREACHABLE`(포트 9222 20회 시도 후 미기동)도 1회 관측했다(`lsof -i :9222` 확인 결과 실제로 점유 중인 프로세스는 없었음 — 일시적 경합으로 추정).
+
+**새로 발견한 것(M4가 기록하지 못한 부분)**: Safari를 완전히 재시작(`simctl terminate` + `openurl` 재진입)해 디버그 가능 페이지를 1개로 줄인 뒤에도 불안정성은 **완전히 사라지지 않았다.** `dump --web`은 재시작 직후 1-2회는 성공했지만 바로 이어 실패로 전환됐고, 그 성공 창 안에서 **바로 다음 줄에 실행한 `tap --web`조차 실패**했다(8회 연속 실패, `dump`가 방금 성공했음에도). 유일하게 안정적으로 통한 조합은 **개별 CLI 호출 사이에 몇 초의 간격**을 두는 것이었다 — 5초 간격을 두고 재시도한 첫 번째 시도에서 바로 성공했다. 즉 원인은 (M4가 지목한) 페이지 개수 모호성만이 아니라, **연속된 CLI 호출 자체가 매 호출마다 별도의 웹 인스펙터 프록시를 붙였다 떼는 과정에서 겪는 타이밍 경합**으로 보인다 — 이는 M4의 "페이지 정체성이 진동한다"는 관측을 좁혀서 재확인하되, "탭 1개로 줄이면 안정된다"는 가설은 이번 세션에서 **기각**한다. 근본 원인 조사나 수정은 시도하지 않았다(SPEC-WEBVIEW-001 영역, 지시문이 범위 밖으로 명시).
+
+#### 완전 17-AC 최종 매트릭스
+
+| AC ID | 상태 | 검증 명령 | 실제 결과 |
+|-------|------|-----------|-----------|
+| AC-GEST-001 | PASS | M1/M2 unit(mock) + 이번 M5 `swipe` 실기기 재확인 | argv 정확성은 M1/M2에서 확정, 이번 세션의 실제 `swipe` 호출도 정확한 envelope으로 응답 |
+| AC-GEST-002 | PASS | M1/M2 unit(mock) + 이번 M5 `--duration 500`/`--duration abc`/`--duration ""`/`--duration -100` 재확인 | ms→초 환산은 M1에서 unit으로 확정. 이번 세션 CLI 레벨 재확인: `swipe ... --duration 500` wall 2.457s(순수 idb 0.818s) — 500초가 아님을 시간으로 재확증. 거부 3종 전부 정확한 코드로 응답 |
+| AC-GEST-003 | PASS | M2 unit(mock) + 이번 M5 3변형 재실행 | `swipe 100 800 100`→INVALID_COORDINATES, `swipe 1.5 800 100 200`→INVALID_COORDINATES, `swipe 100 -50 100 200`→INVALID_ARGS — 전부 재확인 |
+| AC-GEST-004 | PASS | `pnpm vitest run`(exit 0, 510/510) + `pnpm typecheck`(exit 0) + `pnpm build`(exit 0) | M4 종료 시점과 동일 510건 — M5는 프로덕션 코드를 건드리지 않았으므로 회귀 0 |
+| AC-GEST-005 | PASS | 이번 M5 `swipe 200 700 200 300 --duration 500` 실기기 재확인 | 스크린샷 SHA-256 `288d868...`→`0781d11...`(다름), 육안 확인 결과 문서 상단→TC39 인포박스로 실제 이동 확인 |
+| AC-GEST-006 | **PARTIAL**(불변) | `command -v adb` | 이번 세션에도 `adb` 부재 확인. Android 실기기 스와이프는 여전히 확인 불가 — 승격 조건(adb 설치 **and** 기기 연결) 미충족. spec.md §C.2대로 §C.1-⑥은 로컬 수단으로 영구 미실측 |
+| AC-GEST-007 | PASS | M3 unit + 이번 M5 `scroll down`/`scroll up` 실기기 재확인 | 응답의 `to.y < from.y`(down) / `to.y > from.y`(up) 실측 확인, 화면 밖으로 나가지 않음 |
+| AC-GEST-008 | PASS | M3 unit(mock) + grep | `grep -cE '^  [a-zA-Z]+\(' src/schema/device-backend.ts` → 9 (M5에서도 재확인, 인터페이스 변경 없음) |
+| AC-GEST-009 | PASS | M3 unit + 이번 M5 `--amount 0`/`--amount 1.5`/`--amount -0.5` 재실행 | 3종 전부 정확한 코드(`INVALID_AMOUNT` ×2, `INVALID_ARGS` ×1)로 재확인 |
+| AC-GEST-010 | PASS | M3 unit(mock) — 실기기 재검증 불필요(acceptance.md 검증 방식이 unit(mock)) | 빈 배열/전부 0 bounds → `SCREEN_SIZE_UNKNOWN`, M3에서 확정 |
+| AC-GEST-011 | **PASS**(M5에서 정식 판정 — M3는 조기 부분 확증이었음) | 이번 M5 `scroll down`→`scroll up` 왕복, 스크린샷 3장 비교 | witness 존재(SCREEN_SIZE_UNKNOWN 없이 성공) 확인. 스크롤다운 후 인포박스 하단, 스크롤업 후 스와이프 직후 상태로 복귀 — 왕복 확증. 이 세션에서도 갈래 4(크롬-only, witness 없음)는 발생하지 않았다 |
+| AC-GEST-012 | PASS | 이번 M5 `tap --web 'a[href*="Netscape"]'` 실기기 재확인 | 전(JavaScript 문서)/후(**Netscape 문서로 제목 자체가 전환**) 스크린샷 비교로 확증. `method:"native-scrolled"`, 좌표(243,419) |
+| AC-GEST-013 | PASS | 위와 동일 | 응답에 `method:"native-scrolled"`로 스크롤 발생 사실이 구분 표기됨(스크롤 없는 `"native"`와 다른 값) |
+| AC-GEST-014 | PASS | M4 unit(mock) — acceptance.md 검증 방식이 unit(mock), 실제 브라우저에서 "끌어와도 안 되는" 상태를 유기적으로 재현하기 어려움 | M4에서 확정, 이번 세션 재검증 불필요 |
+| AC-GEST-015 | PASS | 이번 M5 전체 e2e 시퀀스(성공 4건 + 거부 9건) | 13개 응답 전부 단일 JSON 문서, `JSON.parse` 가능(육안 확인 — 매 응답이 한 줄 JSON) |
+| AC-GEST-016 | PASS | 이번 M5 `scroll down` 응답 | `direction:"down"` + `from`/`to` 좌표 동시 표기, `to.y(240) < from.y(634)` |
+| AC-GEST-017 | PASS | M3 unit(mock) — 실기기 재검증 불필요(acceptance.md 검증 방식이 unit(mock)) | witness 없는 조각 집합 → `SCREEN_SIZE_UNKNOWN`, M3에서 확정 |
+
+**집계**: PASS 16건(001,002,003,004,005,007,008,009,010,011,012,013,014,015,016,017), PARTIAL 1건(006), FAIL 0건. 17개 AC 전부 판정 완료 — 대기(deferred) 없음.
+
+#### 최종 품질 게이트
+
+```
+$ pnpm vitest run
+ Test Files  29 passed (29)
+      Tests  510 passed (510)
+
+$ pnpm typecheck   → exit 0
+$ pnpm build       → exit 0
+```
+
+#### Scope Check
+
+```
+$ git status --porcelain --untracked-files=no
+(M5 시작 시점부터 지금까지 빈 출력 — 프로덕션/테스트 코드 미변경)
+```
+
+M5는 실기기 검증 마일스톤이므로 산출물이 없다(plan.md §A.6에도 M5 전용 파일이 없음). 유일한 변경은 이 `progress.md` 자체와, 그 안에서 정정한 M4 커밋 SHA backfill 한 줄이다. 스크린샷 등 모든 임시 증거물은 저장소 밖 `/private/tmp/.../scratchpad/`에 저장했다(저장소에 커밋하지 않음).
+
+#### 잔여 한계 (지시문 §B-6, 정직하게 기록)
+
+1. **Android는 전혀 미검증이다.** `adb` 자체가 이 머신에 없다(도구 부재, 기기 연결 여부 이전 단계). 승격 조건(adb 설치 **and** 기기 연결)이 둘 다 충족되기 전까지 AC-GEST-006은 PARTIAL로 남고, spec.md §C.1-⑥(adb swipe 문법·ms 단위)은 **로컬 수단으로는 영구히 미실측**이다.
+2. **`--web` 프록시의 페이지 선택 불안정성은 M4가 기록한 것보다 근본적이다.** M4는 "다중 탭 상태에서 페이지 정체성이 진동한다"고 기록했으나, 이번 M5에서는 **탭을 1개로 줄인 뒤에도** `dump`/`tap`이 바로 다음 호출에서 실패하는 사례를 재현했다. 유일하게 안정적으로 통한 완화책은 CLI 호출 사이에 몇 초의 간격을 두는 것이었다 — 즉 원인은 페이지 개수 모호성뿐 아니라 프록시의 attach/detach 타이밍 경합일 가능성이 있다. 이 SPEC의 범위 밖(SPEC-WEBVIEW-001 영역)이므로 근본 수정은 시도하지 않았고, 이 사실만 기록해 다음 세션이 같은 재발견을 반복하지 않도록 한다.
+3. **`SCROLL_SWIPE_DURATION_MS = 500`은 REQ가 요구하지 않은 내부 구현 상수다**(M3에서 스스로 결정, `scroll.ts` 내부에만 존재, CLI에 노출되지 않음). 이번 M5의 `scroll down`/`scroll up` 두 호출 모두 이 상수 덕분에 실제 스크롤이 일어났다 — 상수가 없었다면 M3가 발견한 것과 동일하게 무동작이었을 것이다. SPEC 어디에도 이 값 자체를 요구하지 않으므로, 향후 이 상수를 바꾸는 변경은 SPEC 문구 위반이 아니라 조용한 회귀가 될 수 있다는 점을 남겨둔다.
+4. **스크롤 성공 여부에 대한 CLI 자체 판정은 여전히 없다**(spec.md §C.3, D1 그대로) — 이번 e2e에서 실제로 스크롤됐음을 확인한 것은 CLI가 아니라 **외부 관찰자(스크린샷 비교)**였다. e2e가 "실제로 움직였다"를 확증했다고 해서 CLI의 판정 능력 자체가 달라진 것은 아니다 — 호출자(에이전트)가 여전히 `dump`를 다시 떠서 검증해야 한다는 설계(D1)는 이번 세션으로 강화됐을 뿐 변경되지 않았다.
+5. **witness 없음(크롬-only) 갈래는 이번에도 실기기에서 재현되지 않았다** — M3와 M5 두 세션 모두 Safari 전면 상태에서 witness가 존재했다. AC-GEST-017(witness 없는 조각 집합 → `SCREEN_SIZE_UNKNOWN`)은 여전히 unit 테스트로만 커버되며, 실제 iOS 환경에서 이 갈래가 발생하는 조건(예: 특정 iOS 버전·Safari 상태)은 이 프로젝트에서 실측된 바 없다.
+6. **프로덕션 결함은 발견되지 않았다** — M5 e2e 전 구간에서 코드 수정이 필요한 결함을 만나지 않았다(M2/M3가 발견했던 `--duration` 단위·`scroll` 무동작 결함과 달리, 이번 M5는 기존 구현이 설계대로 동작함을 재확인하는 데 그쳤다).
+
+#### Sync-phase 준비도
+
+M5의 모든 기준(17개 AC 전부 PASS 또는 PARTIAL로 판정 완료, 완전한 최종 매트릭스, `--duration 500` 눈으로 확인 완료, 잔여 한계 명시)이 충족됐다. `/moai sync`로 이 SPEC을 마감하는 데 걸림돌이 되는 항목은 없다 — AC-GEST-006의 PARTIAL 상태는 spec.md §C.2가 이미 명시한 대로 이 머신 환경의 영구적 제약(도구 부재)이지, M5 마일스톤 자체의 미비가 아니다.
+
+#### 커밋
+
+이 `progress.md` 갱신(M5 e2e 기록 + M4 커밋 SHA backfill 정정)만을 커밋한다 — 프로덕션/테스트 코드 변경이 없으므로 커밋 대상은 이 파일 하나다. 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인한 뒤 커밋한다(L44 사전 체크). SHA는 커밋 완료 후 이 절과 아래 §E.3 `m1_to_mN_commit_strategy` 줄에 backfill한다. push는 지시문 §Section D("Do not push")에 따라 수행하지 않는다.
+
+## §E.3 Run-phase Audit-Ready Signal (M5 최종)
+
+```yaml
+run_status: M5-complete
+ac_pass_count: 16     # 최종(001,002,003,004,005,007,008,009,010,011,012,013,014,015,016,017) -- AC-GEST-011이 조기확증에서 정식 PASS로 전환
+ac_fail_count: 0
+ac_partial_count: 1   # AC-GEST-006 (adb 미설치, 전 마일스톤과 동일 상태 유지 -- 로컬 수단으로 영구 미실측)
+ac_deferred_count: 0
+ac_early_verification_count: 0   # M5에서 AC-GEST-011이 정식 판정으로 전환되어 0
+total_run_phase_files: 20   # M5는 프로덕션/테스트 파일을 추가하거나 수정하지 않음(M4까지의 20 그대로)
+new_warnings_or_lints_introduced: false
+preserve_list_post_run_count: 0   # src/normalize/*, src/webview/* 등 PRESERVE 대상 전부 미변경(M1-M5 누적)
+l44_pre_commit_fetch: pending    # 커밋 직전 실행 예정, 아래 §커밋 절 참조
+l44_post_push_fetch: pending     # 이 SPEC은 push하지 않음(지시문 §Section D "Do not push") — n/a로 남김
+cross_platform_build: { windows: not_applicable, note: "TypeScript/Node 프로젝트, GOOS 교차빌드 대상 아님" }
+m1_to_mN_commit_strategy: "M1-M5 마일스톤별 개별 커밋(M1 9c98e3a, M2 2e5e210, M3 319ec9b, M4 0463337, M5 이 커밋)"
+```
+
+## 블로커 / 서프라이즈 (M5 종료 시점 — 최종, 마감 게이트 통과)
+
+1. **[가장 중요] `--web` 프록시 불안정성이 탭 개수 문제만이 아니라는 재발견**: M4는 다중 탭(페이지 정체성 진동)을 원인으로 지목했으나, 이번 M5는 Safari를 단일 탭으로 재시작한 뒤에도 `dump`/`tap`이 바로 다음 호출에서 실패하는 사례를 반복 관측했다. 개별 호출 사이 간격(≈5초)을 두는 것만이 안정적으로 통했다 — SPEC-WEBVIEW-001 범위이므로 수정하지 않았고, 사실만 기록한다(위 "잔여 한계" 2번).
+2. **프로덕션 결함 없음**: M5 e2e 전 구간(swipe·scroll 왕복·tap --web·거부 경로 9종)에서 코드 수정이 필요한 결함을 만나지 않았다 — 지시문이 요구한 대로 "결함을 만나면 고치기 전에 먼저 보고" 절차가 발동될 일이 없었다.
+3. **AC-GEST-011 정식 PASS 전환**: M3가 "조기 부분 확증"으로 남겨둔 판정을 이번 M5에서 정식으로 PASS 처리했다 — acceptance.md가 명시한 대로 M5가 이 AC의 공식 판정 마일스톤이다.
+4. **M4 커밋 SHA backfill 누락을 정정**: M4 섹션의 "아래 커밋 완료 후 SHA를 이 절에 backfill한다" 플레이스홀더가 실제 커밋(0463337) 이후에도 갱신되지 않은 채 남아 있었다. 이번 M5 기록 시점에 실제 SHA로 정정했다 — SPEC 본문(spec.md/plan.md/acceptance.md)이 아닌 progress.md 메타데이터 정정이므로 범위 이탈이 아니다.
+5. **범위 이탈 없음**: `git status --porcelain --untracked-files=no`가 M5 전 구간에서 빈 출력 — 프로덕션/테스트 코드, SPEC 본문 3종(spec.md/plan.md/acceptance.md) 전부 미변경. 유일한 변경은 이 `progress.md`.
+6. **frontmatter는 `status: in-progress`로 유지**: `implemented → completed` 전이는 manager-docs가 소유하는 sync 단계 소관이며(spec-frontmatter-schema.md § Status Transition Ownership Matrix), M5는 그 전이를 수행하지 않았다.
