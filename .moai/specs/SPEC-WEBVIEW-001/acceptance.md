@@ -2,7 +2,7 @@
 id: SPEC-WEBVIEW-001
 title: "iOS 시뮬레이터 웹뷰 DOM 인지 · 조작 — 인수 기준"
 version: "0.1.0"
-status: draft
+status: in-progress
 created: 2026-07-27
 updated: 2026-07-27
 author: hatae
