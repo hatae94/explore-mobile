@@ -1,8 +1,8 @@
 ---
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 구현 계획"
-version: "0.5.0"
-status: completed
+version: "0.6.0"
+status: in-progress
 created: 2026-07-27
 updated: 2026-07-28
 author: hatae
@@ -17,8 +17,9 @@ amendment_of: SPEC-GESTURE-001
 
 - 대상: `/Users/hatae/Documents/personal/explore-mobile`, 브랜치 `master`
 - 선행: SPEC-ANDROID-001 / SPEC-IOS-001 / SPEC-WEBVIEW-001(0.2.0) 모두 completed
-- 기준선: 테스트 438건(26파일), typecheck·build exit 0, 커버리지 92.95%
+- 기준선: 테스트 438건(26파일), typecheck·build exit 0, 커버리지 92.95% — **0.6.0/M8 시점 기준선은 622건(29파일)**
 - **선행 스파이크 완료**: iOS swipe 계약, `scrollIntoView` 성립, 화면 크기 파생 가능성을 실측(spec.md §C.1)
+- **0.6.0 — Android 실기기 연결**: Samsung SM-S938N(Galaxy S25 Ultra), Android 16, 1440×3120, 600dpi, 무선 ADB. `adb` 1.0.41 / 36.0.2가 `~/Library/Android/sdk/platform-tools/adb`에 있으며 **PATH에는 없다**(§C 참조)
 
 ### A.5 PRESERVE (수정 금지)
 
@@ -45,12 +46,29 @@ PRESERVE 목록에 없으면서 실제로 손대는 파일. 여기 없는 파일
 | `src/cli/validators.ts` | M3·M6·M7 | M3 비율 파서 / M6 `--duration` 양의 정수화(`0` 거부) / **M7 상한 + 십진 어휘 제한** |
 | `src/cli/commands/scroll-geometry.ts` | M6·M7 | M6 퇴화 판정(`from === to`) / **M7 문턱 술어로 교체** + `MIN_EFFECTIVE_SWIPE_PX` 상수 |
 | `src/cli/commands/scroll.ts` | M6·M7 | M6 `AMOUNT_TOO_SMALL` 거부 경로 / M7 문턱 기반 판정 + `minValidRatio` 재정의 |
-| `src/cli/commands/scroll-geometry.test.ts` | M7 | 홀수 축(393x852, 375x667) 픽스처 + 독립 유도 기댓값 |
+| `src/cli/commands/scroll-geometry.test.ts` | M7·M8 | M7 홀수 축(393x852, 375x667) 픽스처 + 독립 유도 기댓값 / **M8 문턱 주입형 시그니처 반영** |
 | `src/cli/commands/web-support.test.ts` | M7 | 컨테이너 스크롤 픽스처 |
+| `src/schema/device-backend.ts` | **M8** | **10번째 메서드**(문턱 공급) + 출처 타입. `@MX:ANCHOR` "9-method" 문구 갱신 |
+| `src/backend/adb-backend.ts` | **M8** | `wm density` 조회 → `8dp × density` + 여유로 문턱 파생 |
+| `src/backend/idb-backend.ts` | **M8** | 실측 상수 11pt 반환(기기 조회 없음) — 상수의 이전(移轉)이지 재측정이 아니다 |
+| `src/backend/registry.ts` | **M8** | 문턱 공급 파사드 위임(`swipe`와 동일한 resolve-then-delegate) |
+| `src/cli/commands/scroll-geometry.ts` | M6·M7·**M8** | M6 퇴화 판정 / M7 문턱 술어 + 상수 / **M8 상수 제거 → 문턱을 인자로 받음** |
+| `src/cli/commands/scroll.ts` | M6·M7·**M8** | M6 거부 경로 / M7 `minValidRatio` 재정의 / **M8 백엔드에서 문턱 조회 + 응답에 출처 동반** |
+| `src/schema/device-backend.test.ts` / `src/backend/registry.test.ts` / `src/cli/router.test.ts` / `src/cli/commands/web-support.test.ts` | **M8** | 테스트 더블 **10번째** 메서드 보강(4파일 7지점) + 트립와이어 9 → 10 |
+| `src/backend/adb-backend.test.ts` / `src/backend/idb-backend.test.ts` | **M8** | mock 밀도(420/480/600/640dpi) 파생 + iOS 상수 경로 |
+| `src/cli/commands/scroll.test.ts` | **M8** | 문턱 주입 픽스처 + 출처 동반 단언 |
 
 ## §B. 알려진 이슈 / 리스크
 
-### B.1 Android 미실측 [최고 리스크]
+### B.1 Android 미실측 [해소됨 — 0.6.0, 2026-07-28]
+
+> **상태: 해소.** 아래 서술은 **0.5.0 시점의 상태**이며 그 **전제 자체가 틀렸다**. 기록을 남기는 이유는 재발 방지다 — 이 항목은 "리스크를 정확히 식별하고 대응했는데 결국 못 했다"가 아니라 **"리스크의 근거를 잘못 조사했다"**의 사례다.
+>
+> **틀린 부분**: `adb`는 **설치돼 있었다**(`~/Library/Android/sdk/platform-tools/adb`). PATH에만 없었고, `command -v adb` 하나의 실패를 "미설치"라는 더 강한 명제로 일반화했다. 그 위에 "⑥은 로컬 수단으로 승격 불가"라는 **더 강한 결론까지** 얹었다 — 실제로는 `export PATH` 한 줄이면 됐다.
+>
+> **교훈**: 도구 부재는 **단일 명령의 실패로 판정하지 않는다.** `command -v`는 "PATH에서 실행 가능한가"를 묻지 "설치돼 있는가"를 묻지 않는다. §C 사전 점검이 이에 맞춰 갱신됐다.
+>
+> **결과**: ⑥·④는 실측으로 승격됐고 AC-GEST-006의 승격 조건 (a)+(b)가 충족됐다(spec.md §C.2 정정). **다만 규율은 유지된다** — 실측된 것은 기기 1대(SM-S938N)이며, 다중 최상위(⑨)·다른 밀도·다른 제조사는 여전히 미확인이다.
 
 `adb shell input swipe`는 **문서 근거뿐**이고 기기 확인이 없다. 더 정확히는 이 머신에 **`adb`가 설치조차 돼 있지 않다**(`command -v adb` → `command not found`, spec.md §C.2). 이 프로젝트는 문서 가정이 틀렸던 전례가 있다 — SPEC-IOS-001에서 idb 가정 3건이 전부 틀렸다.
 
@@ -131,18 +149,52 @@ sync-auditor 사후 감사가 **PASS-WITH-DEBT 0.69 / SAFE TO PUSH: No**를 반�
 
 **AC-GEST-018의 경계 단언이 동어반복이다.** 현재 기댓값이 `minNonDegenerateRatio()`의 **자기 출력**이라, 홀수 화면에서도 "기댓값과 같다"로 통과한다. 함수가 틀려도 테스트는 초록이다. M7이 대체할 단언은 **독립적으로 유도한 기댓값**(손계산 상수)을 써야 한다.
 
+### B.8 한 대의 기기가 규칙처럼 보였다 [최고 — 0.6.0 amendment의 존재 이유]
+
+Android 실기기가 처음 연결되면서(SM-S938N, Android 16, 600dpi) **출하된 코드에서 결함이 재현됐다.** 전문은 `.moai/reports/android-verification/SPEC-GESTURE-001-android-2026-07-28.md`.
+
+| 결함 | 증상 | 실측 |
+|------|------|------|
+| G1 | `MIN_EFFECTIVE_SWIPE_PX = 11`이 플랫폼 독립 상수 — Android에서 무효 | 11px 세로 **0/5**, 가로 **0/6**. 이 기기 슬롭은 30px(= `8dp × 3.75`)이라 11px은 약 1/3(spec.md §C.1-⑰) |
+| G2 | 따라서 Android `minValidRatio`가 **되먹여도 안 움직이는 값**을 권고한다 | G1의 직접 파생. sync-auditor 2차 감사 N3가 Android에서 그대로 재현 |
+| G3 | REQ-GEST-SCROLL-007 근거 문장이 **거짓**("1px은 아무 일도 안 일어난다") | 문턱 미만 드래그가 **탭**이 돼 바텀시트가 열렸다(§C.1-⑱). `tappable=false` 요소에도 먹었다 |
+| G4 | §C.2의 "`adb` 미설치"가 **틀린 진술** | 설치돼 있었고 PATH에만 없었다(B.1 참조) |
+
+**왜 이것이 B.7과 다른 계열인가.** B.7의 교훈은 "픽스처 다양성"이었다 — 단일 **화면 크기**로 기하 로직을 검증하면 그 화면의 성질(축 길이의 홀짝)이 규칙처럼 보인다. B.8은 한 겹 위다: 단일 **플랫폼**으로 기기 물리량을 검증하면 **그 플랫폼의 상수가 보편 상수처럼 보인다.** 두 번 다 숨은 변수는 "우리가 가진 것이 전부라고 가정한 것"이었다.
+
+**그리고 SPEC은 이미 옳게 적어 뒀다.** "iOS에서 측정한 문턱은 Android의 근거가 아니다"(0.5.0 REQ-GEST-SCROLL-007 (e))는 정확한 문장이었다. **구현은 그 문장을 지키지 않았다** — 하나의 상수를 두 플랫폼에 썼다. 즉 이번 결함은 SPEC의 공백이 아니라 **산문이 구조를 강제하지 못한 결과**다. 0.6.0의 대응이 "문서에 더 적는다"가 아니라 **"각 백엔드가 자기 값을 소유하게 한다"**(REQ-GEST-SCROLL-008)인 이유가 이것이다 — 값이 흐를 통로 자체를 없애야 산문에 기대지 않는다.
+
+**G3은 양방향이다(둘 다 기록한다).** 가드의 정당화는 **강해지고**(무효과가 아니라 되돌릴 수 없는 오작동을 막는다), 측정의 판정 규칙은 **약해진다**(M7·Android 양쪽 모두 "안 움직임 = 아무 일 없음"으로 읽었고, iOS는 체커보드 페이지 덕에 **우연히** 탭 현상을 피했다). 전자는 REQ 근거 문단으로, 후자는 REQ-GEST-SCROLL-007 (f) 측정 방법론 + AC-GEST-029로 각각 반영한다.
+
+**대응**: G1·G2는 플랫폼별 파생 + 백엔드 공급으로(REQ-GEST-SCROLL-007/008, AC-GEST-026/027/028), G3은 근거 정정 + 측정 조건 신설로(AC-GEST-029), G4는 §C.2 정정 + 사전 점검 갱신으로 막는다.
+
+**측정 대상 기기가 아직 연결돼 있다** — M8은 이 기기에서 왕복(AC-GEST-028)을 확인할 수 있다. 연결이 끊기면 AC-GEST-028은 PARTIAL로 남기고 "아마 될 것"이라고 쓰지 않는다.
+
 ## §C. 사전 점검 (Pre-flight)
 
 ```bash
-pnpm vitest run                          # 기준선 438
+pnpm vitest run                          # 기준선 622 (0.6.0 시점)
 pnpm typecheck && pnpm build             # exit 0
 xcrun simctl list devices booted         # 시뮬레이터 (iPhone 17 Pro / iOS 26.0)
-command -v adb || echo "adb absent → AC-GEST-006 PARTIAL, spec.md §C.1-⑥ 미실측 고정"
 idb ui swipe --help                      # 계약 재확인 (--duration 단위 주의)
-grep -cE '^  [a-zA-Z]+\(' src/schema/device-backend.ts   # 기준선 8 → M1 후 9
+grep -cE '^  [a-zA-Z]+\(' src/schema/device-backend.ts   # 기준선 9 → M8 후 10
 ```
 
-`adb`가 없으면 `adb devices`는 그 자체로 오류가 난다. 위 `command -v` 형태는 부재를 **판정 결과**로 기록하고 넘어간다.
+**adb 탐지 (0.6.0 정정 — `command -v` 단독 판정 금지)**
+
+```bash
+# PATH -> 표준 SDK 위치 순으로 확인한다. 둘 다 없을 때만 "부재"로 기록한다.
+command -v adb || ls ~/Library/Android/sdk/platform-tools/adb
+
+# PATH에 없고 표준 위치에 있으면 export 후 진행한다 (M8 세션의 실제 상태).
+export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
+adb devices -l                           # 기기 연결 + serial 확인
+adb -s <serial> shell wm density         # 밀도 -> 8dp x density 파생 (AC-GEST-026)
+```
+
+> **`command -v adb` 하나로 부재를 판정하지 않는다.** 0.5.0까지 이 자리에 있던 `command -v adb || echo "adb absent ..."`는 **PATH 부재를 미설치로 오판**해 §C.2·B.1·AC-GEST-006을 연쇄적으로 틀리게 만들었다(B.1 참조). `command -v`는 "PATH에서 실행 가능한가"를 묻지 "설치돼 있는가"를 묻지 않는다.
+>
+> **CLI 자체는 PATH의 `adb`를 부른다**(`spawnAdb`가 바이너리명을 `"adb"`로 고정). 따라서 위 `export PATH`는 조사용 편의가 아니라 **M8 실행의 전제 조건**이다 — 빠뜨리면 CLI가 기기를 전혀 보지 못하고, 그 상태를 "기기 없음"으로 오판하면 같은 실수를 반복한다. **M8을 도는 모든 세션이 이 export를 먼저 해야 한다.**
 
 **M3 설계 전 필수(B.5)** — 이건 위 목록과 달리 순서가 강제된다.
 
@@ -290,6 +342,42 @@ iOS 시뮬레이터에서: `swipe`로 화면 이동 확증 → `scroll down`/`up
 
 **이 마일스톤을 끝내기 전에는 push하지 않는다** — 재감사가 SAFE TO PUSH: No를 유지했고 17개 커밋이 로컬에 남아 있다.
 
+### M8 — 문턱의 플랫폼별 파생 + Android 실기기 검증 [0.6.0 amendment]
+
+> **선행**: M1~M7 완료(0.5.0에서 마감·푸시, HEAD `7be7611`). 이 마일스톤은 **Android 실기기 연결**로 열렸으며 B.8이 근거다.
+>
+> **이 마일스톤은 연결된 실기기에서 검증한다** — Samsung SM-S938N(Galaxy S25 Ultra), Android 16, 1440×3120, 600dpi, 무선 ADB. M7이 iOS 시뮬레이터에서 문턱을 실측한 것과 같은 위상의 작업을 Android에서 한다.
+>
+> **PATH 전제**: `adb`는 `~/Library/Android/sdk/platform-tools/adb`에 있고 **PATH에는 없다.** §C의 `export PATH=...`를 **모든 세션에서 먼저** 실행한다 — 빠뜨리면 CLI가 기기를 전혀 보지 못한다.
+
+**산출물 1 — 백엔드 문턱 공급(다른 모든 산출물의 선행).** REQ-GEST-SCROLL-008. `DeviceBackend`에 10번째 메서드를 **가법 추가**하고 구현체 **세 개 전부**에 배선한다.
+
+- `AdbBackend` — `-s <serial> shell wm density`로 밀도를 조회해 `8dp × density`에 여유를 더해 파생한다. **권장 `floor(8dp × density) + 2px`**(본 기기 32px); 다른 값을 택하면 여기에 근거를 남긴다.
+- `IdbBackend` — 실측 상수 **11pt**를 반환한다. **기기를 조회하지 않는다.** 이것은 상수의 이전(移轉)이지 재측정이 아니다 — 값의 출처는 §C.1-⑭ 그대로다.
+- **`BackendRegistry` — 파사드 위임.** M1의 `swipe`가 겪은 함정과 같다: 빠뜨리면 (a) 타입 체크가 깨지고 (b) 문턱이 **프로덕션 경로에서 기기에 도달하지 못한다**. `stopApp`/`swipe`와 동일한 resolve-then-delegate.
+- **반환값에 출처(basis)를 실는다** — "런타임 기기 조회에서 파생" / "다른 기기에서 측정된 상수"가 구별돼야 한다. 구체적 타입·필드명은 이 마일스톤의 설계 재량이다(spec.md §D "구현 세부(HOW)").
+- **인터페이스에 밀도를 노출하지 않는다.** 밀도 접근자를 추가하면 iOS가 밀도를 지어내야 한다 — AC-GEST-027이 이를 거부한다.
+
+**산출물 2 — 기하 계층에서 상수 제거(`scroll-geometry.ts`).** `MIN_EFFECTIVE_SWIPE_PX` 모듈 상수를 없애고, `isDegenerateSwipe`/`minNonDegenerateRatio`가 **문턱을 인자로 받도록** 바꾼다. 순수 함수 성질은 유지한다 — 기기 없이 mock 문턱으로 테스트 가능해야 한다.
+
+**산출물 3 — `scroll.ts` 배선.** `resolveTargetDevice` 뒤에 백엔드에서 문턱을 조회하고, `AMOUNT_TOO_SMALL` 응답에 `minValidRatio`와 **함께 출처**를 싣는다. 거부 순서는 그대로 유지한다(방향 → `--amount` → 기기 해석 → `dump` → 문턱 → 기하 판정 → `swipe`).
+
+**산출물 4 — 트립와이어·테스트 더블 갱신.** M1이 8 → 9로 겪은 것을 9 → 10으로 한 번 더 한다. `device-backend.test.ts:12`의 `Record<keyof DeviceBackend, true>` + `toHaveLength` **9 → 10**, `router.test.ts`(4지점), `registry.test.ts:31`, `web-support.test.ts:88`. `@MX:ANCHOR` "9-method" 문구도 갱신한다 — **갱신하지 않으면 앵커가 거짓이 된다**(M1의 "8-method" 교훈).
+
+**산출물 5 — 실기기 검증(AC-GEST-028).** 연결된 SM-S938N에서 왕복을 확인한다: 문턱 미만 비율 → `AMOUNT_TOO_SMALL` → 응답의 `minValidRatio`를 **되먹여 3/3 이동**, 한 단계 아래는 거부. **네 방향 전부.**
+
+- **오라클**: 상태바(상단 250px) 제외 본문 스크린샷 해시. **무제스처 반복 촬영으로 잡음 기준선을 먼저 확인**한다 — 설정 화면은 3회가 전부 달라 부적합했다(§C.1-⑰).
+- **⚠️ 상호작용 요소가 없는 화면에서 시행한다.** 문턱 미만 스와이프는 **탭이 된다**(§C.1-⑱) — 그러지 않으면 검증 자체가 기기 상태를 바꾼다. 1차 측정이 이것 때문에 폐기됐다.
+- **AC-GEST-006 판정도 여기서 내린다** — 승격 조건 (a)+(b)가 충족됐으므로 PARTIAL → PASS 판정을 progress.md에 기록한다. **acceptance.md가 판정을 미리 적어 두지 않는다.**
+
+**산출물 6 — 픽스처(테스트).** mock 밀도 **420 / 480 / 600 / 640dpi** → 슬롭 **21 / 24 / 30 / 32px** 파생을 고정한다(AC-GEST-026). B.7·B.8의 교훈이 같은 방향을 가리킨다 — **한 값만 쓰면 그 값의 성질이 규칙처럼 보인다.** iOS 경로는 밀도 조회가 **일어나지 않음**을 단언한다.
+
+**AC**: AC-GEST-026(플랫폼별 파생) / 027(10번째 메서드 + 출처) / 028(Android 왕복) / 029(측정 방법론). 더해 AC-GEST-008의 grep 기댓값이 9 → 10으로 갱신됐다.
+
+**회귀 기준선**: **622건**(0.6.0 시점). 감소 없이 통과해야 한다(AC-GEST-027).
+
+**Android 1대에서만 측정됐다** — 다른 밀도·제조사는 미확인이며, 파생 규칙(`8dp` AOSP 기본값)의 이식성에 기대는 것이지 전수 검증이 아니다. "모든 Android에서 확인됐다"고 쓰지 않는다.
+
 ## §G. 마일스톤 의존 관계
 
 ```
@@ -301,6 +389,11 @@ M1 (인터페이스+백엔드+레지스트리) ──┬──> M2 (swipe 명령
 
 M6 ──> M7 (문턱 측정 → 술어 교체 → 픽스처 다양화)
        └ 측정이 선행 산출물. 측정 없이는 나머지 산출물이 값을 갖지 못한다.
+
+M7 ──> M8 (백엔드 문턱 공급 → 기하 계층 상수 제거 → 실기기 왕복)
+       └ 백엔드 공급이 선행 산출물. 문턱을 공급받을 통로가 없으면 나머지가 서지 못한다.
 ```
 
-M2와 M3는 둘 다 M1의 `swipe`를 호출하므로 M1 뒤다. M4는 웹 경로 단독이라 M1과 독립이지만, e2e는 함께 돈다. **M6는 M5 마감 후 사후 감사에서 열린 마일스톤**이므로 M2·M3·M4의 산출물을 모두 건드린다 — 순서상 마지막이다.
+M2와 M3는 둘 다 M1의 `swipe`를 호출하므로 M1 뒤다. M4는 웹 경로 단독이라 M1과 독립이지만, e2e는 함께 돈다. **M6는 M5 마감 후 사후 감사에서 열린 마일스톤**이므로 M2·M3·M4의 산출물을 모두 건드린다.
+
+**M8은 M7 마감·푸시 후 Android 실기기 연결로 열렸다** — 순서상 마지막이며, M1(인터페이스)·M3(기하)·M7(문턱)의 산출물을 모두 건드린다. M6·M7이 **사후 감사**로 열린 것과 달리 M8은 **새 관측 수단**(실기기)이 생겨 열렸다는 점이 다르다 — 즉 이전 마일스톤들이 틀렸다기보다, 확인할 수 없던 것을 확인할 수 있게 됐고 그 결과 하나가 결함이었다.
