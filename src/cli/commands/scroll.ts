@@ -1,21 +1,29 @@
 /**
  * `scroll <up|down|left|right> [--amount <ratio>]` 명령 (SPEC-GESTURE-001
- * M3, REQ-GEST-SCROLL-001~006; AC-GEST-007~010, AC-GEST-016, AC-GEST-017).
+ * M3, REQ-GEST-SCROLL-001~006; AC-GEST-007~010, AC-GEST-016, AC-GEST-017.
+ * M8/0.6.0 amendment로 문턱 조회 배선 추가, REQ-GEST-SCROLL-007/008).
  *
- * 새 백엔드 메서드를 추가하지 않는다(spec.md §F, plan.md §F M3) — 화면
- * 크기를 기존 `dumpUiHierarchy()` 결과에서 파생하고(`scroll-geometry.ts`
- * `deriveScreenSize`), 방향·비율을 좌표로 바꿔(`computeScrollSwipe`) M1이
- * 이미 배선한 `backend.swipe()`를 그대로 호출한다.
+ * M3은 새 백엔드 메서드를 추가하지 않았다(spec.md §F, plan.md §F M3) —
+ * 화면 크기를 기존 `dumpUiHierarchy()` 결과에서 파생하고
+ * (`scroll-geometry.ts` `deriveScreenSize`), 방향·비율을 좌표로 바꿔
+ * (`computeScrollSwipe`) M1이 이미 배선한 `backend.swipe()`를 그대로
+ * 호출한다. M8은 이 규율을 깨지 않는다 — 화면 크기와 달리 **밀도는
+ * 어떤 기존 메서드로도 얻을 수 없어**(§A.3 D3 운용 주석 보강) 문턱 공급
+ * 전용 메서드(`backend.getMinEffectiveSwipeThreshold`)가 정말로
+ * 필요했다.
  *
- * 거부 경로 순서(B-5, `swipe.ts`와 동일한 구조): 방향 파싱 -> `--amount`
- * 파싱/검증 -> `resolveTargetDevice` -> `dumpUiHierarchy`(화면 크기 파생)
- * -> `backend.swipe`. 앞의 두 단계에서 거부되면 어떤 백엔드 호출도
- * 일어나지 않는다(무동작 보장) — `SCREEN_SIZE_UNKNOWN` 단계에서는
- * `dumpUiHierarchy`는 이미 호출됐지만 `swipe`는 호출되지 않는다.
+ * 거부 경로 순서(B-5, `swipe.ts`와 동일한 구조; M8/0.6.0 amendment로
+ * 문턱 조회 단계 추가): 방향 파싱 -> `--amount` 파싱/검증 ->
+ * `resolveTargetDevice` -> `dumpUiHierarchy`(화면 크기 파생) ->
+ * `backend.getMinEffectiveSwipeThreshold`(문턱 조회, REQ-GEST-SCROLL-008)
+ * -> 기하 판정(`isDegenerateSwipe`) -> `backend.swipe`. 앞의 두 단계에서
+ * 거부되면 어떤 백엔드 호출도 일어나지 않는다(무동작 보장) —
+ * `SCREEN_SIZE_UNKNOWN` 단계에서는 `dumpUiHierarchy`는 이미 호출됐지만
+ * `swipe`는 호출되지 않는다.
  */
 
 import type { CommonElement } from "../../schema/common-element.js";
-import type { DeviceBackend } from "../../schema/device-backend.js";
+import type { DeviceBackend, SwipeThreshold } from "../../schema/device-backend.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { parseRatio } from "../validators.js";
@@ -109,19 +117,39 @@ export const scrollCommand: CommandHandler = async (args, backend: DeviceBackend
     );
   }
 
+  // REQ-GEST-SCROLL-008 (SPEC-GESTURE-001 M8/0.6.0 amendment): 문턱은 더
+  // 이상 플랫폼 독립 상수가 아니라 백엔드가 공급한다 — Android는 이
+  // 기기의 밀도를 조회해 파생하고, iOS는 실측 상수를 돌려준다. 어느
+  // 쪽도 상대의 값을 빌리지 않는다(spec.md §C.1-⑰).
+  let threshold: SwipeThreshold;
+  try {
+    threshold = await backend.getMinEffectiveSwipeThreshold(target.serial);
+  } catch (err) {
+    return failure("scroll", "BACKEND_COMMAND_FAILED", errorMessage(err));
+  }
+
   const { from, to } = computeScrollSwipe(directionRaw, ratio, screen);
 
-  // REQ-GEST-SCROLL-007 (SPEC-GESTURE-001 M6/0.4.0 amendment, F1): 반올림 후
-  // from/to가 같은 점이면 거리 0인 스와이프다 — ok:true로 보고하면서 아무
-  // 것도 움직이지 않는 결함(sync-auditor 사후 감사)을 여기서 거부한다.
-  // 어떤 제스처도 보내지 않는다 — 1px 클램프 같은 "성공하게 만드는" 보정은
-  // 하지 않는다(spec.md REQ-GEST-SCROLL-007 근거, plan.md §F M6 item 3).
-  if (isDegenerateSwipe({ from, to })) {
+  // REQ-GEST-SCROLL-007 (SPEC-GESTURE-001 M6/0.4.0 amendment, F1; M7/0.5.0
+  // amendment로 술어를 실측 문턱 기반으로 교체; M8/0.6.0 amendment로 문턱을
+  // 백엔드 공급으로 전환): 반올림 후 스크롤 축 거리가 이 기기의 문턱
+  // 미만이면 화면을 신뢰성 있게 움직이지 못한다 — ok:true로 보고하면서
+  // 아무 것도 움직이지 않는 결함(sync-auditor 사후 감사)을 여기서
+  // 거부한다. 어떤 제스처도 보내지 않는다 — 1px 클램프 같은 "성공하게
+  // 만드는" 보정은 하지 않는다(spec.md REQ-GEST-SCROLL-007 근거, plan.md
+  // §F M6 item 3). 응답에는 되먹일 최소 비율과 **그 값의 출처**를 함께
+  // 싣는다(REQ-GEST-SCROLL-008, AC-GEST-027) — 호출자가 이 값이 자기
+  // 기기에서 나온 것인지 판단할 수 있어야 한다.
+  if (isDegenerateSwipe({ from, to }, threshold.minEffectiveSwipePx)) {
     return failure(
       "scroll",
       "AMOUNT_TOO_SMALL",
       "scroll --amount is too small to move the screen at this size; no gesture was sent.",
-      { requestedRatio: ratio, minValidRatio: minNonDegenerateRatio(directionRaw, screen) },
+      {
+        requestedRatio: ratio,
+        minValidRatio: minNonDegenerateRatio(directionRaw, screen, threshold.minEffectiveSwipePx),
+        minValidRatioBasis: threshold.basis,
+      },
     );
   }
 

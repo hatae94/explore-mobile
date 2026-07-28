@@ -39,6 +39,7 @@ function mockBackend(devices: DeviceInfo[]): DeviceBackend {
     launchApp: vi.fn().mockResolvedValue(undefined),
     stopApp: vi.fn().mockResolvedValue(undefined),
     swipe: vi.fn().mockResolvedValue(undefined),
+    getMinEffectiveSwipeThreshold: vi.fn().mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
   };
 }
 
@@ -221,6 +222,18 @@ describe("BackendRegistry", () => {
         { durationMs: 500 },
       );
       expect(android.backend.swipe).not.toHaveBeenCalled();
+    });
+
+    it("getMinEffectiveSwipeThreshold(serial) routes to the owning backend (SPEC-GESTURE-001 M8, resolve-then-delegate like swipe/stopApp)", async () => {
+      const android = registeredBackend("android", [androidDevice()]);
+      const ios = registeredBackend("ios", [iosDevice()]);
+      const registry: DeviceBackend = new BackendRegistry([android, ios]);
+
+      const threshold = await registry.getMinEffectiveSwipeThreshold(iosDevice().serial);
+
+      expect(ios.backend.getMinEffectiveSwipeThreshold).toHaveBeenCalledWith(iosDevice().serial);
+      expect(android.backend.getMinEffectiveSwipeThreshold).not.toHaveBeenCalled();
+      expect(threshold).toEqual({ minEffectiveSwipePx: 11, basis: "measured-constant" });
     });
   });
 });

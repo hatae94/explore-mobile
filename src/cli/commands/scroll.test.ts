@@ -101,6 +101,11 @@ function createMockBackend(
     launchApp: vi.fn().mockResolvedValue(undefined),
     stopApp: vi.fn().mockResolvedValue(undefined),
     swipe: vi.fn().mockResolvedValue(undefined),
+    // M8/0.6.0 amendment (REQ-GEST-SCROLL-008): default threshold matches the
+    // iOS measured constant (11pt) so every pre-M8 fixture in this file
+    // (BOUNDARY_FIXTURES_402X874, minNonDegenerateRatio() call sites) keeps
+    // resolving against the SAME threshold it was derived against.
+    getMinEffectiveSwipeThreshold: vi.fn().mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
   };
 }
 
@@ -314,6 +319,11 @@ describe("scroll", () => {
         expect(result.error.details?.["requestedRatio"]).toBe(0.001);
         expect(typeof result.error.details?.["minValidRatio"]).toBe("number");
         expect((result.error.details?.["minValidRatio"] as number)).toBeGreaterThan(0.001);
+        // M8/0.6.0 amendment (REQ-GEST-SCROLL-008, AC-GEST-027): the
+        // rejected minValidRatio carries its source alongside the number,
+        // so a caller can tell this came from the default mock backend's
+        // measured-constant threshold, not a runtime device query.
+        expect(result.error.details?.["minValidRatioBasis"]).toBe("measured-constant");
       }
       expect(backend.swipe).not.toHaveBeenCalled();
     });
@@ -376,7 +386,7 @@ describe("scroll", () => {
         });
 
         it("minNonDegenerateRatio()가 계산한 경계 비율을 되먹이면 성공한다 (AC-GEST-024 왕복 검증, 응답 배선 회귀 가드 -- 문턱 정확성 증명은 위 독립 유도 테스트와 실기기 확인이 맡는다)", async () => {
-          const boundaryRatio = minNonDegenerateRatio(direction, { width: 402, height: 874 });
+          const boundaryRatio = minNonDegenerateRatio(direction, { width: 402, height: 874 }, 11);
           const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
 
           const result = await runCli(["scroll", direction, "--amount", String(boundaryRatio)], backend);
@@ -392,6 +402,72 @@ describe("scroll", () => {
         });
       });
     }
+  });
+
+  describe("AC-GEST-026/027 — 문턱 조회 배선 (SPEC-GESTURE-001 M8/0.6.0 amendment, REQ-GEST-SCROLL-007/008)", () => {
+    it("backend.getMinEffectiveSwipeThreshold를 해석된 serial로 호출한다 -- dump 이후, backend.swipe 이전", async () => {
+      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+
+      const result = await runCli(["scroll", "down", "--amount", "1"], backend);
+
+      expect(result.ok).toBe(true);
+      expect(backend.getMinEffectiveSwipeThreshold).toHaveBeenCalledWith("R58N90ABCDE");
+      expect(backend.dumpUiHierarchy).toHaveBeenCalledTimes(1);
+      expect(backend.getMinEffectiveSwipeThreshold).toHaveBeenCalledTimes(1);
+    });
+
+    it("device-query 출처(Android 시뮬레이션)로 응답하는 백엔드를 쓰면 AMOUNT_TOO_SMALL 응답의 출처도 device-query다 -- 한쪽 값이 다른 쪽 경로로 흘러가지 않는다", async () => {
+      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+      (backend.getMinEffectiveSwipeThreshold as ReturnType<typeof vi.fn>).mockResolvedValue({
+        minEffectiveSwipePx: 32,
+        basis: "device-query",
+      });
+
+      // 거리 12(0.014 비율)는 iOS 문턱(11) 기준으로는 성공하지만, Android
+      // 문턱(32) 기준으로는 여전히 퇴화다 -- 같은 코드 경로가 문턱에 따라
+      // 다르게 판정한다는 증거.
+      const result = await runCli(["scroll", "down", "--amount", "0.014"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("AMOUNT_TOO_SMALL");
+        expect(result.error.details?.["minValidRatioBasis"]).toBe("device-query");
+      }
+      expect(backend.swipe).not.toHaveBeenCalled();
+    });
+
+    it("threshold를 되먹이면 그 출처(device-query)로 성공한다 -- 왕복 검증의 응답 배선 가드", async () => {
+      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+      (backend.getMinEffectiveSwipeThreshold as ReturnType<typeof vi.fn>).mockResolvedValue({
+        minEffectiveSwipePx: 32,
+        basis: "device-query",
+      });
+
+      const rejected = await runCli(["scroll", "down", "--amount", "0.014"], backend);
+      expect(rejected.ok).toBe(false);
+      const minValidRatio = !rejected.ok ? (rejected.error.details?.["minValidRatio"] as number) : undefined;
+      expect(typeof minValidRatio).toBe("number");
+
+      const accepted = await runCli(["scroll", "down", "--amount", String(minValidRatio)], backend);
+      expect(accepted.ok).toBe(true);
+      expect(backend.swipe).toHaveBeenCalledTimes(1);
+    });
+
+    it("backend.getMinEffectiveSwipeThreshold가 던지면 BACKEND_COMMAND_FAILED를 반환하고 swipe는 호출되지 않는다", async () => {
+      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+      (backend.getMinEffectiveSwipeThreshold as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("adb: wm density failed"),
+      );
+
+      const result = await runCli(["scroll", "down"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
+        expect(result.error.message).toMatch(/wm density failed/);
+      }
+      expect(backend.swipe).not.toHaveBeenCalled();
+    });
   });
 
   describe("AC-GEST-022 — 홀수 축 화면에서도 움직임 불가 스와이프를 거부한다 (SPEC-GESTURE-001 M7/0.5.0 amendment, CLI 전 구간)", () => {

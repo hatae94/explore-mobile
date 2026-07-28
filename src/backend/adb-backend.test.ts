@@ -306,6 +306,65 @@ describe("AdbBackend", () => {
     });
   });
 
+  describe("getMinEffectiveSwipeThreshold (AC-GEST-026, AC-GEST-027 — SPEC-GESTURE-001 M8)", () => {
+    it.each([
+      ["420", 23],
+      ["480", 26],
+      ["600", 32],
+      ["640", 34],
+    ])(
+      "queries 'shell wm density' and derives floor(8dp x density) + 2px margin -- %s dpi -> %s px",
+      async (dpi, expectedPx) => {
+        const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok(`Physical density: ${dpi}\n`));
+
+        const backend = new AdbBackend(exec);
+        const threshold = await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+
+        expect(exec).toHaveBeenCalledWith(["-s", "R3CY106LKVX", "shell", "wm", "density"]);
+        expect(threshold).toEqual({ minEffectiveSwipePx: expectedPx, basis: "device-query" });
+      },
+    );
+
+    it("derives 30px slop + 2px margin = 32px at 600dpi (spec.md §C.1-⑰ measured device) -- never returns the probabilistic slop+1 boundary (31px)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("Physical density: 600\n"));
+
+      const backend = new AdbBackend(exec);
+      const threshold = await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+
+      expect(threshold.minEffectiveSwipePx).toBe(32);
+      expect(threshold.minEffectiveSwipePx).not.toBe(31);
+      expect(threshold.minEffectiveSwipePx).toBeGreaterThan(30);
+    });
+
+    it("carries no hardcoded Android pixel constant -- the returned value scales with the mocked density (contrast with IdbBackend's fixed 11)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("Physical density: 160\n")); // baseline mdpi (1.0x)
+
+      const backend = new AdbBackend(exec);
+      const threshold = await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+
+      // 8dp * 1.0 + 2px = 10px -- far below the iOS constant (11), proving
+      // this is a computed expression, not a shared/duplicated constant.
+      expect(threshold.minEffectiveSwipePx).toBe(10);
+      expect(threshold.basis).toBe("device-query");
+    });
+
+    it("throws when 'wm density' output cannot be parsed (no 'Physical density:' line)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("unexpected output\n"));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.getMinEffectiveSwipeThreshold("R3CY106LKVX")).rejects.toThrow();
+    });
+
+    it("throws when the underlying 'wm density' invocation exits non-zero", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(fail("device offline"));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.getMinEffectiveSwipeThreshold("R3CY106LKVX")).rejects.toThrow(/device offline/);
+    });
+  });
+
   describe("sendKeyEvent", () => {
     it("maps a supported alias to its Android KEYCODE (REQ-INPUT-005)", async () => {
       const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok(""));

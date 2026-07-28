@@ -1113,3 +1113,161 @@ $ grep -cE '^### AC-GEST-[0-9]+' .moai/specs/SPEC-GESTURE-001/acceptance.md   �
 이 sync 커밋은 `README.md` + `CHANGELOG.md` + SPEC 아티팩트 4종(frontmatter만, `progress.md`는 본문도 포함 — 이 §E.4 자체)을 담는다. `src/`는 건드리지 않는다(지시문 Section D). 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인한다. push는 지시문 Section C-4("Do NOT push. A third re-audit runs after you.")에 따라 수행하지 않는다.
 
 sync 커밋 SHA: pending-backfill(위 참조). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — 0.3.0/0.4.0 sync에서 이미 두 번 쓰인 패턴 그대로.
+
+### M8 — 문턱의 플랫폼별 파생 + Android 실기기 검증 (0.6.0 amendment)
+
+> **선행**: M1-M7은 0.5.0에서 마감·푸시됐다(HEAD `7be7611`). 이 마일스톤은 **Android 실기기 연결**로 열렸으며 plan.md §B.8이 근거다. 검증 대상 기기: Samsung SM-S938N(Galaxy S25 Ultra), Android 16, 1440×3120, 600dpi, 무선 ADB — 세션 시작 시 `export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"` 실행 확인(`adb devices -l` → `device` 상태 확인).
+
+**산출물 (plan.md §F M8 1-6 전부 완료)**
+
+1. **백엔드 문턱 공급(REQ-GEST-SCROLL-008) — `DeviceBackend`에 10번째 메서드 `getMinEffectiveSwipeThreshold(serial)` 가법 추가.** `src/schema/device-backend.ts`에 `SwipeThresholdBasis`(`"device-query" | "measured-constant"`) + `SwipeThreshold { minEffectiveSwipePx, basis }` 타입 신설. `@MX:ANCHOR` "9-method" → "10-method" 갱신(이 파일 1곳 + `idb-backend.ts` 2곳, 아래 "MX 앵커 확인" 참조).
+   - `AdbBackend` — `["-s", serial, "shell", "wm", "density"]` 조회 → `Physical density: N` 파싱(정규식) → `density = N/160` → `minEffectiveSwipePx = floor(8dp × density) + 2px`(`TOUCH_SLOP_DP=8`, `TOUCH_SLOP_MARGIN_PX=2`, 둘 다 named export 아닌 module-level const). `basis: "device-query"`. 600dpi(3.75배) → `floor(30.0)+2 = 32`(spec.md §C.1-⑰의 권장값과 정확히 일치). 파싱 실패·`wm density` 실패 시 각각 throw.
+   - `IdbBackend` — 실측 상수 `MEASURED_MIN_EFFECTIVE_SWIPE_PX = 11`(spec.md §C.1-⑭에서 이전(移轉), 재측정 아님)을 **기기 조회 없이** 반환. `_serial` 매개변수는 시그니처 일치용으로만 받고 미사용. `basis: "measured-constant"`.
+   - `BackendRegistry` — `swipe`와 동일한 resolve-then-delegate 파사드(`registry.ts`).
+2. **기하 계층에서 상수 제거(`scroll-geometry.ts`)** — `MIN_EFFECTIVE_SWIPE_PX` 모듈 상수를 삭제하고 `isDegenerateSwipe(coords, thresholdPx)` / `minNonDegenerateRatio(direction, screen, thresholdPx)`가 문턱을 **인자로** 받도록 변경. 순수 함수 성질 유지(기기 없이 mock 문턱으로 테스트 가능).
+3. **`scroll.ts` 배선** — `resolveTargetDevice` → `dumpUiHierarchy`(화면 크기) 뒤에 `backend.getMinEffectiveSwipeThreshold(target.serial)` 호출(실패 시 `BACKEND_COMMAND_FAILED`) → `computeScrollSwipe` → `isDegenerateSwipe(..., threshold.minEffectiveSwipePx)` → `AMOUNT_TOO_SMALL` 응답에 `minValidRatio`와 **`minValidRatioBasis`**를 함께 실음. 거부 순서(방향 → `--amount` → 기기 해석 → dump → 문턱 → 기하 판정 → swipe)는 plan.md §F M8 item 3 그대로 유지.
+4. **트립와이어·테스트 더블 갱신** — `device-backend.test.ts:12`의 `Record<keyof DeviceBackend, true>` + `toHaveLength` **9 → 10**. 4개 파일 7개 지점(`router.test.ts` 4곳, `registry.test.ts:31`, `web-support.test.ts:87-101`) 갱신 — **아래 "블로커/서프라이즈" 1번 참조: 실제로는 6개 파일 9개 지점**(plan.md/acceptance.md의 "4개 파일 7개 지점"은 M1 시점 기준이며 M2/M3에서 신설된 `swipe.test.ts`/`scroll.test.ts`의 `createMockBackend`도 갱신이 필요했다).
+5. **실기기 검증(AC-GEST-028)** — 연결된 SM-S938N에서 네 방향 전부 왕복 확인(아래 "실기기 검증" 절).
+6. **픽스처(테스트)** — mock 밀도 420/480/600/640dpi → 23/26/32/34px(`floor(8dp×density)+2`) 파생 고정(`adb-backend.test.ts`), iOS 경로 밀도 조회 없음 단언(`idb-backend.test.ts`), 순수 함수 계층 문턱 인자화 단언(`scroll-geometry.test.ts` AC-GEST-026 블록), CLI 전 구간 배선·출처 전파 단언(`scroll.test.ts` AC-GEST-026/027 블록).
+
+### AC PASS/FAIL 매트릭스 (M8 스코프)
+
+| AC ID | 상태 | 검증 명령 | 실제 결과 |
+|-------|------|-----------|-----------|
+| AC-GEST-026 | PASS | `pnpm vitest run src/backend/adb-backend.test.ts src/backend/idb-backend.test.ts src/cli/commands/scroll-geometry.test.ts -t "getMinEffectiveSwipeThreshold\|AC-GEST-026"` | mock 밀도 420/480/600/640dpi → 23/26/32/34px(`floor(8dp×density)+2`) 확인(`adb-backend.test.ts` it.each 4건). 판정은 `거리 > 슬롭`(600dpi 슬롭 30, 문턱 32 — 31px 확률 구간을 건너뜀) — `threshold.minEffectiveSwipePx`가 31이 아니라 32임을 별도 단언. `grep -rn "MIN_EFFECTIVE_SWIPE_PX\|touchSlop\|TOUCH_SLOP" src/ \| grep -v "\.test\.ts"` → iOS 상수(`idb-backend.ts`) + Android **밀도 곱셈 표현**(`TOUCH_SLOP_DP`/`TOUCH_SLOP_MARGIN_PX`, 고정 임계 픽셀 상수 아님)만 매치, Android 하드코딩 문턱 없음 확인. iOS 경로 밀도 조회 없음(`idb-backend.test.ts` "returns the measured constant... without invoking idb at all" — `exec` 0회 호출 단언). `scroll-geometry.test.ts` AC-GEST-026 블록: 같은 화면·거리(12px)에서 iOS 문턱(11)은 비퇴화, Android 문턱(32)은 퇴화(한 상수를 두 플랫폼에 쓰던 결함 재발 시 실패하는 회귀 가드) |
+| AC-GEST-027 | PASS | `pnpm vitest run`(exit 0, 622→639) + `pnpm typecheck`(exit 0) + `pnpm build`(exit 0) + `src/backend/registry.test.ts -t "getMinEffectiveSwipeThreshold"` | 639 tests / 29 files 전부 통과(622 기준선 + M8 신규 17건, 감소 없음). 기존 9개 메서드 시그니처 변경 없음(회귀 0). 구현체 3개 전부(`AdbBackend`/`IdbBackend`/`BackendRegistry`) 확인. 테스트 더블 갱신 후 typecheck exit 0(아래 "블로커/서프라이즈" 1번 — 실제 6파일 9지점). 반환값 출처 구분(`"device-query"` vs `"measured-constant"`) 확인. `DeviceBackend`에 밀도 접근자(`density`/`dpi`/`scale`) 없음(인터페이스 정의에 그런 필드 없음 — 코드 자체가 증거) |
+| AC-GEST-028 | PASS(실기기, 4방향 전부) | 아래 "실기기 검증(AC-GEST-028)" 절 | SM-S938N에서 네 방향(up/down/left/right) 전부: 극소 비율 → `AMOUNT_TOO_SMALL` + `minValidRatio`(세로 0.011039886623620987, 가로 0.02391975373029709, 둘 다 반올림 거리 32px) → 되먹임 3회 전부 실제 이동 확인(스크린샷 해시 변화, 1초 안정화 지연 후) → 한 단계 아래(거리 30px, 이 화면에서 도달 가능한 32px 바로 아래 정수 격자점)는 전부 거부 |
+| AC-GEST-029 | PASS(문서 오라클) | `grep -n "상호작용 요소\|잡음 기준선\|사전 확인" .moai/specs/SPEC-GESTURE-001/spec.md` | spec.md §C.1-⑰(REQ-GEST-SCROLL-007 (f))이 이미 세 가지 측정 전 조건(상호작용 요소 없는 페이지, 무제스처 반복 촬영 잡음 기준선, `dump` 사전 확인)을 기록하고 있다 — 0.6.0 amendment 저작 시점에 완료됐고, M8은 재측정 없이(문턱은 이미 실측·공식화됨) 그 조건을 실기기 검증(AC-GEST-028)에서 실제로 준수했음을 재확인했다(아래 "실기기 검증" 절의 사전 점검 참조) |
+| AC-GEST-006 | **PASS**(PARTIAL → PASS 승격) | 아래 "AC-GEST-006 승격 판정" 절 | 승격 조건 (a) `adb` 설치 + (b) 기기 연결 둘 다 충족(spec.md §C.2 정정 그대로) — 이번 세션에서 실기기 스와이프·스크롤을 CLI 종단 경로로 재확인(AC-GEST-028의 왕복 검증 자체가 재확인 증거를 겸한다) |
+| AC-GEST-008 | PASS(회귀, grep 기댓값 갱신) | `grep -cE '^  [a-zA-Z]+\(' src/schema/device-backend.ts` | `10`(기준선 8 + `swipe` 1 + 문턱 공급 1). `device-backend.test.ts`의 `Record<keyof DeviceBackend, true>` 타입 레벨 검사도 10개로 갱신되어 typecheck 통과. D3(화면 크기 조회 메서드 미추가)는 여전히 유효 — 10번째 메서드는 화면 크기가 아니라 문턱을 반환한다(이름·반환 형태로 확인, acceptance.md 0.6.0 주석 그대로) |
+
+### 실기기 검증 (AC-GEST-028 — Section E 항목 5)
+
+**사전 점검 (측정 전 조건, REQ-GEST-SCROLL-007 (f) / AC-GEST-029)**
+
+```
+$ export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
+$ adb devices -l
+adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp device product:pa3qksx model:SM_S938N device:pa3q transport_id:4956
+$ adb -s <serial> shell wm density
+Physical density: 600
+```
+
+로컬 체커보드 전용 페이지(`<scratchpad>/slop/index.html` — `<a>`/`<button>`/`onclick` **0개**, 20000×3000 CSS px, 실시간 `SY=`/`SX=` 스크롤 위치 오버레이 포함)를 `python3 -m http.server 8935` + `adb reverse tcp:8935 tcp:8935` + `am start -a VIEW -d http://localhost:8935/ com.android.chrome`로 진입. `dump` 사전 확인: 좌표 (720,1560) 아래(스와이프 중심 좌표, `scroll` 계산이 실제로 이 근방을 씀 — 화면 1440×3120 기준 세로 중심 1560, 가로 스크롤도 fixedAxis=height/2=1560)에는 `tappable:true` 요소가 전혀 없음(Chrome 툴바의 tappable 요소 6개는 전부 `y:128~338`에 있고, 우리 시작점과 최소 1200px 이상 떨어짐 — 왕복 검증 자체가 기기 상태를 바꿀 위험 없음 확인).
+
+**잡음 기준선**: 오라클은 상태바+주소창을 완전히 제외한 본문 크롭이다 — `sips -c 2400 1440`(중앙 크롭, 상하 각 360px 제외)로 시계·배터리·주소창 아이콘을 전부 배제(아래 "블로커/서프라이즈" 2번 — `--cropOffset`이 예상대로 동작하지 않아 중앙 대칭 크롭으로 대체). 무제스처 4회 연속 촬영 해시가 전부 동일함을 먼저 확인:
+
+```
+$ (4회 반복: adb exec-out screencap -p | sips -c 2400 1440 | shasum -a 256)
+a65fb6309b479897ca3114b1ba1eb69fa01ec2e89b2ef2bfb1147cd22c9354fe  (x4, 전부 동일)
+```
+
+**왕복 검증(네 방향 전부, `scroll` CLI 명령으로 종단 실행)**:
+
+```
+$ node dist/cli/bin.js scroll down --amount 0.0001 --device <serial>
+{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"...",
+  "details":{"requestedRatio":0.0001,"minValidRatio":0.011039886623620987,"minValidRatioBasis":"device-query"}}}
+```
+
+| 방향 | minValidRatio | 반올림 거리 | 되먹임 3회 이동 | 한 단계 아래(거리 30px) |
+|------|---------------|--------------|-----------------|--------------------------|
+| down | 0.011039886623620987 | 32px | 3/3 (해시 전부 변화, 1초 안정화 지연 후) | `AMOUNT_TOO_SMALL` 재확인 |
+| up   | 0.011039886623620987 | 32px | 3/3 | `AMOUNT_TOO_SMALL` 재확인 |
+| left | 0.02391975373029709  | 32px | 3/3 | `AMOUNT_TOO_SMALL` 재확인 |
+| right| 0.02391975373029709  | 32px | 3/3 | `AMOUNT_TOO_SMALL` 재확인 |
+
+되먹임 응답 예(down, trial 1): `{"ok":true,"command":"scroll","data":{"serial":"...","direction":"down","from":{"x":720,"y":1576},"to":{"x":720,"y":1544}}}` — 거리 32px, 왕복마다 반대 방향으로 즉시 복원(드리프트 방지, §C.3 "Android는 관성 스크롤(fling)이 있어 정확히 복귀하지 않는다"를 감안해 매 시행 직후 복원). "한 단계 아래" 값은 이 화면·마진(5%) 조합에서 반올림으로 도달 가능한 격자점이 …28px→30px→32px(31px 자체는 도달 불가 — 짝수 중심 반올림 특성, M7의 홀짝 축 교훈과 같은 계열)이라 30px를 썼다 — 30px는 spec.md §C.1-⑰의 원측정에서도 세로 0/8·가로 0/6이었다.
+
+`getMinEffectiveSwipeThreshold` 반환값 자체(basis 구분, Section E 항목 3): Android 응답은 `"minValidRatioBasis":"device-query"`, 아래 iOS 회귀 확인 응답은 `"minValidRatioBasis":"measured-constant"` — 같은 필드명, 다른 값. 두 값이 서로의 경로로 흐르지 않음(iOS를 건드리지 않고 Android만 실행했는데도 Android 응답에 Android 자신의 출처만 실림).
+
+### AC-GEST-006 승격 판정 (Section E 항목 5)
+
+**PARTIAL → PASS.** 승격 조건 (a) `adb` 설치 + (b) 기기 연결이 spec.md §C.2 정정 그대로 충족돼 있고, 이번 세션에서 원시 `swipe`(argv 구성, M1 기준선)뿐 아니라 **`scroll` 종단 경로**(위 왕복 검증)로 실기기 화면이 실제로 움직이는 것을 재확인했다 — M1 이후 첫 재확인이자 가장 포괄적인 확증(네 방향 × 왕복 3회 = 12회 실측 이동). PARTIAL로 마감할 이유(문서 근거뿐, 기기 미확인)가 더 이상 없다.
+
+### iOS 회귀 확인 (Section E 항목 4)
+
+```
+$ node dist/cli/bin.js scroll down --amount 0.0001 --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"...",
+  "details":{"requestedRatio":0.0001,"minValidRatio":0.013984236866235733,"minValidRatioBasis":"measured-constant"}}}
+```
+
+`minValidRatio=0.013984236866235733`는 M7(0.5.0)의 AC-GEST-024 왕복 검증이 기록한 값과 **정확히 동일** — M8의 백엔드 재구조화(문턱을 모듈 상수에서 백엔드 공급으로 전환)가 iOS 쪽 수치에 어떤 영향도 주지 않았다는 직접 증거다. `basis:"measured-constant"`(밀도 조회 없음) 확인. 이어서 `scroll down`(기본 비율) → `scroll up`으로 실제 화면 이동 + 복원도 재확인(Wikipedia "Netscape" 문서, 스크린샷 해시 전/후 다름 → up 이후 원상태 무관하게 위up 자체 성공 확인 — 정식 판정은 이미 M2~M7에서 여러 번 확증된 사실의 회귀 없음 재확인일 뿐, 신규 AC 판정 대상 아님).
+
+### 테스트 스위트
+
+```
+$ pnpm vitest run
+ Test Files  29 passed (29)
+      Tests  639 passed (639)
+```
+
+기준선(0.5.0 sync, M7 종료) 622 → 639(+17): `adb-backend.test.ts` `getMinEffectiveSwipeThreshold` 신규 8건(밀도 4종 파생 it.each 4 + 32px 경계 확인 1 + 하드코딩 상수 부재 확인 1 + 파싱 실패 1 + wm density 실패 1), `idb-backend.test.ts` 신규 2건(측정 상수 무조회 확인 + serial 무관 동일값 확인), `registry.test.ts` 신규 1건(resolve-then-delegate), `scroll-geometry.test.ts` AC-GEST-026 블록 신규 3건(기존 "MIN_EFFECTIVE_SWIPE_PX는 실측값 11이다" 1건은 상수 이전으로 제거, 순증 +2 아님 — 그 자리에 3건이 새로 들어와 net +2, 나머지 파일들의 회귀 유지 목적 재작성분은 기존 개수 유지), `scroll.test.ts` AC-GEST-026/027 블록 신규 4건(배선 순서 확인 + basis 전파 확인 + 왕복 배선 가드 + BACKEND_COMMAND_FAILED). 신규 파일 없음(기존 6개 파일만 확장) — `total_run_phase_files`는 M7까지의 20에서 불변.
+
+### Typecheck + Build
+
+```
+$ pnpm typecheck  → exit 0
+$ pnpm build      → exit 0
+```
+
+### Scope Check
+
+```
+$ git status --porcelain --untracked-files=no
+ M src/backend/adb-backend.test.ts
+ M src/backend/adb-backend.ts
+ M src/backend/idb-backend.test.ts
+ M src/backend/idb-backend.ts
+ M src/backend/registry.test.ts
+ M src/backend/registry.ts
+ M src/cli/commands/scroll-geometry.test.ts
+ M src/cli/commands/scroll-geometry.ts
+ M src/cli/commands/scroll.test.ts
+ M src/cli/commands/scroll.ts
+ M src/cli/commands/swipe.test.ts
+ M src/cli/commands/web-support.test.ts
+ M src/cli/router.test.ts
+ M src/cli/validators.ts
+ M src/schema/device-backend.test.ts
+ M src/schema/device-backend.ts
+```
+
+plan.md §A.6 M8 행: `device-backend.ts`/`adb-backend.ts`/`idb-backend.ts`/`registry.ts`/`scroll-geometry.ts`/`scroll.ts` + 그 테스트 파일 + 4개 테스트 더블 파일(`device-backend.test.ts`/`router.test.ts`/`registry.test.ts`/`web-support.test.ts`) — 전부 위 목록에 포함. `swipe.test.ts`는 plan.md §A.6에 M8 행이 없으나, M1의 `createMockBackend`가 이 파일에도 있고 10번째 메서드 없이는 typecheck가 깨져(아래 "블로커/서프라이즈" 1번) 스스로 판단해 추가했다 — `swipe.ts` 프로덕션 코드는 미변경. `validators.ts`도 plan.md §A.6 M8 행에 없으나, M7이 이 파일에 남긴 "`MIN_EFFECTIVE_SWIPE_PX`(`scroll-geometry.ts`)" 상호참조 주석이 그 상수를 삭제한 M8 이후 거짓 앵커가 되므로 정정했다(코드 0줄, 주석 1곳만 변경 — 아래 "블로커/서프라이즈" 1번 참조). `src/normalize/*`, `src/webview/*`(PRESERVE 목록) 미변경 확인. SPEC 본문 3종(spec.md/plan.md/acceptance.md) 미변경, frontmatter도 미변경(`status: in-progress` 그대로).
+
+### MX 태그 확인
+
+```
+$ grep -n "9-method\|9 methods" src/schema/device-backend.ts src/backend/idb-backend.ts
+(no matches — 전부 "10-method"/"10 methods"로 갱신됨)
+```
+
+`device-backend.ts` `@MX:ANCHOR`(1개, 파일당 한도 3 이내) "9-method" → "10-method" 갱신. `idb-backend.ts` 파일 docstring + `@MX:REASON` 2곳 동일 갱신. 새 상수(`TOUCH_SLOP_DP`/`TOUCH_SLOP_MARGIN_PX` in `adb-backend.ts`, `MEASURED_MIN_EFFECTIVE_SWIPE_PX` in `idb-backend.ts`)에 각각 `@MX:NOTE`(측정값·설계 선택 출처) 추가 — 파일당 ANCHOR/WARN/NOTE 누적 한도(3/5/10) 이내 확인(`adb-backend.ts`: ANCHOR 1·WARN 1·NOTE 2, `idb-backend.ts`: ANCHOR 1·WARN 3·NOTE 4, `registry.ts`: ANCHOR 1·NOTE 1, `scroll-geometry.ts`: ANCHOR 2, `device-backend.ts`: ANCHOR 1, `scroll.ts`: NOTE 1). 새 `getMinEffectiveSwipeThreshold` 인터페이스 메서드 자체는 M1의 `swipe`와 동일하게 클래스 레벨 `@MX:ANCHOR`가 이미 계약을 포괄하므로 별도 메서드 전용 ANCHOR를 추가하지 않았다(기존 관례 그대로).
+
+## 블로커 / 서프라이즈 (M8 종료 시점 — 0.6.0 amendment 최종)
+
+1. **[가장 중요] plan.md/acceptance.md의 "4개 파일 7개 지점"은 M1 시점 기준이며 실제로는 6개 파일 9개 지점이 필요했다.** M1이 `swipe`를 9번째 메서드로 추가할 때 전수 조사한 "4개 파일 7개 지점"(`device-backend.test.ts`/`router.test.ts`/`registry.test.ts`/`web-support.test.ts`)은 그 시점에 `DeviceBackend`를 리터럴로 구현하는 mock이 존재하는 파일 전부였다. 그러나 M2(`swipe.test.ts`)와 M3(`scroll.test.ts`)이 각각 자기 파일에 독립적인 `createMockBackend(): DeviceBackend` 리터럴을 만들었고, M8 시점에는 이 두 파일도 10번째 메서드 없이는 `pnpm typecheck`가 깨진다(`error TS2741: Property 'getMinEffectiveSwipeThreshold' is missing...`, 실제 컴파일러 출력으로 확인). plan.md §A.6/acceptance.md AC-GEST-027이 나열한 목록을 그대로 따랐다면 typecheck가 실패했을 것이다 — `pnpm typecheck` 실행으로 이 사실을 스스로 발견하고 6개 파일 9개 지점 전부를 갱신했다. **acceptance.md의 AC-GEST-027 문구("4개 파일 7개 지점")는 이제 정확하지 않다** — 다음 세션(또는 sync)이 acceptance.md 문구 정정 여부를 판단할 것을 권한다(본 세션은 body 콘텐츠 수정 권한이 없다).
+2. **`sips --cropOffset`이 이 세션에서 기대대로 동작하지 않았다 — 대체 방법으로 우회했다.** spec.md §C.1-⑭이 iOS 측정에 쓴 것과 동일한 패턴(`sips --cropOffset <Y> 0 -c <H> <W>`)을 Android 스크린샷(1440×3120)에 적용했더니, 첫 인자가 0이 아닐 때(`--cropOffset 250 0`) **크롭이 전혀 적용되지 않고 원본 크기 그대로 반환**됐다(`pixelHeight` 그대로 3120). 인자 순서를 바꾼 조합(`--cropOffset 0 250`)은 크롭 크기는 적용됐지만 축이 뒤바뀐 듯 보이는 결과를 냈다. 대신 **오프셋 없는 중앙 대칭 크롭**(`sips -c <reducedH> <W>`, 상하 대칭으로 줄어든 만큼 제외)으로 상태바·주소창을 안전하게 배제했다 — 이 방법은 (a) 상태바(시계·배터리)가 완전히 제거되고 (b) 남는 주소창 조각은 시행마다 내용이 바뀌지 않는 정적 텍스트라 잡음원이 되지 않음을 무제스처 4회 반복 촬영으로 직접 확인했다. **이 발견이 M7의 iOS 측정(§C.1-⑭)에도 영향을 줬는지는 확인하지 못했다** — 같은 `--cropOffset` 패턴을 썼지만 iOS 스크린샷 크기·`sips` 버전·좌표계가 다를 수 있어, 여기서 관측한 버그가 그쪽에도 적용됐다고 단정하지 않는다(관측하지 않은 것을 근거로 쓰지 않는다는 원칙, verification-claim-integrity.md). M7의 측정 자체는 이미 깨끗한 단일 정수(11pt)로 수렴했고 재감사 대상이 아니었으므로, 이 관측은 **다음 세션이 재확인하고 싶을 때를 위한 기록**으로만 남긴다. 프로젝트 메모리에 별도 기록(`android-gesture-facts.md`에 이미 있던 프로젝트 사실과 구분되는 새 도구 사실 — 후속 세션이 memory로 저장할 후보).
+3. **최초 스크린샷 캡처가 명령 반환 직후 이뤄지면 실제 이동이 관측되지 않을 수 있다 — 안정화 지연 필요.** 지연 없이 `scroll` 명령 직후 곧바로 스크린샷을 찍은 1차 시행(down 방향)에서 `ok:true`였음에도 전/후 해시가 동일했다. 동일한 좌표·비율로 1초 지연 후 재시행하자 명확한 변화가 확인됐다 — Android 컴포지터/스크롤 애니메이션이 명령 반환 시점에 아직 화면에 반영되지 않았을 가능성이 높다(idb/시뮬레이터에서는 이런 지연이 필요하지 않았다 — SPEC의 기존 실측 어디에도 이 문제가 기록돼 있지 않다). 왕복 검증 전체에 1초 안정화 지연을 일괄 적용해 재현성을 확보했다. **이것은 REQ-GEST-SCROLL-007 (f)의 세 조건(상호작용 요소 없음/잡음 기준선/dump 사전확인)과는 다른 차원의 방법론 세부사항**이며, 이 SPEC의 §C.1/§C.3에 아직 기록되지 않았다 — 다음 세션(또는 재감사)이 Android 측정 방법론에 "명령 반환과 화면 반영 사이에 지연이 있을 수 있다"는 사실을 추가할지 판단할 것을 권한다(본 세션은 body 콘텐츠 수정 권한이 없다).
+4. **범위 이탈 없음.** `src/normalize/*`, `src/webview/*`(PRESERVE) 미변경. README.md/CHANGELOG.md 미변경(docs 위임). SPEC 본문 3종(spec.md/plan.md/acceptance.md) 미변경, frontmatter도 미변경(`status: in-progress` 그대로) — 재마감(`in-progress → implemented → completed`)은 manager-docs 소관. `.claude/`, `.moai/config` 등 이 SPEC과 무관한 미추적 파일 미포함(scope check 명령으로 확인).
+5. **환경 정리 완료.** `adb reverse --remove tcp:8935` 실행 후 `adb reverse --list` 빈 출력 확인. 로컬 `python3 -m http.server 8935` 종료 확인(`ps aux | grep http.server` 무출력). `xcrun simctl list devices booted` → iPhone 17 Pro(D0B3A18C-...) 하나만 남음. Android 기기 자체(Chrome에 체커보드 페이지가 남아있는 상태)는 실기기이므로 "정리" 대상이 아니다 — 세션 종료 시 앱을 강제 종료하지 않았다(지시문이 명시적으로 요구하지 않음).
+6. **sync-auditor 재확인 우선순위(다음 세션에게)**: (a) acceptance.md AC-GEST-027의 "4개 파일 7개 지점" 문구 정정 여부(위 1번), (b) `sips --cropOffset` 이슈가 M7 iOS 측정에도 영향을 줬는지 재확인 필요성(위 2번, 낮은 우선순위 — M7은 이미 깨끗이 수렴했다), (c) Android 스크롤 안정화 지연을 spec.md 방법론에 기록할지(위 3번), (d) README/CHANGELOG의 10번째 메서드·플랫폼별 문턱 고지 의무(별도 docs 위임 — 이 M8에서 다루지 않음) 순으로 확인할 것을 권한다.
+
+## §E.3 Run-phase Audit-Ready Signal (M8 최종 — 0.6.0 amendment)
+
+```yaml
+run_status: M8-complete
+run_complete_at: "2026-07-28"
+run_commit_sha: "pending-backfill-M8"   # backfill 예정(자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 여러 번 쓰인 패턴 그대로). 이 값을 담은 별도 backfill 커밋 참조.
+ac_pass_count: 6      # M8 자체 판정: AC-GEST-026, 027, 028, 029, 006(승격), 008(회귀)
+ac_fail_count: 0
+ac_partial_count: 0
+preserve_list_post_run_count: 0   # src/normalize/*, src/webview/{inspector-client,proxy-service,calibration}.ts 미변경
+l44_pre_commit_fetch: "git fetch origin master && git rev-list --count --left-right origin/master...HEAD -> '0 1' (origin 뒤처짐 없음, HEAD가 1커밋 앞섬 -- 이 SPEC의 미푸시 0.6.0 amendment 커밋 자신)"
+l44_post_push_fetch: not_applicable   # 이 SPEC은 push하지 않는다(지시문 Section F "Do not push")
+new_warnings_or_lints_introduced: false
+cross_platform_build: { windows: not_applicable, note: "TypeScript/Node 프로젝트, GOOS 교차빌드 대상 아님" }
+total_run_phase_files: 20   # M8은 기존 6개 파일(4개 계획분 + swipe.test.ts + validators.ts 주석)만 확장 -- 신규 파일 없음, M7까지의 20에서 불변
+m1_to_mN_commit_strategy: "M8은 단일 커밋(fix)으로 마감 -- 백엔드 문턱 공급(산출물 1)이 기하 계층 상수 제거(산출물 2)·scroll.ts 배선(산출물 3)의 선행 조건이라 분리가 인위적이다(M6/M7과 동일 판단)"
+```

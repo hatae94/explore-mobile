@@ -13,8 +13,9 @@
  *
  * @MX:ANCHOR — invariant contract for backend substitution (REQ-ARCH-003,
  * REQ-IOS-ARCH-005). Both `AdbBackend` and `IdbBackend` implement this exact
- * 9-method surface (SPEC-GESTURE-001 M1 added `swipe`, additive only — the
- * pre-existing methods are unchanged in shape/behavior).
+ * 10-method surface (SPEC-GESTURE-001 M1 added `swipe`, M8 added
+ * `getMinEffectiveSwipeThreshold` — both additive only, the pre-existing
+ * methods are unchanged in shape/behavior).
  * @MX:REASON — every CLI command and the backend registry (`registry.ts`)
  * depend on this method surface; changing it ripples through every backend
  * and the command layer above it.
@@ -46,6 +47,34 @@ export interface SwipePoint {
  */
 export interface SwipeOptions {
   durationMs?: number;
+}
+
+/**
+ * How a device's swipe-movement threshold was determined
+ * (REQ-GEST-SCROLL-008, SPEC-GESTURE-001 M8). The two backends answer the
+ * SAME domain question — "what is the minimum swipe distance that reliably
+ * moves this device's screen?" — in fundamentally different ways, and a
+ * bare number cannot distinguish them: a value derived from a live query of
+ * THIS device (`"device-query"`, `AdbBackend` — `wm density`) is a
+ * different kind of evidence than a constant measured on a DIFFERENT
+ * device and never re-queried (`"measured-constant"`, `IdbBackend` —
+ * 11pt measured on one iPhone 17 Pro simulator, spec.md §C.1-⑭). A caller
+ * receiving a `minValidRatio` (e.g. in the `AMOUNT_TOO_SMALL` error
+ * payload) can use this to tell whether the value came from its OWN device
+ * or from somewhere else entirely (spec.md §C.1-⑰ — the exact defect this
+ * SPEC exists to prevent: "a wrong number and a right number looking
+ * identical").
+ */
+export type SwipeThresholdBasis = "device-query" | "measured-constant";
+
+/**
+ * The minimum swipe distance — device pixels, the SAME coordinate system
+ * as `swipe()`'s `SwipePoint`/`dumpUiHierarchy()`'s bounds — that reliably
+ * moves a device's screen (REQ-GEST-SCROLL-007/008, SPEC-GESTURE-001 M8).
+ */
+export interface SwipeThreshold {
+  minEffectiveSwipePx: number;
+  basis: SwipeThresholdBasis;
 }
 
 /**
@@ -137,6 +166,24 @@ export interface DeviceBackend {
    * unit — see `SwipeOptions`.
    */
   swipe(serial: string, from: SwipePoint, to: SwipePoint, options?: SwipeOptions): Promise<void>;
+
+  /**
+   * Returns the minimum swipe distance (device pixels) that reliably moves
+   * this device's screen (REQ-GEST-SCROLL-007/008, SPEC-GESTURE-001 M8 —
+   * additive 10th method, the original 9 are unchanged). This interface
+   * asks the DOMAIN question ("what distance moves THIS device's screen?"),
+   * never "what is this device's density" — exposing a density accessor
+   * would force `IdbBackend` to fabricate a `dp × density` rule for a value
+   * (iOS's 11pt) that was never measured that way, inventing an unmeasured
+   * iOS platform rule (spec.md §A.3 D3 운용 주석 보강, §D). Each backend
+   * answers in its OWN way: `AdbBackend` queries `wm density` on THIS
+   * device at call time and derives `8dp × density` plus a safety margin;
+   * `IdbBackend` returns a measured constant (11pt, measured on a
+   * DIFFERENT device) with NO device query at all. `SwipeThreshold.basis`
+   * distinguishes the two so neither's value can silently pass for the
+   * other's.
+   */
+  getMinEffectiveSwipeThreshold(serial: string): Promise<SwipeThreshold>;
 }
 
 // Re-exported so consumers of this module can reference the schema type

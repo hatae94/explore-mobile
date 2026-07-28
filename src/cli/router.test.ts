@@ -43,6 +43,7 @@ function createMockIosBackend(): DeviceBackend {
     launchApp: vi.fn().mockResolvedValue(undefined),
     stopApp: vi.fn().mockResolvedValue(undefined),
     swipe: vi.fn().mockResolvedValue(undefined),
+    getMinEffectiveSwipeThreshold: vi.fn().mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
   };
 }
 
@@ -83,6 +84,7 @@ function createMockBackend(devices: DeviceInfo[] = [device()]): DeviceBackend {
     launchApp: vi.fn().mockResolvedValue(undefined),
     stopApp: vi.fn().mockResolvedValue(undefined),
     swipe: vi.fn().mockResolvedValue(undefined),
+    getMinEffectiveSwipeThreshold: vi.fn().mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
   };
 }
 
@@ -364,6 +366,9 @@ describe("runCli", () => {
         launchApp: vi.fn().mockResolvedValue(undefined),
         stopApp: vi.fn().mockResolvedValue(undefined),
         swipe: vi.fn().mockResolvedValue(undefined),
+        getMinEffectiveSwipeThreshold: vi
+          .fn()
+          .mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
       };
       const registry: DeviceBackend = new BackendRegistry([
         { platform: "ios", backend: idbBackend, isAvailable: async () => true },
@@ -440,6 +445,9 @@ describe("runCli", () => {
         launchApp: vi.fn().mockResolvedValue(undefined),
         stopApp: vi.fn().mockResolvedValue(undefined),
         swipe: vi.fn().mockResolvedValue(undefined),
+        getMinEffectiveSwipeThreshold: vi
+          .fn()
+          .mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
       };
       const registry: DeviceBackend = new BackendRegistry([
         { platform: "ios", backend: idbBackend, isAvailable: async () => true },

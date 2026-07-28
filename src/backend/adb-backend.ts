@@ -18,7 +18,13 @@ import { randomBytes } from "node:crypto";
 
 import { ADBKEYBOARD_BROADCAST_ACTION, ADBKEYBOARD_IME_ID } from "./adbkeyboard.js";
 import { ensureAdbKeyboardInstalled } from "./adbkeyboard-installer.js";
-import type { DeviceBackend, DeviceInfo, SwipeOptions, SwipePoint } from "../schema/device-backend.js";
+import type {
+  DeviceBackend,
+  DeviceInfo,
+  SwipeOptions,
+  SwipePoint,
+  SwipeThreshold,
+} from "../schema/device-backend.js";
 import type { CommonElement } from "../schema/common-element.js";
 import { isKeyAlias } from "../schema/key-alias.js";
 import { normalizeUiAutomatorXml } from "../normalize/uiautomator.js";
@@ -79,6 +85,48 @@ function isAsciiOnly(text: string): boolean {
  */
 function shellSingleQuoteForDevice(text: string): string {
   return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Android's standard touch slop, in dp — a PLATFORM RULE
+ * (`ViewConfiguration.getScaledTouchSlop()`), not a value measured per
+ * device (REQ-GEST-SCROLL-007/008, SPEC-GESTURE-001 M8, spec.md §C.1-⑰:
+ * measured boundary `8dp × 3.75 = 30.0px` matched exactly on a 600dpi
+ * device). Multiplied by this device's own density at call time — never
+ * stored as a fixed pixel constant, because the same 8dp means a different
+ * pixel distance on every density (420dpi -> 21px, 480dpi -> 24px,
+ * 600dpi -> 30px, 640dpi -> 32px).
+ */
+const TOUCH_SLOP_DP = 8;
+
+/**
+ * Safety margin ABOVE the measured slop boundary, in device pixels
+ * (REQ-GEST-SCROLL-007, spec.md §C.1-⑰). The boundary itself
+ * (`distance === slop`) never moves the screen (0/8 measured) and the
+ * pixel immediately above it is PROBABILISTIC (6/8 vertical, 5/6
+ * horizontal) — using `slop + 1` as the final threshold would revive the
+ * exact intermittent `ok:true`-no-effect defect this SPEC exists to
+ * prevent. This margin is a DESIGN CHOICE, not a measured value — same
+ * character as `MAX_DURATION_MS` in `validators.ts`.
+ *
+ * @MX:NOTE: [AUTO] 이 여유(2px)는 실측이 아니라 설계 선택이다 -- spec.md §C.1-⑰이 기록한 slop+1(31px)의 확률적 구간(6/8, 5/6)을 피하기 위해 slop+2(600dpi에서 32px, 8/8 실측)를 택했다
+ */
+const TOUCH_SLOP_MARGIN_PX = 2;
+
+/**
+ * Parses `wm density`'s `"Physical density: N"` line into a density
+ * multiplier (`N / 160`, the baseline DPI). Returns `undefined` when the
+ * expected line is absent (unparseable output — spec.md §C.3 leaves the
+ * Physical/Override distinction as an open question for a device with an
+ * active display-size override; this reads only the Physical line, which
+ * is the value actually measured on the reference device — spec.md
+ * §C.1-⑰).
+ */
+function parsePhysicalDensity(output: string): number | undefined {
+  const match = /Physical density:\s*(\d+)/.exec(output);
+  if (!match) return undefined;
+  const dpi = Number(match[1]);
+  return Number.isFinite(dpi) && dpi > 0 ? dpi / 160 : undefined;
 }
 
 export class AdbBackend implements DeviceBackend {
@@ -445,5 +493,29 @@ export class AdbBackend implements DeviceBackend {
     }
     const result = await this.exec(args);
     assertSuccess(result, "shell input swipe");
+  }
+
+  /**
+   * REQ-GEST-SCROLL-007/008 (SPEC-GESTURE-001 M8, additive 10th method):
+   * derives THIS device's minimum effective swipe distance at call time —
+   * never a stored pixel constant. Queries `wm density`, then computes
+   * `floor(TOUCH_SLOP_DP * density) + TOUCH_SLOP_MARGIN_PX` so the returned
+   * threshold sits safely above the measured probabilistic boundary
+   * (spec.md §C.1-⑰). `basis: "device-query"` marks this as derived from a
+   * live query of the target device, distinct from `IdbBackend`'s
+   * `"measured-constant"` (a value measured on a DIFFERENT device) — see
+   * `SwipeThreshold`.
+   */
+  async getMinEffectiveSwipeThreshold(serial: string): Promise<SwipeThreshold> {
+    const result = await this.exec(["-s", serial, "shell", "wm", "density"]);
+    assertSuccess(result, "shell wm density");
+
+    const density = parsePhysicalDensity(result.stdout.toString("utf-8"));
+    if (density === undefined) {
+      throw new Error(`Could not parse 'wm density' output for device '${serial}'.`);
+    }
+
+    const minEffectiveSwipePx = Math.floor(TOUCH_SLOP_DP * density) + TOUCH_SLOP_MARGIN_PX;
+    return { minEffectiveSwipePx, basis: "device-query" };
   }
 }

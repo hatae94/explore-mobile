@@ -33,6 +33,7 @@ import type {
   DevicePlatform,
   SwipeOptions,
   SwipePoint,
+  SwipeThreshold,
 } from "../schema/device-backend.js";
 
 /** One backend registered with the registry, plus its availability check. */
@@ -178,5 +179,18 @@ export class BackendRegistry implements DeviceBackend {
   async swipe(serial: string, from: SwipePoint, to: SwipePoint, options?: SwipeOptions): Promise<void> {
     const backend = await this.resolveOwningBackend(serial);
     return backend.swipe(serial, from, to, options);
+  }
+
+  /**
+   * Facade for `DeviceBackend.getMinEffectiveSwipeThreshold`
+   * (SPEC-GESTURE-001 M8, additive 10th method) — resolve-then-delegate,
+   * identical shape to `swipe`/`stopApp` above. Without this facade, the
+   * threshold would type-check-break `bin.ts` (which passes this registry
+   * to `runCli`) AND never reach a real device in production, since
+   * `bin.ts` only ever holds a `BackendRegistry`.
+   */
+  async getMinEffectiveSwipeThreshold(serial: string): Promise<SwipeThreshold> {
+    const backend = await this.resolveOwningBackend(serial);
+    return backend.getMinEffectiveSwipeThreshold(serial);
   }
 }

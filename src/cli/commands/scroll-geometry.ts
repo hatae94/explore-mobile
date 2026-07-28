@@ -139,38 +139,25 @@ export function computeScrollSwipe(direction: ScrollDirection, ratio: number, sc
 }
 
 /**
- * 화면을 신뢰성 있게 움직이는 최소 스와이프 거리(SPEC-GESTURE-001 M7/0.5.0
- * amendment, REQ-GEST-SCROLL-007). 이 SPEC이 정하는 수가 아니라 **측정한**
- * 수다 — 근본 물리량은 터치 슬롭(touch slop)이라는 플랫폼 속성이며 문서나
- * 추론으로 확정할 수 없다.
- *
- * 단위는 `swipe`/`dump` 좌표계와 동일한 pt(포인트)다 — 비율이 아니다. 화면별
- * 최소 비율은 이 값에서 파생한다(그 역이 아니다).
- *
- * 실측(2026-07-28, iPhone 17 Pro 시뮬레이터 iOS 26.0
- * D0B3A18C-E485-4E7C-A25E-504BF4CA6163): 로컬 체커보드 테스트 페이지(40pt
- * 격자, 6000x6000pt)에서 이분 탐색 + 후보별 반복 시행(세로 15회, 가로
- * 10-15회) + 상태바 제외 본문 스크린샷 해시 비교로 측정. 세로 10pt는 2/15만
- * 이동(잡음), 11pt는 15/15 이동(항상 신뢰). 가로 10pt는 1/15, 11pt는
- * 10/10. 두 축 모두 같은 정수(11)로 수렴했다 — 전체 시행 기록은
- * spec.md §C.1-⑭ 참조. Android는 `adb`가 없어 측정하지 못했다(§C.2) —
- * 이 값은 iOS 전용이며 Android 근거로 쓰지 않는다.
- *
- * @MX:NOTE: [AUTO] 11이라는 값 자체가 위 실측(세로 15/15, 가로 10/10 @ 11pt)에서 나온 측정값이다 -- 바꾸려면 같은 시뮬레이터·방법론으로 재실측이 필요하다(spec.md §C.1-⑭)
- */
-export const MIN_EFFECTIVE_SWIPE_PX = 11;
-
-/**
  * `computeScrollSwipe`가 만든 좌표가 화면을 움직일 수 없는지 판정한다
- * (SPEC-GESTURE-001 M7/0.5.0 amendment — REQ-GEST-SCROLL-007 술어 교체).
+ * (SPEC-GESTURE-001 M7/0.5.0 amendment — REQ-GEST-SCROLL-007 술어 교체;
+ * M8/0.6.0 amendment — REQ-GEST-SCROLL-008 문턱 인자화).
  *
  * 0.4.0(M6)의 `from === to`(거리 0) 판정은 **축 길이가 짝수일 때만**
  * 발동할 수 있었다 — `center = dimension/2`가 홀수 축에서는 반정수라
  * `round(center ± ε)`가 극소 비율에서도 항상 갈라져 1px을 방출했다(빌드
  * 모듈 재현, spec.md §C.1-⑬: `402x874` 두 축 발동 / `393x852`는 `down`만
  * 발동 / `375x667` 두 축 미발동). 술어를 **"거리가 0"에서 "거리가
- * `MIN_EFFECTIVE_SWIPE_PX` 미만"**으로 바꾸면 이 구멍이 사라진다 — 1px도,
- * 10px도 화면을 움직이지 못한다면 똑같이 거부된다.
+ * 문턱 미만"**으로 바꾸면 이 구멍이 사라진다 — 1px도, 10px도 화면을
+ * 움직이지 못한다면 똑같이 거부된다.
+ *
+ * **M8 — 문턱은 더 이상 모듈 상수가 아니라 인자다.** 0.5.0까지 이 함수는
+ * 플랫폼 독립 상수 `MIN_EFFECTIVE_SWIPE_PX`(11)를 참조했는데, Android
+ * 실기기에서 그 값이 세로 0/5·가로 0/6으로 **한 번도 움직이지 않는** 문턱
+ * 미달 값임이 드러났다(spec.md §C.1-⑰). 문턱은 이제 `DeviceBackend`가
+ * 공급하며(REQ-GEST-SCROLL-008), 이 함수는 어느 플랫폼의 값인지 알지
+ * 못한 채 순수하게 비교만 한다 — 기기 없이도 mock 문턱으로 테스트
+ * 가능한 성질은 그대로다.
  *
  * 판정 위치는 **반올림 이후** 좌표다(0.4.0에서 확립, 유지) — 반올림 전
  * 거리는 0.79px처럼 0이 아닐 수 있지만, 정수 픽셀로 반올림된 뒤 실제로
@@ -184,26 +171,32 @@ export const MIN_EFFECTIVE_SWIPE_PX = 11;
  * @MX:ANCHOR: [AUTO] REQ-GEST-SCROLL-007 전체가 기대는 판정 — 이 술어가 틀리면 화면을 움직이지 못하는 제스처가 ok:true로 성공 보고된다
  * @MX:REASON: fan_in >= 3(scroll.ts의 AMOUNT_TOO_SMALL 거부 경로 + minNonDegenerateRatio 내부 이진 탐색 + scroll-geometry.test.ts·scroll.test.ts 다수 픽스처) — 0.4.0의 `from===to` 술어가 홀수 축에서 전혀 발동하지 않았던 정확한 회귀(spec.md §C.1-⑬)가 술어를 다시 좁히면 재발한다
  */
-export function isDegenerateSwipe(coords: SwipeCoordinates): boolean {
+export function isDegenerateSwipe(coords: SwipeCoordinates, thresholdPx: number): boolean {
   const dx = Math.abs(coords.from.x - coords.to.x);
   const dy = Math.abs(coords.from.y - coords.to.y);
-  return Math.max(dx, dy) < MIN_EFFECTIVE_SWIPE_PX;
+  return Math.max(dx, dy) < thresholdPx;
 }
 
 /**
- * 이 화면·방향에서 `MIN_EFFECTIVE_SWIPE_PX`를 **넘는** 최소 `--amount` 비율을
- * 찾는다(REQ-GEST-SCROLL-007, SPEC-GESTURE-001 M7/0.5.0 amendment로 의미
- * 재정의) — 거부 응답의 `minValidRatio`에 실어 호출자가 다시 시도할 값을
- * 알 수 있게 한다(AC-GEST-018, AC-GEST-024).
+ * 이 화면·방향·문턱에서 `thresholdPx`를 **넘는** 최소 `--amount` 비율을
+ * 찾는다(REQ-GEST-SCROLL-007/008, SPEC-GESTURE-001 M7/0.5.0 amendment로
+ * 의미 재정의, M8/0.6.0 amendment로 문턱 인자화) — 거부 응답의
+ * `minValidRatio`에 실어 호출자가 다시 시도할 값을 알 수 있게 한다
+ * (AC-GEST-018, AC-GEST-024, AC-GEST-028).
  *
  * **0.5.0 재정의 — "끝점이 달라지는 최소 비율"이 아니다.** 이 함수는
  * `isDegenerateSwipe`에 위임하므로, `isDegenerateSwipe`의 판정 기준이
- * "거리 0"에서 "거리 < `MIN_EFFECTIVE_SWIPE_PX`"로 바뀌면 이 함수가 찾는
- * 경계도 자동으로 같이 바뀐다 — 별도 코드 변경이 필요 없다. 0.4.0의 정의는
- * 짝수 축에서 2px, 홀수 축에서 1px을 냈고 **3회 중 0회 이동**했다(실측,
+ * "거리 0"에서 "거리 < 문턱"으로 바뀌면 이 함수가 찾는 경계도 자동으로
+ * 같이 바뀐다 — 별도 코드 변경이 필요 없다. 0.4.0의 정의는 짝수 축에서
+ * 2px, 홀수 축에서 1px을 냈고 **3회 중 0회 이동**했다(실측,
  * spec.md §C.1-⑫/⑬) — 오류 코드의 행동 가능 페이로드가 호출자를 같은
  * 결함으로 되돌려보내는 것이었다. "유효한"의 정의는 이제
- * `isDegenerateSwipe`가 정한다.
+ * `isDegenerateSwipe`(그리고 그 문턱 인자)가 정한다.
+ *
+ * **M8 — 문턱은 이제 호출자가 공급한다.** Android 실기기에서 iOS 문턱(11)을
+ * 그대로 쓰면 세로 0/5·가로 0/6으로 되먹여도 안 움직이는 값을 낸다는 것이
+ * 드러났다(spec.md §C.1-⑰). `scroll.ts`가 `DeviceBackend`에서 조회한
+ * 플랫폼별 문턱을 여기 인자로 넘긴다(REQ-GEST-SCROLL-008).
  *
  * 반올림된 좌표 차이는 비율이 커질수록 늘거나 그대로다(단조 비감소) —
  * `center ± half`가 각각 바깥으로만 움직이므로 독립 반올림 결과의 차이도
@@ -215,12 +208,12 @@ export function isDegenerateSwipe(coords: SwipeCoordinates): boolean {
  * 항상 참이다. 화면이 지나치게 작아 `ratio=1`도 퇴화라면(비현실적인 입력),
  * 그 경우는 이미 REQ-GEST-SCROLL-004의 화면 크기 거부 대상이다.
  */
-export function minNonDegenerateRatio(direction: ScrollDirection, screen: ScreenSize): number {
+export function minNonDegenerateRatio(direction: ScrollDirection, screen: ScreenSize, thresholdPx: number): number {
   let lo = 0;
   let hi = 1;
   for (let i = 0; i < 30; i++) {
     const mid = (lo + hi) / 2;
-    if (isDegenerateSwipe(computeScrollSwipe(direction, mid, screen))) {
+    if (isDegenerateSwipe(computeScrollSwipe(direction, mid, screen), thresholdPx)) {
       lo = mid;
     } else {
       hi = mid;

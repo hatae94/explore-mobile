@@ -12,7 +12,6 @@ import {
   computeScrollSwipe,
   deriveScreenSize,
   isDegenerateSwipe,
-  MIN_EFFECTIVE_SWIPE_PX,
   minNonDegenerateRatio,
   roundPixel,
   type ScrollDirection,
@@ -197,57 +196,63 @@ describe("computeScrollSwipe", () => {
   });
 });
 
-describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6/M7 — AC-GEST-018/022/024)", () => {
+describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6/M7/M8 — AC-GEST-018/022/024/026)", () => {
   // spec.md §C.1-⑫ 실측 화면 크기 — 402x874, witness 있음.
   const SCREEN_402X874 = { width: 402, height: 874 };
 
-  it("MIN_EFFECTIVE_SWIPE_PX는 실측값 11이다 (spec.md §C.1-⑭)", () => {
-    expect(MIN_EFFECTIVE_SWIPE_PX).toBe(11);
-  });
+  // M8/0.6.0 amendment (REQ-GEST-SCROLL-008): 문턱은 더 이상 모듈 상수가
+  // 아니라 호출자가 공급하는 인자다. 아래 값들은 이 파일의 기존 픽스처가
+  // 가정했던 iOS 실측 문턱(spec.md §C.1-⑭)을 그대로 재현하기 위한 테스트
+  // 전용 상수다 -- 실제 값의 출처(IdbBackend 상수 vs AdbBackend 밀도 파생)는
+  // adb-backend.test.ts / idb-backend.test.ts가 검증한다.
+  const IOS_THRESHOLD_PX = 11;
+  const ANDROID_THRESHOLD_PX = 32; // spec.md §C.1-⑰ 600dpi 권장 문턱
 
   describe("0.4.0(M6) 실측값은 M7 문턱(11pt) 아래라 이제도 퇴화다 — spec.md §C.1-⑫/⑭ 재해석", () => {
     it("0.001 -> from.y=to.y=437 (거리 0, 퇴화)", () => {
       const coords = computeScrollSwipe("down", 0.001, SCREEN_402X874);
       expect(coords.from.y).toBe(437);
       expect(coords.to.y).toBe(437);
-      expect(isDegenerateSwipe(coords)).toBe(true);
+      expect(isDegenerateSwipe(coords, IOS_THRESHOLD_PX)).toBe(true);
     });
 
     it("0.0012 -> from.y=to.y=437 (거리 0, 퇴화)", () => {
       const coords = computeScrollSwipe("down", 0.0012, SCREEN_402X874);
-      expect(isDegenerateSwipe(coords)).toBe(true);
+      expect(isDegenerateSwipe(coords, IOS_THRESHOLD_PX)).toBe(true);
     });
 
-    it("0.002 -> from.y=438 to.y=436 (거리 2) -- 0.4.0 기준으로는 비퇴화였지만, 거리 2 < MIN_EFFECTIVE_SWIPE_PX(11)이라 M7 문턱으로는 여전히 퇴화다", () => {
+    it("0.002 -> from.y=438 to.y=436 (거리 2) -- 0.4.0 기준으로는 비퇴화였지만, 거리 2 < 문턱(11)이라 M7 문턱으로는 여전히 퇴화다", () => {
       const coords = computeScrollSwipe("down", 0.002, SCREEN_402X874);
       expect(coords.from.y).toBe(438);
       expect(coords.to.y).toBe(436);
-      expect(isDegenerateSwipe(coords)).toBe(true);
+      expect(isDegenerateSwipe(coords, IOS_THRESHOLD_PX)).toBe(true);
     });
   });
 
   describe("네 방향 전부에서 퇴화·비퇴화 대역이 존재한다 (가로·세로 임계 비율이 다르다)", () => {
     for (const direction of ["up", "down", "left", "right"] as const) {
       it(`${direction}: --amount 0.0001은 퇴화하고, minNonDegenerateRatio()가 계산한 경계 비율은 퇴화하지 않는다`, () => {
-        expect(isDegenerateSwipe(computeScrollSwipe(direction, 0.0001, SCREEN_402X874))).toBe(true);
+        expect(isDegenerateSwipe(computeScrollSwipe(direction, 0.0001, SCREEN_402X874), IOS_THRESHOLD_PX)).toBe(true);
 
-        const boundary = minNonDegenerateRatio(direction, SCREEN_402X874);
+        const boundary = minNonDegenerateRatio(direction, SCREEN_402X874, IOS_THRESHOLD_PX);
         expect(boundary).toBeGreaterThan(0);
         expect(boundary).toBeLessThan(0.1); // 넉넉한 상한 -- 402x874 화면에서 문턱 11pt는 이 범위 안이다
-        expect(isDegenerateSwipe(computeScrollSwipe(direction, boundary, SCREEN_402X874))).toBe(false);
+        expect(isDegenerateSwipe(computeScrollSwipe(direction, boundary, SCREEN_402X874), IOS_THRESHOLD_PX)).toBe(
+          false,
+        );
       });
     }
 
     it("가로(width=402)와 세로(height=874)의 임계 비율이 서로 다르다 -- 한 축만 맞춘 구현은 이 테스트에서 걸린다", () => {
-      const verticalBoundary = minNonDegenerateRatio("down", SCREEN_402X874);
-      const horizontalBoundary = minNonDegenerateRatio("right", SCREEN_402X874);
+      const verticalBoundary = minNonDegenerateRatio("down", SCREEN_402X874, IOS_THRESHOLD_PX);
+      const horizontalBoundary = minNonDegenerateRatio("right", SCREEN_402X874, IOS_THRESHOLD_PX);
       expect(verticalBoundary).not.toBeCloseTo(horizontalBoundary, 5);
     });
   });
 
   it("--amount 1은 모든 방향에서 비퇴화다 (동작 경계)", () => {
     for (const direction of ["up", "down", "left", "right"] as const) {
-      expect(isDegenerateSwipe(computeScrollSwipe(direction, 1, SCREEN_402X874))).toBe(false);
+      expect(isDegenerateSwipe(computeScrollSwipe(direction, 1, SCREEN_402X874), IOS_THRESHOLD_PX)).toBe(false);
     }
   });
 
@@ -266,7 +271,7 @@ describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6/M7 — 
         for (const ratio of [1e-12, 1e-8, 1e-4]) {
           it(`${label} ${direction} ratio=${ratio}: 극소 비율은 거부된다 (from===to 판정이라면 홀수 축에서 실패했을 조합)`, () => {
             const coords = computeScrollSwipe(direction, ratio, screen);
-            expect(isDegenerateSwipe(coords)).toBe(true);
+            expect(isDegenerateSwipe(coords, IOS_THRESHOLD_PX)).toBe(true);
           });
         }
       }
@@ -278,12 +283,12 @@ describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6/M7 — 
       const leftCoords = computeScrollSwipe("left", 1e-12, screen);
 
       // 0.4.0 술어(from===to)라면 down만 거부되고 left는 통과(1px 방출)했을
-      // 지점 -- 새 술어(거리 < MIN_EFFECTIVE_SWIPE_PX)는 둘 다 거부한다.
+      // 지점 -- 새 술어(거리 < 문턱)는 둘 다 거부한다.
       expect(downCoords.from.x === downCoords.to.x && downCoords.from.y === downCoords.to.y).toBe(true);
       expect(leftCoords.from.x === leftCoords.to.x && leftCoords.from.y === leftCoords.to.y).toBe(false);
 
-      expect(isDegenerateSwipe(downCoords)).toBe(true);
-      expect(isDegenerateSwipe(leftCoords)).toBe(true);
+      expect(isDegenerateSwipe(downCoords, IOS_THRESHOLD_PX)).toBe(true);
+      expect(isDegenerateSwipe(leftCoords, IOS_THRESHOLD_PX)).toBe(true);
     });
 
     it("375x667은 두 축 모두 홀수라 어느 방향도 from===to가 성립하지 않지만, 새 술어는 극소 비율을 여전히 거부한다", () => {
@@ -291,17 +296,49 @@ describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6/M7 — 
       for (const direction of ["up", "down", "left", "right"] as const) {
         const coords = computeScrollSwipe(direction, 1e-12, screen);
         expect(coords.from.x === coords.to.x && coords.from.y === coords.to.y).toBe(false);
-        expect(isDegenerateSwipe(coords)).toBe(true);
+        expect(isDegenerateSwipe(coords, IOS_THRESHOLD_PX)).toBe(true);
       }
     });
 
     for (const [label, screen] of Object.entries(SCREENS)) {
       it(`${label}: minNonDegenerateRatio()가 계산한 경계는 세 화면 모두에서 실제로 비퇴화다`, () => {
         for (const direction of ["up", "down", "left", "right"] as const satisfies ScrollDirection[]) {
-          const boundary = minNonDegenerateRatio(direction, screen);
-          expect(isDegenerateSwipe(computeScrollSwipe(direction, boundary, screen))).toBe(false);
+          const boundary = minNonDegenerateRatio(direction, screen, IOS_THRESHOLD_PX);
+          expect(isDegenerateSwipe(computeScrollSwipe(direction, boundary, screen), IOS_THRESHOLD_PX)).toBe(false);
         }
       });
     }
+  });
+
+  describe("AC-GEST-026 — 문턱은 호출자가 공급하는 인자다 (SPEC-GESTURE-001 M8/0.6.0 amendment)", () => {
+    // 0.5.0까지 이 파일은 MIN_EFFECTIVE_SWIPE_PX(11, iOS 전용)를 모듈
+    // 상수로 참조했다. Android 실기기에서 그 값이 무효(세로 0/5·가로
+    // 0/6)임이 드러났다(spec.md §C.1-⑰) -- 이 순수 함수 계층은 이제
+    // 어느 플랫폼의 값인지 알지 못한 채 인자로 받은 문턱만 비교한다.
+    it("같은 화면·거리에서 Android 문턱(32)을 쓰면 퇴화이고, iOS 문턱(11)을 쓰면 비퇴화다 -- 한 상수를 두 플랫폼에 쓰던 결함이 재발하면 이 테스트가 잡는다", () => {
+      // 402x874 화면에서 거리 12px을 만드는 비율(손 계산 -- BOUNDARY_FIXTURES와
+      // 무관한 독립 유도, scroll.test.ts의 "up" 경계와 동일한 산식).
+      const coords = computeScrollSwipe("down", 0.014, SCREEN_402X874);
+      const distance = Math.abs(coords.from.y - coords.to.y);
+      expect(distance).toBeGreaterThanOrEqual(11);
+      expect(distance).toBeLessThan(32);
+
+      expect(isDegenerateSwipe(coords, IOS_THRESHOLD_PX)).toBe(false);
+      expect(isDegenerateSwipe(coords, ANDROID_THRESHOLD_PX)).toBe(true);
+    });
+
+    it("minNonDegenerateRatio()가 계산하는 경계 비율은 문턱이 클수록 커진다 (Android 문턱 > iOS 문턱 -> Android 경계 비율 > iOS 경계 비율)", () => {
+      const iosBoundary = minNonDegenerateRatio("down", SCREEN_402X874, IOS_THRESHOLD_PX);
+      const androidBoundary = minNonDegenerateRatio("down", SCREEN_402X874, ANDROID_THRESHOLD_PX);
+      expect(androidBoundary).toBeGreaterThan(iosBoundary);
+    });
+
+    it("경계 자체(슬롭+1, 확률적 구간)를 문턱으로 주면 그 거리는 비퇴화로 판정된다 -- 최종 문턱은 반드시 슬롭+2 이상을 공급해야 한다는 요구는 백엔드 쪽 책임이다(adb-backend.test.ts)", () => {
+      // 이 계층 자체는 "문턱 미만이면 퇴화"만 판정한다 -- 문턱값이
+      // 안전한 여유를 포함하는지는 순수 함수의 책임 밖이다(호출자 책임).
+      const coords = { from: { x: 0, y: 31 }, to: { x: 0, y: 0 } };
+      expect(isDegenerateSwipe(coords, 31)).toBe(false); // distance(31) >= threshold(31)
+      expect(isDegenerateSwipe(coords, 32)).toBe(true); // distance(31) < threshold(32)
+    });
   });
 });

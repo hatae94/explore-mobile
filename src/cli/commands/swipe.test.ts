@@ -36,6 +36,7 @@ function createMockBackend(devices: DeviceInfo[] = [device()]): DeviceBackend {
     launchApp: vi.fn().mockResolvedValue(undefined),
     stopApp: vi.fn().mockResolvedValue(undefined),
     swipe: vi.fn().mockResolvedValue(undefined),
+    getMinEffectiveSwipeThreshold: vi.fn().mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
   };
 }
 

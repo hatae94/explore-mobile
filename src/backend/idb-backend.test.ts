@@ -279,6 +279,29 @@ describe("IdbBackend", () => {
     });
   });
 
+  describe("getMinEffectiveSwipeThreshold (AC-GEST-026, AC-GEST-027 — SPEC-GESTURE-001 M8)", () => {
+    it("returns the measured constant (11pt, spec.md §C.1-⑭) without invoking idb at all -- no density accessor exists on this platform", async () => {
+      const exec = vi.fn<IdbExecutor>();
+
+      const backend = new IdbBackend(exec);
+      const threshold = await backend.getMinEffectiveSwipeThreshold("SIM-1");
+
+      expect(threshold).toEqual({ minEffectiveSwipePx: 11, basis: "measured-constant" });
+      expect(exec).not.toHaveBeenCalled();
+    });
+
+    it("returns the SAME constant regardless of which serial is queried -- the value is not derived from this device", async () => {
+      const exec = vi.fn<IdbExecutor>();
+      const backend = new IdbBackend(exec);
+
+      const a = await backend.getMinEffectiveSwipeThreshold("SIM-1");
+      const b = await backend.getMinEffectiveSwipeThreshold("SIM-2-A-DIFFERENT-DEVICE");
+
+      expect(a).toEqual(b);
+      expect(exec).not.toHaveBeenCalled();
+    });
+  });
+
   describe("inputText (AC-IOS-016 — ASCII via ui text, non-ASCII via clipboard paste)", () => {
     it("calls 'idb ui text --udid <serial> <text>' directly for ASCII, with no self-heal / IME / broadcast steps", async () => {
       const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));

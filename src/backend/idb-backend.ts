@@ -1,10 +1,10 @@
 /**
  * `IdbBackend` — the SPEC-IOS-001 concrete `DeviceBackend` (SPEC-ANDROID-001
  * M1 interface) implementation, wrapping `idb` subprocess calls to control
- * iOS Simulators. Implements all 9 methods (REQ-IOS-BACKEND-001; `swipe`
- * added SPEC-GESTURE-001 M1), proving the interface is thin enough to be
- * backend-swappable exactly as SPEC-ANDROID-001 designed it to be
- * (REQ-IOS-ARCH-005).
+ * iOS Simulators. Implements all 10 methods (REQ-IOS-BACKEND-001; `swipe`
+ * added SPEC-GESTURE-001 M1, `getMinEffectiveSwipeThreshold` added M8),
+ * proving the interface is thin enough to be backend-swappable exactly as
+ * SPEC-ANDROID-001 designed it to be (REQ-IOS-ARCH-005).
  *
  * Every idb command's exact argv/output shape below follows design.md §B.
  * The three shapes plan.md §B.0 deferred to Run-phase — `list-targets --json`
@@ -22,13 +22,19 @@
  * REQ-IOS-ARCH-005). Every CLI command that targets an iOS device depends
  * on this class's method surface staying compatible with `DeviceBackend`.
  * @MX:REASON — `AdbBackend` is the reference implementation this class
- * must match structurally; both implement the exact same 9-method
+ * must match structurally; both implement the exact same 10-method
  * interface so the backend registry (`registry.ts`) can swap between them
  * transparently.
  */
 
 import type { CommonElement } from "../schema/common-element.js";
-import type { DeviceBackend, DeviceInfo, SwipeOptions, SwipePoint } from "../schema/device-backend.js";
+import type {
+  DeviceBackend,
+  DeviceInfo,
+  SwipeOptions,
+  SwipePoint,
+  SwipeThreshold,
+} from "../schema/device-backend.js";
 import { isKeyAlias, type KeyAlias } from "../schema/key-alias.js";
 import type { IdbExecResult, IdbExecutor } from "./idb-executor.js";
 import { spawnIdb } from "./idb-executor.js";
@@ -100,6 +106,23 @@ const HID_V = 25;
  */
 const MODIFIER_HOLD_SECONDS = 2;
 const PASTE_KEY_DELAY_MS = 600;
+
+/**
+ * Measured constant — NOT derived from any per-device query
+ * (REQ-GEST-SCROLL-007/008, SPEC-GESTURE-001 M7 measured it, M8 relocates
+ * it here as the iOS-specific `SwipeThreshold` source; this is a TRANSFER
+ * of the constant, not a re-measurement — its origin is still the M7
+ * measurement recorded in spec.md §C.1-⑭). iOS's 11pt was measured
+ * directly in the pt coordinate system on ONE simulator
+ * (D0B3A18C-E485-4E7C-A25E-504BF4CA6163, iPhone 17 Pro, iOS 26.0) — it is
+ * NOT a `dp × density` product, so applying that formula here would
+ * invent an unmeasured iOS platform rule (spec.md §D, REQ-GEST-SCROLL-008).
+ * `getMinEffectiveSwipeThreshold` below returns this value UNCHANGED and
+ * performs NO device query — AC-GEST-026/027 require exactly that.
+ *
+ * @MX:NOTE: [AUTO] 11이라는 값 자체는 M7의 실측(세로 15/15, 가로 10/10 @ 11pt)에서 나왔다(spec.md §C.1-⑭) -- 이 상수는 그 값의 이전(移轉)이지 재측정이 아니다
+ */
+const MEASURED_MIN_EFFECTIVE_SWIPE_PX = 11;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -321,5 +344,18 @@ export class IdbBackend implements DeviceBackend {
     }
     const result = await this.exec(args);
     assertSuccess(result, "ui swipe");
+  }
+
+  /**
+   * REQ-GEST-SCROLL-007/008 (SPEC-GESTURE-001 M8, additive 10th method):
+   * returns the measured constant UNCHANGED, performing NO device query —
+   * `_serial` is accepted only to satisfy the shared `DeviceBackend`
+   * signature. AC-GEST-026/027 fail this method the moment it queries idb
+   * for anything density-shaped: iOS's 11pt was measured directly in the
+   * pt coordinate system on a DIFFERENT device and is never re-derived
+   * here (see `MEASURED_MIN_EFFECTIVE_SWIPE_PX`).
+   */
+  async getMinEffectiveSwipeThreshold(_serial: string): Promise<SwipeThreshold> {
+    return { minEffectiveSwipePx: MEASURED_MIN_EFFECTIVE_SWIPE_PX, basis: "measured-constant" };
   }
 }
