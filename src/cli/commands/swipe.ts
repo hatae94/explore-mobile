@@ -9,7 +9,7 @@
  * `--duration` is validated (REQ-GEST-SWIPE-005) BEFORE `backend.swipe` is
  * ever called — the ms → seconds conversion for iOS happens INSIDE
  * `IdbBackend.swipe` (M1), so this handler must never pass a value that
- * failed to parse as a non-negative integer. A `NaN` reaching that
+ * failed to parse as a positive integer. A `NaN` reaching that
  * conversion would silently become `--duration NaN` on the wire
  * (spec.md §B.1 REQ-GEST-SWIPE-005).
  *
@@ -62,7 +62,7 @@ export const swipeCommand: CommandHandler = async (args, backend: DeviceBackend)
       return failure(
         "swipe",
         "INVALID_DURATION",
-        "swipe --duration requires a non-negative integer number of milliseconds.",
+        "swipe --duration requires a positive integer number of milliseconds.",
         { received: args.duration },
       );
     }
