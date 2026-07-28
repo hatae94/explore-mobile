@@ -1036,14 +1036,14 @@ iPhone 17 Pro | D0B3A18C-... | Booted | ...
 
 ### 커밋
 
-M7 커밋 SHA: 아래 §E.3 참조(커밋 완료 후 backfill — 자기참조 문제, spec-frontmatter-schema.md § SHA placeholder backfill exemption 패턴 그대로).
+M7 커밋 SHA: `9da0241`(`fix(SPEC-GESTURE-001): M7 measured movement threshold + degenerate-swipe predicate + container-scroll oracle + duration ceiling`). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — `9da0241` 자신은 이 SHA를 몰랐으므로(자기참조 문제), M1-M6에서 이미 여러 번 쓰인 패턴 그대로.
 
 ## §E.3 Run-phase Audit-Ready Signal (M7 최종 — 0.5.0 amendment)
 
 ```yaml
 run_status: M7-complete
 run_complete_at: "2026-07-28"
-run_commit_sha: "pending-backfill-m7"   # 별도 backfill 커밋에서 채움
+run_commit_sha: "9da0241"   # backfill 완료(자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 여러 번 쓰인 패턴 그대로). 이 값을 담은 별도 backfill 커밋 참조.
 ac_pass_count: 5      # M7 자체 판정: AC-GEST-018(재작업), 022, 023, 024, 025
 ac_fail_count: 0
 ac_partial_count: 0
