@@ -518,6 +518,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is a trustworthy coordinate, not animation fidelity — so the
   rectangle sampled right after the call always reflects the true
   post-scroll position.
+- **A 0.8.0 amendment clears carried-over review debt — it adds no new
+  capability or requirement.** A fifth independent review found zero
+  must-fix defects and, for the first time across five rounds, agreed
+  with every acceptance-criteria claim; its only remaining note was that
+  several one-to-three-line carried findings kept surviving open
+  documentation passes instead of being swept. This amendment closes
+  that list in one pass rather than deferring it again:
+  - On a screen where **no ratio at all clears the movement floor** —
+    even a full-screen `--amount 1` — the `AMOUNT_TOO_SMALL` response no
+    longer includes `minValidRatio`/`minValidRatioBasis`, rather than
+    recommending a value that would itself be rejected if retried.
+    Callers must handle both fields being absent. The rejection itself
+    and the no-gesture-sent guarantee are unchanged.
+  - `scrollIntoView({block: "center", behavior: "instant"})` (introduced
+    by the 0.7.0 amendment above) is now wrapped in a `try`/`catch`: a
+    WebKit build that predates the `"instant"` enum value (Safari <
+    17.4) throws rather than ignoring it, which could otherwise fail the
+    whole command. The fallback re-issues the call with no `behavior`
+    argument, which is an improvement over failing outright, not an
+    equivalent to the primary call — see the README for why a
+    smooth-scrolling page can still reopen the async-sampling defect the
+    0.7.0 amendment closed, on this narrower fallback path only. This
+    codebase's SPEC deliberately declares no minimum WebKit/iOS version,
+    so this fallback is the mitigation rather than a version check.
+  - An acceptance criterion's own test-double count (`.moai/specs/SPEC-GESTURE-001/acceptance.md`,
+    AC-GEST-027) had drifted from its own implementation — it read "4
+    files / 7 sites" after later milestones had grown the actual count
+    to 6 files / 9 sites, and this was flagged by an independent review
+    but survived one documentation pass uncorrected. Now corrected to
+    the count the implementation actually has.
+  - The Android post-scroll settle delay (see the `scroll` entry above)
+    had been recorded only in the SPEC's run log, not in the SPEC body
+    itself; it is now recorded there too.
+  - The `minValidRatioBasis: "device-query"` wording (README, see the
+    0.6.0 amendment above) described Android's derived floor as a value
+    *read from* the connected device. It is not — it is a fixed platform
+    rule (`floor(8dp × density) + 2px`) with one free parameter (the
+    device's density) supplied by a query at call time. The response
+    field, its two values, and their meaning are all unchanged; only the
+    prose describing the `"device-query"` value is corrected.
 
 ### Changed
 
@@ -622,17 +662,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changes: repeated `dump --web`/`tap --web` calls in quick succession
   were found to alternate between success, `AMBIGUOUS_PAGE`,
   `NO_WEB_PAGE`, and (once) `WEB_INSPECTOR_UNREACHABLE`, even against a
-  single browser tab. Spacing calls a few seconds apart was the only
-  reliable mitigation found during SPEC-GESTURE-001's own verification
-  run; the root cause (proxy attach/detach timing, not only page-count
-  ambiguity) is out of that SPEC's scope and is recorded here so it is
-  not rediscovered as new.
-- Recorded as **31 PASS / 1 PARTIAL / 0 FAIL across 32 acceptance
-  criteria** in `.moai/specs/SPEC-GESTURE-001/progress.md` (32 = the
+  single browser tab, and this has cost real verification time across
+  more than one independent session. Passing `--page <n>` explicitly and
+  spacing calls roughly five seconds apart was the most reliable
+  mitigation found; when a call still wedges, killing the proxy directly
+  (`pkill -f ios_webkit_debug_proxy`) and retrying was the recovery used
+  during the 0.8.0 amendment's own verification. The root cause (proxy
+  attach/detach timing, not only page-count ambiguity) is out of
+  SPEC-GESTURE-001's scope and is recorded here, and now also in the
+  README's `--web` reference itself, so it is not rediscovered as new.
+- Recorded as **33 PASS / 1 PARTIAL / 0 FAIL across 34 acceptance
+  criteria** in `.moai/specs/SPEC-GESTURE-001/progress.md` (34 = the
   original 17, plus 4 added by the 0.4.0 amendment (AC-GEST-018 through
   021), plus 4 added by the 0.5.0 amendment (AC-GEST-022 through 025),
   plus 4 added by the 0.6.0 amendment (AC-GEST-026 through 029), plus 3
-  added by the 0.7.0 amendment (AC-GEST-030 through 032)).
+  added by the 0.7.0 amendment (AC-GEST-030 through 032), plus 2 added
+  by the 0.8.0 amendment (AC-GEST-033 and 034)).
   AC-GEST-006 (Android real-device swipe) is now **PASS**, promoted by
   the 0.6.0 amendment above — a real Android device connected and `adb`
   turned out to be installed (see above), so the condition this project
@@ -646,4 +691,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   AC-GEST-032 (the last of the 0.7.0 amendment's three) checks whether
   this file's and the README's own wording overstates what was
   measured — the corrections made in this same documentation pass are
-  what satisfy it.
+  what satisfy it. AC-GEST-033 (the Android measurement-timing
+  discipline) and AC-GEST-034 (`minValidRatio` never recommending a
+  value it would itself reject) are both satisfied by the 0.8.0
+  amendment's own changes above.

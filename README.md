@@ -8,7 +8,7 @@ including multi-device interaction testing.
 
 > **Status**: core Android/adb primitives + environment bootstrap, the
 > iOS Simulator/idb backend, gesture primitives (`swipe`/`scroll`), and
-> the iOS **web content** path are implemented and unit/mock-tested (644
+> the iOS **web content** path are implemented and unit/mock-tested (657
 > tests, all green). The **iOS backend has been verified end-to-end
 > against a booted simulator** (2026-07-26, iPhone 17 Pro / iOS 26.0):
 > launch Safari, dump the element tree, tap by selector, type, send
@@ -352,11 +352,14 @@ value is `INVALID_AMOUNT`; a value that looks negative
 A ratio *inside* that valid range can still be rejected: the platform
 has a **touch slop** — a minimum drag distance below which the OS
 treats a gesture as a tap rather than a scroll, not something this CLI
-invents. Below that many device pixels nothing happens (or, on Android,
-something *else* happens — see the tap warning under
-[`swipe`](#swipe-x1-y1-x2-y2-duration-ms) above), even though the
-coordinates genuinely differ. `scroll` asks the connected device's own
-backend for this floor and rejects any ratio whose resulting distance
+invents. Below that many device pixels, movement is **unreliable, not
+guaranteed absent** — iOS measurement found occasional movement even
+under the floor (9pt moved 1 time in 15, 10pt moved 2 times in 15; see
+[`spec.md` §C.1-⑭](.moai/specs/SPEC-GESTURE-001/spec.md)) — while on
+Android something *else* happens instead of nothing — see the tap
+warning under [`swipe`](#swipe-x1-y1-x2-y2-duration-ms) above — even
+though the coordinates genuinely differ. `scroll` asks the connected
+device's own backend for this floor and rejects any ratio whose resulting distance
 falls under it, before sending anything. That case returns
 `AMOUNT_TOO_SMALL` — a **different** code from `INVALID_AMOUNT`,
 because the ratio itself is not out of contract (a larger screen would
@@ -365,7 +368,13 @@ screen's size converting the ratio to fewer pixels than the floor,
 which only the geometry step knows). The response's
 `details.minValidRatio` reports the smallest ratio that *would* clear
 the floor on this specific screen, so a caller knows what to retry with
-instead of guessing. The distance is centre-symmetric, so it always
+instead of guessing. **On a screen small enough that no ratio clears the
+floor at all — even `--amount 1`, a full screen's worth — `minValidRatio`
+and `minValidRatioBasis` are omitted from the response entirely**, rather
+than carrying a value that would itself be rejected if retried. A caller
+must handle both fields being absent, not assume they always accompany
+`AMOUNT_TOO_SMALL`. The rejection itself, and the no-gesture-sent
+guarantee, are unaffected either way. The distance is centre-symmetric, so it always
 grows in steps of two device pixels around the screen's own centre —
 and the parity of those steps (odd or even) tracks the **screen axis'
 own length**, not the floor's. An even-length axis (e.g. 402×874) can
@@ -396,18 +405,19 @@ full account) — a single platform-independent constant, measured on
 iOS, that never once moved the connected Android device's screen. The
 response's `details.minValidRatioBasis` now names the source directly:
 
-- `"device-query"` — Android. Queried from *this* device at call time:
-  `wm density` reports the screen density, and the floor is
-  `floor(8dp × density) + 2px` (8dp is Android's own documented
-  touch-slop constant; the +2px margin sits above the raw slop boundary,
-  since the pixel or two right at that boundary was measured to be
-  probabilistic, not a clean cutoff — a design choice, not a further
-  measurement). The density used is whichever line `wm density` reports
-  as actually governing the device's own touch behavior — the
-  `Override density:` line when the device has one (set by a user
-  changing the Display size setting), falling back to
-  `Physical density:` otherwise (see below for why this distinction
-  matters).
+- `"device-query"` — Android. **Not** a value read off the device — a
+  fixed platform rule, `floor(8dp × density) + 2px`, with one free
+  parameter (density) that this device supplies via a `wm density`
+  query at call time (8dp is Android's own documented touch-slop
+  constant; the +2px margin sits above the raw slop boundary, since the
+  pixel or two right at that boundary was measured to be probabilistic,
+  not a clean cutoff — a design choice, not a further measurement). The
+  density used is whichever line `wm density` reports as actually
+  governing the device's own touch behavior — the `Override density:`
+  line when the device has one (set by a user changing the Display size
+  setting), falling back to `Physical density:` otherwise (see below for
+  why this distinction matters). What changes with the device is the
+  parameter, not the rule.
 - `"measured-constant"` — iOS. A fixed 11pt, measured once on one
   simulator (see the provenance note below) and returned unchanged, with
   no query against whichever device is actually connected.
@@ -658,6 +668,28 @@ there is no standard completion signal to poll for, which would reopen
 the same unbounded-wait hazard the `--duration` ceiling above already
 closed.
 
+**A 0.8.0 amendment added a fallback for WebKit builds that reject
+`behavior: "instant"` as an enum member.** WebKit validates
+`ScrollBehavior`, so a WebKit that predates `"instant"` (Safari < 17.4)
+throws rather than ignoring the value; left uncaught, that throw could
+fail the whole command. The call is now wrapped in a `try`/`catch`: on a
+throw, the fallback re-issues `scrollIntoView({block: "center"})` with
+**no `behavior` argument at all**, letting the page's own CSS
+`scroll-behavior` govern. **This is an improvement over throwing, not an
+equivalent to the primary call above** — without an explicit `behavior`,
+a page or container declaring `scroll-behavior: smooth` makes the
+fallback scroll asynchronous again, reopening the exact stale-sample
+behavior the instant-scroll fix above exists to close, on this one
+narrower path (old WebKit *and* a smooth-scrolling page/container). This
+codebase's SPEC deliberately declares no minimum WebKit/iOS version (a
+version floor would be a claim about configurations nothing here has
+tested), so this fallback — not a version check — is the mitigation. No
+currently-supported simulator (iOS 18.6, 26.0) exercises the fallback
+path; the enum-throw itself was confirmed live against a connected
+simulator, but which of two possible pre-fix failure shapes it would
+have produced (an outright command failure, or a silent `js-click`
+degrade) was not re-verified in this same session.
+
 ```bash
 $ npx explore-mobile tap --web 'a[href*="Netscape"]' --page 1
 {"ok":true,"command":"tap","data":{...,"method":"native-scrolled","x":243,"y":419}}
@@ -703,8 +735,14 @@ alternate between success, `AMBIGUOUS_PAGE`, and `NO_WEB_PAGE` (rarely
 `WEB_INSPECTOR_UNREACHABLE`) — a proxy attach/detach timing issue, not
 only page-count ambiguity, and it is unresolved (out of
 SPEC-GESTURE-001's scope; it belongs to SPEC-WEBVIEW-001's proxy
-lifecycle). Passing `--page <n>` explicitly and leaving a few seconds
-between calls was the most reliable mitigation found so far. An agent
+lifecycle). This has cost real verification time across multiple
+independent sessions, not just a single occurrence. Three things helped
+in practice: pass `--page <n>` explicitly rather than relying on
+disambiguation; leave roughly five seconds between consecutive `--web`
+calls; and if a call still wedges, kill the proxy directly
+(`pkill -f ios_webkit_debug_proxy`) and retry — a proxy this CLI did not
+start is not touched by its own cleanup (see Proxy lifecycle below), so
+a wedged externally-running proxy will not restart on its own. An agent
 driving `--web` in a loop should expect and retry on these errors rather
 than treat any single one as fatal.
 
@@ -713,7 +751,9 @@ than treat any single one as fatal.
 `ios_webkit_debug_proxy` is started and stopped for you. A proxy that is
 **already running is reused and left running** — only a proxy this CLI
 started is stopped, and that cleanup runs even when the command fails, so
-a failure does not leave one behind.
+a failure does not leave one behind. This also means a proxy left over
+from a previous wedged invocation is *not* automatically restarted by a
+later CLI call — see the manual `pkill` mitigation above.
 
 ### Errors
 
@@ -800,8 +840,8 @@ contaminate either device's input-method state.
 
 Android (SPEC-ANDROID-001, all 8 milestones), the iOS Simulator backend
 (SPEC-IOS-001), the iOS web content path (SPEC-WEBVIEW-001), and gesture
-primitives (SPEC-GESTURE-001, including its 0.4.0, 0.5.0, 0.6.0, and
-0.7.0 amendments) are implemented, with 644 unit/mock tests green.
+primitives (SPEC-GESTURE-001, including its 0.4.0, 0.5.0, 0.6.0, 0.7.0,
+and 0.8.0 amendments) are implemented, with 657 unit/mock tests green.
 
 **iOS: verified against a real simulator** (2026-07-26, iPhone 17 Pro /
 iOS 26.0, fb-idb 1.1.7). A full Safari journey — `doctor` → `devices` →
@@ -949,8 +989,22 @@ follow-up measurement found, what changed, and exactly how far that
 measurement does (and does not) reach. Both fixes made the guard this
 SPEC is built around stricter rather than looser.
 
-Final tally across all four amendments: **31 PASS / 1 PARTIAL / 0 FAIL
-across 32 acceptance criteria** in
+**A 0.8.0 amendment is a debt sweep, not a new capability.** A fifth
+independent review found zero must-fix defects and, for the first time
+across five rounds, agreed with every acceptance-criteria claim — but
+its closing observation was that carried-over low-priority findings
+were not being cleared even while a documentation pass was already
+open. This amendment clears that backlog in one pass rather than
+deferring it again: an acceptance-criteria count that had drifted from
+its own implementation is corrected, the Android post-scroll settle
+delay is now recorded in the SPEC body instead of only the run log, and
+the `minValidRatioBasis` wording above is corrected to stop describing
+Android's derivation as a value read off the device rather than what it
+is — a platform rule parameterized by one. No response schema, error
+code, or `basis` token changed.
+
+Final tally across all five amendments: **33 PASS / 1 PARTIAL / 0 FAIL
+across 34 acceptance criteria** in
 `.moai/specs/SPEC-GESTURE-001/progress.md`. AC-GEST-006 (Android
 real-device swipe) is now PASS, promoted by the 0.6.0 amendment above.
 The one remaining PARTIAL is AC-GEST-020 (the `--duration` omission

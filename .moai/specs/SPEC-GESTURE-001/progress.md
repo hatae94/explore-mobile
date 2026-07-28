@@ -2,7 +2,7 @@
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 진행 기록"
 version: "0.8.0"
-status: in-progress
+status: completed
 created: 2026-07-27
 updated: 2026-07-28
 author: hatae
@@ -1769,3 +1769,58 @@ cross_platform_build: { windows: not_applicable, note: "TypeScript/Node 프로�
 total_run_phase_files: 20   # M10은 기존 9개 파일(plan.md §A.6 M10 행)만 확장 -- 신규 파일 없음, M9까지의 20에서 불변
 m1_to_mN_commit_strategy: "M10은 단일 커밋(fix)으로 마감 -- B-1/B-2/B-3/B-4 네 산출물은 plan.md §G가 명시한 대로 서로 완전히 독립(부채 목록이지 선행 관계 아님)이지만, 같은 5차 감사가 지목한 이월 패턴을 한 번에 닫는 단일 amendment이므로 분리가 인위적이다(M6/M7/M8/M9와 동일 판단)"
 ```
+
+## §E.4 Sync-phase Audit-Ready Signal (0.8.0 amendment)
+
+> 0.7.0 마감 시점의 §E.4(위, "sync_commit_sha: 392c9b2")는 그대로 보존한다 — 이 절은 M10(0.8.0 amendment) 코드 수정 이후의 README/CHANGELOG 정정 + 재마감 sync를 담는 **별도의 새 sync 레코드**다.
+
+```yaml
+sync_status: audit-ready
+sync_complete_at: "2026-07-28"
+sync_commit_sha: "pending-backfill"   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 다섯 번 쓰인 패턴 그대로(여섯 번째). 별도 backfill 커밋에서 채운다
+b12_self_test_a: "grep -c 'SPEC-GESTURE-001' CHANGELOG.md (편집 전, HEAD f5142f0 시점) -> 13 -- 기존 [Unreleased] 블록(Added/Fixed/Notes)을 제자리에서 수정 + Fixed에 0.8.0 서브블록 1개 신규 추가(편집 후 14). 새 최상위 [Unreleased] 항목을 추가한 것이 아니라 기존 블록 내부를 갱신했으므로 중복 방출 아님"
+b12_self_test_b: "grep -cE '^### AC-GEST-[0-9]+' acceptance.md -> 34 -- CHANGELOG Notes/README Status의 '34 acceptance criteria' 표기와 일치(32 + 0.8.0 신규 2건, AC-GEST-033/034)"
+b12_self_test_c: "CHANGELOG/README가 인용한 모든 파일 경로를 커밋 전 ls로 실재 확인: src/backend/adb-backend.ts, src/cli/commands/{web-support,scroll,scroll-geometry}.ts. 인용한 모든 수치는 이 sync 세션에서 직접 재실행해 확인 -- pnpm vitest run(29 files/657 tests, exit 0) + pnpm typecheck(exit 0) + pnpm build(exit 0). spec.md §C.1-⑭(9pt 1/15, 10pt 2/15)는 M7 run-phase 실측 기록(§E.2)을 그대로 인용 -- 재측정하지 않음(디스플레이 밀도·기기 상태를 바꾸지 않는다는 지시문 Section E 준수). scroll.ts:151-158의 조건부 스프레드(`minValidRatio`/`minValidRatioBasis` 생략 경로)와 web-support.ts:283-292의 try/catch 폴백은 코드를 직접 Read해 대조 확인 -- 라이브 재검증은 지시문 Section C-1/C-4가 허용한 대로 5차 감사·M10 자체 기록을 인용"
+changelog_entry_position: "[Unreleased] -> Fixed(0.8.0 amendment 신규 서브블록 1개 -- minValidRatio 생략 + scrollIntoView 폴백 + AC-GEST-027 카운트 정정 + Android 지연 기록 + basis 산문 정정, 5개 하위 불릿) + Notes(--web 프록시 불릿에 pkill 완화책 추가, AC 집계 31/1/32 -> 33/1/34 갱신, AC-GEST-033/034 충족 근거 명시)"
+frontmatter_status_transitions:
+  spec_md: "in-progress -> completed"
+  plan_md: "in-progress -> completed"
+  acceptance_md: "in-progress -> completed"
+  progress_md: "in-progress -> completed"
+  updated_date: "2026-07-28 -> 2026-07-28 (당일 amendment 재마감, 4개 아티팩트 전부 -- M10이 이미 같은 날짜로 갱신해둔 상태)"
+canary_compliance_check: not_applicable   # 본 SPEC은 자기 자신의 sync를 테스트하는 전향적 정책을 정의하지 않음
+```
+
+### 문서 반영 (0.8.0 amendment)
+
+| 문서 | 반영 내용 |
+|------|-----------|
+| `README.md` | 상단 Status 블록(644→657 테스트, 0.8.0 amendment 언급 추가) · `scroll` 절(B-1 — NN3: 문턱 미만 스와이프의 iOS 쪽 서술을 "nothing happens" → "unreliable"로 정정, spec.md §C.1-⑭의 9pt 1/15·10pt 2/15 인용 / B-4 — `minValidRatio`/`minValidRatioBasis`가 생략되는 화면 조건 신규 단락 / B-3 — NN9: `"device-query"` 불릿을 "이 기기에서 조회한 값"에서 "기기 조회로 매개화된 플랫폼 규칙"으로 재작성) · `tap --web` 절(B-4 — NF3 방어적 폴백 신규 단락, "개선이지 동등이 아니다" 명시) · `--page <n>`/`Proxy lifecycle` 절(B-2 — 기존 "Known instability" 단락에 `--page` 명시·~5초 간격·`pkill -f ios_webkit_debug_proxy` 완화책 추가) · Status 절(0.8.0 amendment 서술 단락 신규 삽입, 최종 집계 31/1/32 → 33/1/34 갱신, "0.4.0/0.5.0/0.6.0/0.7.0" 열거에 0.8.0 추가) |
+| `CHANGELOG.md` | `[Unreleased]` 기존 SPEC-GESTURE-001 블록을 **제자리에서** 수정 — `### Fixed`에 0.8.0 amendment 신규 서브블록(부채 정리 성격 명시, 신규 능력·신규 요구사항 없음) 1개, `### Notes`의 `--web` 프록시 불릿에 pkill 완화책 추가 + AC 집계 갱신(AC-GEST-033/034 충족 근거 명시) |
+
+### 잔여 관찰 (다음 세션 참고)
+
+- 이 sync는 문서 정정 + 재마감만 담당한다(지시문 Section E) — `src/`는 건드리지 않았다. `pnpm vitest run`/`pnpm typecheck`/`pnpm build`는 이 sync 커밋 직전 재확인했다(아래 최종 검증).
+- 문턱 캐싱(NN10, `adb-backend.ts`의 5초 TTL)은 이번 sync에서 README/CHANGELOG 어디에도 사용자 대면 성능 특성으로 문서화하지 않았다 — CLI 호출마다 새 OS 프로세스이므로 현재 아키텍처에서는 캐시가 관측 가능한 효과를 내지 못한다(M10 §E.2 블로커 2번). 과장 방지가 목적이며, 이 판단 자체를 다음 감사가 검토해야 할 항목 1순위로 남긴다.
+- `swipe.ts`의 신규 `@MX:NOTE`(NN6)는 코드 주석 계층이라 CHANGELOG/README 어느 쪽에도 반영하지 않았다 — 사용자 대면 변경이 아니다.
+- push는 지시문 Section D("Do NOT push.")에 따라 수행하지 않는다.
+
+### 최종 검증 (실제 명령 출력)
+
+```
+$ pnpm vitest run   → exit 0 — Test Files 29 passed, Tests 657 passed
+$ pnpm typecheck    → exit 0
+$ pnpm build        → exit 0
+$ grep -c "SPEC-GESTURE-001" CHANGELOG.md   → 14
+$ grep -cE '^### AC-GEST-[0-9]+' .moai/specs/SPEC-GESTURE-001/acceptance.md   → 34
+$ git fetch origin master && git rev-list --count --left-right origin/master...HEAD
+0	3
+```
+
+원격과 분기 없음(로컬 3개 커밋 선행, 충돌 없음). 이 sync 세션 동안 Android 실기기·iOS 시뮬레이터 어디에도 제스처를 전송하지 않았다 — README/CHANGELOG 수치는 모두 §E.2(M7/M8/M9/M10 run-phase)의 기존 실측 기록을 인용했다(지시문 Section E "Do not change the device's display density" 및 "A sub-threshold swipe is a tap — use only rejection paths" 준수, 이번 sync는 애초에 기기에 접속하지 않았다).
+
+### 커밋
+
+이 sync 커밋은 `README.md` + `CHANGELOG.md` + SPEC 아티팩트 4종(frontmatter만, `progress.md`는 본문도 포함 — 이 §E.4 자체)을 담는다. `src/`는 건드리지 않는다(지시문 Section E). 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인했다(위 참조, 분기 없음). push는 지시문 Section D("Do NOT push.")에 따라 수행하지 않는다.
+
+sync 커밋 SHA: pending-backfill(위 참조). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — 0.3.0/0.4.0/0.5.0/0.6.0/0.7.0 sync에서 이미 다섯 번 쓰인 패턴 그대로(여섯 번째).
