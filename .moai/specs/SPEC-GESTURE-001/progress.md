@@ -1259,7 +1259,7 @@ $ grep -n "9-method\|9 methods" src/schema/device-backend.ts src/backend/idb-bac
 ```yaml
 run_status: M8-complete
 run_complete_at: "2026-07-28"
-run_commit_sha: "pending-backfill-M8"   # backfill 예정(자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 여러 번 쓰인 패턴 그대로). 이 값을 담은 별도 backfill 커밋 참조.
+run_commit_sha: "519f8d8"   # backfill 완료(자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 여러 번 쓰인 패턴 그대로). 이 값을 담은 별도 backfill 커밋 참조.
 ac_pass_count: 6      # M8 자체 판정: AC-GEST-026, 027, 028, 029, 006(승격), 008(회귀)
 ac_fail_count: 0
 ac_partial_count: 0
