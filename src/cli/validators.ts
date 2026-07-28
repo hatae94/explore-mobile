@@ -59,7 +59,7 @@ export function parseIndex(value: string): number | undefined {
  *
  * @MX:NOTE: [AUTO] 60000이라는 값은 설계 선택이지 실측값이 아니다 -- 다른 값을 택하려면 spec.md REQ-GEST-SWIPE-005의 근거(롱프레스-드래그와의 경계, 무한 정지 방지 목적)를 재검토해야 한다
  */
-const MAX_DURATION_MS = 60_000;
+export const MAX_DURATION_MS = 60_000;
 
 /**
  * Parses a `swipe --duration` string into a bounded positive integer of

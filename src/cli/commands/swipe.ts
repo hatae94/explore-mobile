@@ -24,7 +24,7 @@
 import type { DeviceBackend, SwipeOptions } from "../../schema/device-backend.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
-import { parseCoordinate, parseDurationMs } from "../validators.js";
+import { MAX_DURATION_MS, parseCoordinate, parseDurationMs } from "../validators.js";
 import { errorMessage, type CommandHandler } from "./types.js";
 
 export const swipeCommand: CommandHandler = async (args, backend: DeviceBackend) => {
@@ -62,7 +62,7 @@ export const swipeCommand: CommandHandler = async (args, backend: DeviceBackend)
       return failure(
         "swipe",
         "INVALID_DURATION",
-        "swipe --duration requires a positive integer number of milliseconds.",
+        `swipe --duration requires a positive integer number of milliseconds, at most ${MAX_DURATION_MS}.`,
         { received: args.duration },
       );
     }
