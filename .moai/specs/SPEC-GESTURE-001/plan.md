@@ -1,8 +1,8 @@
 ---
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 구현 계획"
-version: "0.8.0"
-status: completed
+version: "0.9.0"
+status: in-progress
 created: 2026-07-27
 updated: 2026-07-28
 author: hatae
@@ -71,6 +71,8 @@ PRESERVE 목록에 없으면서 실제로 손대는 파일. 여기 없는 파일
 | `src/cli/commands/web-support.ts` | M4·M6·M7·M9·**M10** | **M10 NF3(선택) — `behavior:"instant"` 방어적 폴백.** 채택 시 폴백 경로가 smooth 페이지에서 M9 결함으로 되돌아간다는 점을 주석에 남긴다 |
 | `src/cli/commands/web-support.test.ts` | M7·M9·**M10** | **M10 — 폴백을 넣은 경우에만**: 열거값 거부 WebKit stub |
 | `src/cli/commands/swipe.ts` | M2·**M10** | **M10 NN6 — `@MX` 태그**(현재 0개). 종류·위치는 구현 판단 |
+| `src/backend/adb-backend.ts` | M1·M8·M9·M10·**M11** | **M11 — M10이 넣은 캐시를 되돌린다.** 제거 대상: `THRESHOLD_CACHE_TTL_MS`(+독블록·`@MX:NOTE`) · `CachedThreshold` 인터페이스 · `thresholdCache` 필드(+독블록) · 생성자 4번째 인자 `now: () => number = Date.now` · `getMinEffectiveSwipeThreshold`의 캐시 읽기/쓰기와 M10 독블록 문단. **남는 것은 M8·M9의 조회·파생 경로 그대로** |
+| `src/backend/adb-backend.test.ts` | M8·M9·M10·**M11** | **M11 — 캐시 `describe` 블록(TTL 4건) 삭제.** 다른 `it`은 손대지 않는다(전부 `new AdbBackend(exec)` 1인자 생성이라 시그니처 축소의 영향을 받지 않는다) |
 
 ## §B. 알려진 이슈 / 리스크
 
@@ -537,6 +539,35 @@ NN8·NN4는 README 소관이므로 **M9에서 고치지 않는다.** AC-GEST-032
 
 **AC**: AC-GEST-033(측정 표본 시점 — 문서 오라클, 이미 충족 가능) / AC-GEST-034(자기거부 권고 금지 — 산출물 1). AC-GEST-027은 **0.8.0에서 이미 정정**됐으므로 M10의 대상이 아니다.
 
+### M11 — M10 문턱 캐시 되돌림 [0.9.0 amendment]
+
+> **선행**: M10 완료(0.8.0에서 마감·푸시, 직전 completed `67e5430`). 이 마일스톤은 **제거만 한다** — 새 능력도, 새 결함 대응도 아니다. 6차 감사가 자신이 제기한 NN10을 *"복잡도를 정당화하지 못한다"*고 기각했고(spec.md `## Amendments` 0.9.0에 전문), 감사가 제시한 두 처분 중 **사용자가 되돌림을 택했다.**
+>
+> **⚠️ 신규 REQ·신규 AC 0건.** 되돌림은 REQ-GEST-SCROLL-008의 무효화 조항을 **폐기하지 않는다** — 발동 조건(캐시의 존재)을 비울 뿐이며, 그 조항은 0.9.0에서 **조건부로 다시 쓰였다**. 새 기준이 필요한 지점이 없다.
+>
+> **⚠️ 기기 불필요 · 밀도 변경 없음.** 삭제 대상이 전부 프로세스 내 상태이므로 판정은 기존 mock 픽스처로 끝난다.
+
+**산출물 1 — 캐시 제거(`adb-backend.ts`) [유일한 규범적 요건: 제거 후 거동 불변].**
+
+- 제거: `THRESHOLD_CACHE_TTL_MS` 상수와 그 독블록·`@MX:NOTE` · `CachedThreshold` 인터페이스 · `thresholdCache` 필드와 독블록 · 생성자 4번째 인자 `now: () => number = Date.now` · `getMinEffectiveSwipeThreshold` 본문의 캐시 조회/기록 두 줄과 M10 독블록 문단.
+- **남기는 것**: `wm density` 조회 → `parseEffectiveDensity`(M9 유효 밀도) → `floor(8dp × density) + TOUCH_SLOP_MARGIN_PX` → `{ minEffectiveSwipePx, basis: "device-query" }`. **M8·M9의 산식과 파싱은 이 마일스톤의 대상이 아니다.**
+- **파생값이 바이트 동일해야 한다** — 캐시는 값을 만들지 않고 재사용만 했으므로, 제거는 관측 가능한 값을 바꾸지 않는다. 바뀌면 그것은 되돌림이 아니라 결함이다.
+- `ImeSessionStore`(디스크 영속, 세션 중 안 바뀜)는 **손대지 않는다** — 성격이 다른 상태이며 M11 범위 밖이다.
+
+**산출물 2 — 캐시 테스트 삭제(`adb-backend.test.ts`).**
+
+- TTL `describe` 블록의 `it` **4건**(TTL 내 재조회 없음 / serial별 독립 / TTL 만료 후 갱신값 / TTL 내 stale 제공)을 삭제한다. 이 넷은 **삭제되는 기능만** 시험하므로 남길 대상이 없다.
+- 나머지 `it`은 전부 `new AdbBackend(exec)` 1인자 생성이라 생성자 축소의 영향을 받지 않는다(확인함).
+
+**산출물 3 — 회귀.**
+
+- **657 → 653건**(29파일), `pnpm typecheck` / `pnpm build` exit 0. 감소분은 산출물 2의 4건과 **정확히 일치해야 한다** — 그 외 감소는 되돌림이 다른 것을 함께 지웠다는 뜻이다.
+- **양 플랫폼 문턱값 불변 확인**: `minValidRatio`가 iOS `0.013984236866235733`, 실측 기기 Android `0.011039886623620987` 그대로여야 한다(6차 감사가 0.7.0 이래 바이트 동일함을 확인한 값).
+
+**NF5는 되돌림으로 소멸한다.** 감사의 NF5(캐시가 CLI 경로에서 적중 불가함을 코드에 기록하라)는 **처분 (b) 유지를 택했을 때만** 유효한 요구였다 — *"If reverted, this dissolves."* 되돌림 후 남길 주석은 없다.
+
+**AC**: 신규 없음. 회귀 판정은 **AC-GEST-004**(기존 백엔드 메서드 동작 불변) · **AC-GEST-026/027**(문턱 공급 계약과 10번째 메서드 — 인터페이스 멤버 수는 **10 그대로**)로 한다. 되돌림이 인터페이스를 건드리면 AC-GEST-027이 먼저 깨진다.
+
 ## §G. 마일스톤 의존 관계
 
 ```
@@ -562,6 +593,10 @@ M9 ──> M10 ┬─ 권고 부재 경로   (기하·CLI)   [규범 · 사용�
            └─ 주석·@MX 정리    (전 계층)     [동작 변화 0]
        └ 네 산출물은 서로 **완전히 독립**이다 — 선행 관계가 아니라 부채 목록이며,
          순서는 번복 가능성 내림차순이다. 어느 하나가 막혀도 나머지는 진행된다.
+
+M10 ──> M11 ── 문턱 캐시 되돌림 (Android 백엔드 단독)
+       └ M10 산출물 3의 **역연산**이다. 다른 세 산출물과는 무관하므로
+         M11이 건드리는 파일은 `adb-backend.ts`와 그 테스트뿐이다.
 ```
 
 M2와 M3는 둘 다 M1의 `swipe`를 호출하므로 M1 뒤다. M4는 웹 경로 단독이라 M1과 독립이지만, e2e는 함께 돈다. **M6는 M5 마감 후 사후 감사에서 열린 마일스톤**이므로 M2·M3·M4의 산출물을 모두 건드린다.
