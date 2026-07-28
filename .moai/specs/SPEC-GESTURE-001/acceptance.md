@@ -2,7 +2,7 @@
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 인수 기준"
 version: "0.6.0"
-status: in-progress
+status: completed
 created: 2026-07-27
 updated: 2026-07-28
 author: hatae

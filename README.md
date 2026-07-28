@@ -8,7 +8,7 @@ including multi-device interaction testing.
 
 > **Status**: core Android/adb primitives + environment bootstrap, the
 > iOS Simulator/idb backend, gesture primitives (`swipe`/`scroll`), and
-> the iOS **web content** path are implemented and unit/mock-tested (622
+> the iOS **web content** path are implemented and unit/mock-tested (639
 > tests, all green). The **iOS backend has been verified end-to-end
 > against a booted simulator** (2026-07-26, iPhone 17 Pro / iOS 26.0):
 > launch Safari, dump the element tree, tap by selector, type, send
@@ -17,12 +17,16 @@ including multi-device interaction testing.
 > selector, and type Korean into a field. **Gesture primitives were
 > verified on the same simulator** (2026-07-27): `swipe`/`scroll` moved
 > the screen, and `tap --web` reached a below-the-fold link with a real
-> touch. Android gesture support is **argv-verified only** — `adb` is
-> not installed on the machine this was built on. Android real-device
-> verification (for every command) is still pending — see
-> [Status](#status) below before relying on this in production. The
-> Unicode-IME APK (ADBKeyBoard, GPL-2.0) is never bundled — `doctor`
-> downloads it from its official release on first use.
+> touch. **`swipe`/`scroll` were also verified against a real Android
+> device** (2026-07-28, Samsung SM-S938N, Android 16, 600 dpi) — the
+> gesture-movement threshold below which the OS treats a swipe as a tap
+> is now derived per platform instead of a single constant; see
+> [Status](#status) below for exactly what "verified" covers here (one
+> device, one density) before relying on this in production. Real-device
+> verification of every other Android command (`tap`/`text`/`key`/
+> `stop`/`doctor`/`reset`) is still pending. The Unicode-IME APK
+> (ADBKeyBoard, GPL-2.0) is never bundled — `doctor` downloads it from
+> its official release on first use.
 
 ## Why
 
@@ -244,12 +248,22 @@ Internally, `AdbBackend` passes `--duration` straight through to
 to seconds before building `idb ui swipe`'s argv, because `idb`'s own
 `--duration` is seconds, not milliseconds. Both conversions are handled
 for you — a caller never has to know which platform it is talking to.
-**The Android half of this is argv-verified only**: the syntax above
-matches `adb`'s documented contract, but `adb` itself is not installed
-on the machine this was built on — not even `adb shell input swipe
---help` can be run here, so no `swipe` has ever executed against a real
-Android device or emulator. iOS is confirmed end-to-end against a real
-simulator (see [Status](#status)).
+**Both platforms are confirmed against real hardware**: the syntax above
+was verified against a real Android device (2026-07-28, Samsung
+SM-S938N, Android 16) — a raw `adb shell input swipe` call and the
+CLI's own `swipe` command both moved the screen, with the millisecond
+duration argument accepted exactly as documented — and iOS is confirmed
+end-to-end against a real simulator (see [Status](#status)). This is
+one Android device at one density; it is not a claim about every
+Android device, manufacturer, or OS version.
+
+**A swipe shorter than the platform's movement threshold is not a
+no-op — it can be a tap.** Below that distance, Android does not just
+ignore the gesture; it interprets it as a tap and activates whatever
+sits under the starting point. This is exactly what
+[`scroll`](#scroll-updownleftright-amount-ratio)'s `AMOUNT_TOO_SMALL`
+rejection exists to prevent — see there for the measured threshold and
+why this makes the rejection more important, not less.
 
 **Omitting `--duration` is unreliable — measured, not assumed.** On a
 static page, repeated trials moved the screen 3 out of 5 times in one
@@ -335,43 +349,80 @@ value is `INVALID_AMOUNT`; a value that looks negative
 A ratio *inside* that valid range can still be rejected: the platform
 has a **touch slop** — a minimum drag distance below which the OS
 treats a gesture as a tap rather than a scroll, not something this CLI
-invents. Below that many device pixels nothing happens, even though
-the coordinates genuinely differ. `scroll` measures this floor once
-(`MIN_EFFECTIVE_SWIPE_PX`, see the provenance note below) and rejects
-any ratio whose resulting distance falls under it, before sending
-anything. That case returns `AMOUNT_TOO_SMALL` — a **different** code
-from `INVALID_AMOUNT`, because the ratio itself is not out of contract
-(a larger screen would accept the same ratio without complaint; the
-rejection depends on this screen's size converting the ratio to fewer
-pixels than the floor, which only the geometry step knows). The
-response's `details.minValidRatio` reports the smallest ratio that
-*would* clear the floor on this specific screen, so a caller knows what
-to retry with instead of guessing. The distance is centre-symmetric, so
-it grows in steps of two device pixels — the boundary jumps straight
-from a rejected 10px distance to an accepted 12px one, with no ratio
-landing on exactly the measured floor itself:
+invents. Below that many device pixels nothing happens (or, on Android,
+something *else* happens — see the tap warning under
+[`swipe`](#swipe-x1-y1-x2-y2-duration-ms) above), even though the
+coordinates genuinely differ. `scroll` asks the connected device's own
+backend for this floor and rejects any ratio whose resulting distance
+falls under it, before sending anything. That case returns
+`AMOUNT_TOO_SMALL` — a **different** code from `INVALID_AMOUNT`,
+because the ratio itself is not out of contract (a larger screen would
+accept the same ratio without complaint; the rejection depends on this
+screen's size converting the ratio to fewer pixels than the floor,
+which only the geometry step knows). The response's
+`details.minValidRatio` reports the smallest ratio that *would* clear
+the floor on this specific screen, so a caller knows what to retry with
+instead of guessing. The distance is centre-symmetric, so it grows in
+steps of two device pixels — on iOS, where the floor itself is an odd
+number of pixels, the boundary jumps straight from a rejected 10px
+distance to an accepted 12px one, with no ratio landing on exactly the
+measured floor itself; on Android, where the floor is even (see below),
+the accepted distance lands exactly on the floor.
+
+**The floor is not one value shared by every device — it is asked of
+the connected device's own backend, and the answer says how it was
+obtained.** iOS and Android arrive at this number in fundamentally
+different ways, and a bare number cannot tell a caller which kind it
+got. That distinction is not theoretical: an Android real-device check
+found exactly this failure shipped once (see [Status](#status) for the
+full account) — a single platform-independent constant, measured on
+iOS, that never once moved the connected Android device's screen. The
+response's `details.minValidRatioBasis` now names the source directly:
+
+- `"device-query"` — Android. Queried from *this* device at call time:
+  `wm density` reports the screen density, and the floor is
+  `floor(8dp × density) + 2px` (8dp is Android's own documented
+  touch-slop constant; the +2px margin sits above the raw slop boundary,
+  since the pixel or two right at that boundary was measured to be
+  probabilistic, not a clean cutoff — a design choice, not a further
+  measurement).
+- `"measured-constant"` — iOS. A fixed 11pt, measured once on one
+  simulator (see the provenance note below) and returned unchanged, with
+  no query against whichever device is actually connected.
 
 ```bash
-$ npx explore-mobile scroll down --amount 0.001
-{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"scroll --amount is too small to move the screen at this size; no gesture was sent.","details":{"requestedRatio":0.001,"minValidRatio":0.013984236866235733}}}
+$ npx explore-mobile scroll down --amount 0.001 --device <ios-simulator>
+{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"scroll --amount is too small to move the screen at this size; no gesture was sent.","details":{"requestedRatio":0.001,"minValidRatio":0.013984236866235733,"minValidRatioBasis":"measured-constant"}}}
 
-$ npx explore-mobile scroll down --amount 0.002
-{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"scroll --amount is too small to move the screen at this size; no gesture was sent.","details":{"requestedRatio":0.002,"minValidRatio":0.013984236866235733}}}
+$ npx explore-mobile scroll down --amount 0.001 --device <android-device>
+{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"scroll --amount is too small to move the screen at this size; no gesture was sent.","details":{"requestedRatio":0.001,"minValidRatio":0.011039886623620987,"minValidRatioBasis":"device-query"}}}
 
-$ npx explore-mobile scroll down --amount 0.014
+$ npx explore-mobile scroll down --amount 0.014 --device <ios-simulator>
 {"ok":true,"command":"scroll","data":{"serial":"D0B3A18C-…","direction":"down","from":{"x":201,"y":443},"to":{"x":201,"y":431}}}
 ```
 
 No gesture is sent when `AMOUNT_TOO_SMALL` is returned.
 
-**The floor itself is a measured value, not a chosen one.** It comes
-from one iPhone 17 Pro simulator running iOS 26.0 — binary search
-across repeated trials, judged by comparing before/after screenshots
-with the status bar cropped out (11pt on both axes; see
+**Neither floor is a chosen value — both are measured, or derived from
+a measured platform rule.** iOS's 11pt came from one iPhone 17 Pro
+simulator running iOS 26.0 — binary search across repeated trials,
+judged by comparing before/after screenshots with the status bar
+cropped out (see
 [`spec.md` §C.1-⑭](.moai/specs/SPEC-GESTURE-001/spec.md) for the full
-trial record). It is **not** established for real iOS hardware, other
-iOS device models, or Android — this project has no `adb` available, so
-Android's own touch slop cannot be measured here at all.
+trial record). It is **not** established for real iOS hardware or other
+iOS device models. Android's derivation rule (`8dp × density`) was
+confirmed on one real device — a Samsung SM-S938N at 600 dpi, where the
+measured touch-slop boundary (30px) matched `8dp × 3.75` exactly and
+the resulting floor (32px) moved the screen 3 out of 3 times on every
+retry, in all four directions (2026-07-28; see
+[`spec.md` §C.1-⑰](.moai/specs/SPEC-GESTURE-001/spec.md)). `8dp` is
+Android's own documented default, so the rule is expected to generalize
+across densities, but only this one device's density, at one
+manufacturer, has actually been measured — a device that ships a
+different slop default is unconfirmed. **Neither platform's value is
+evidence for the other's**: the iOS constant (11pt) never once moved
+this Android device (0 out of 5 vertical trials, 0 out of 6 horizontal)
+— exactly the failure this basis-tagged design exists to prevent.
 
 `scroll` cannot confirm the screen actually moved — like `swipe`, it
 sends the gesture and returns; re-run [`dump`](#dump) to check. It also
@@ -382,9 +433,10 @@ than a guaranteed no-op — see the reliability disclosure under
 to guarantee real movement on the caller's behalf, so `scroll` never
 leaves this to chance the way `swipe` itself deliberately does.
 
-Like `swipe`, the Android path here is **argv-verified only** — see the
-caveat under [`swipe`](#swipe-x1-y1-x2-y2-duration-ms); this command has
-not run against a real Android device or emulator.
+Like `swipe`, this command is confirmed against both a real iOS
+simulator and a real Android device — see
+[`swipe`](#swipe-x1-y1-x2-y2-duration-ms) above and
+[Status](#status) below for exactly what was verified.
 
 ### `doctor [--yes|--install] [--clean]`
 
@@ -665,8 +717,8 @@ contaminate either device's input-method state.
 
 Android (SPEC-ANDROID-001, all 8 milestones), the iOS Simulator backend
 (SPEC-IOS-001), the iOS web content path (SPEC-WEBVIEW-001), and gesture
-primitives (SPEC-GESTURE-001, including its 0.4.0 and 0.5.0 amendments)
-are implemented, with 622 unit/mock tests green.
+primitives (SPEC-GESTURE-001, including its 0.4.0, 0.5.0, and 0.6.0
+amendments) are implemented, with 639 unit/mock tests green.
 
 **iOS: verified against a real simulator** (2026-07-26, iPhone 17 Pro /
 iOS 26.0, fb-idb 1.1.7). A full Safari journey — `doctor` → `devices` →
@@ -727,11 +779,46 @@ then `scroll up` moved a feed down and then back to its starting point,
 confirming both the derived screen size and the "down means the finger
 moves up" direction semantics; and the off-viewport `tap --web` case
 above (`method: "native-scrolled"`) is from this same verification run.
-Android gesture support is **argv-verified only** — `adb` itself is not
-installed on this machine, so neither `adb`'s own swipe syntax nor an
-actual device swipe could be checked; `adb shell input swipe`'s
-millisecond duration unit (§C.1-⑥ of the SPEC) remains a
-documentation-only claim, never locally confirmed.
+
+**Gesture primitives verified against a real Android device** (2026-07-28,
+Samsung SM-S938N / Galaxy S25 Ultra, Android 16, 1440×3120, 600 dpi,
+wireless ADB). An earlier release note here claimed `adb` itself was not
+installed on the development machine; that was wrong — `adb` was
+installed, just not on `PATH` (`command -v adb` tests reachability, not
+presence). Once found and put on `PATH`, both `adb shell input swipe`'s
+syntax and its millisecond duration argument (§C.1-⑥ of the SPEC) were
+confirmed against the real device, and `scroll` moved the screen in all
+four directions, with the response's `minValidRatio` fed back
+successfully 3 out of 3 times per direction. This also promotes
+AC-GEST-006 (Android real-device swipe) from PARTIAL to PASS.
+
+That same session found the gesture-movement threshold shipping as a
+single platform-independent constant (11pt, measured on iOS) was a real,
+shipped defect on Android: it never once moved the connected device's
+screen (0 out of 5 vertical trials, 0 out of 6 horizontal) — this
+device's actual touch slop was roughly three times larger. The
+threshold is now derived per platform through a new backend method
+instead of a shared constant (`floor(8dp × density) + 2px` on Android,
+queried live via `wm density`; the same measured 11pt constant on iOS,
+never re-queried) — see
+[`scroll`](#scroll-updownleftright-amount-ratio) above for the full
+mechanism and the `minValidRatioBasis` field this introduced.
+
+The same session also corrected a claim this SPEC's own reasoning had
+made: a swipe shorter than the movement threshold was assumed to most
+likely do nothing. It does not — Android interprets it as a tap and
+activates whatever sits under the starting point (observed: repeated
+short swipes on a Settings row opened a device-pairing bottom sheet).
+This makes the `AMOUNT_TOO_SMALL` rejection *more* necessary, not less:
+it exists to prevent an unintended tap, not merely a wasted call.
+
+All of the above is verified on this one device at this one density;
+other Android densities, manufacturers, and OS versions remain
+unmeasured, though the derivation rule (`8dp` is Android's own
+documented default) is expected to generalize. Real-device verification
+of every other Android command — `tap`/`text`/`key`/`stop`/`doctor`/
+`reset` — is still outstanding; this session specifically confirmed
+`devices`, `screenshot`, `dump`, `launch`, `swipe`, and `scroll`.
 
 **A 0.4.0 amendment fixed four `ok:true`-with-no-effect defects**, found
 by an independent post-close review after this SPEC's initial (0.3.0)
@@ -759,10 +846,11 @@ reporting no movement. All three are closed by the measured touch-slop
 floor and the element-rect comparison described above — see
 [CHANGELOG](CHANGELOG.md) for the full account of both rounds.
 
-Final tally across both amendments: **23 PASS / 2 PARTIAL / 0 FAIL
-across 25 acceptance criteria** in
-`.moai/specs/SPEC-GESTURE-001/progress.md`. The two PARTIALs are
-AC-GEST-006 (Android, above) and AC-GEST-020 (the `--duration` omission
+Final tally across all three amendments: **28 PASS / 1 PARTIAL / 0 FAIL
+across 29 acceptance criteria** in
+`.moai/specs/SPEC-GESTURE-001/progress.md`. AC-GEST-006 (Android
+real-device swipe) is now PASS, promoted by the 0.6.0 amendment above.
+The one remaining PARTIAL is AC-GEST-020 (the `--duration` omission
 reliability measurement — it is intermittent by nature, so a fixed
 pass/fail verdict would misstate it). One further item, AC-GEST-021
 (the `-scrolled` evidence fix from the 0.4.0 amendment), is confirmed
@@ -779,21 +867,23 @@ reliable mitigation found; a real fix is out of scope here.
 
 Still pending before this is production-ready:
 
-- Real-emulator/real-device verification of every Android command,
-  including the `swipe`/`scroll` gestures (screenshot PNG validity,
+- Real-device verification of the remaining Android commands —
+  `tap`/`text`/`key`/`stop`/`doctor`/`reset` (screenshot PNG validity,
   tap/text landing, `launch`/`stop` observed effects, multi-device
-  isolation with two physically connected devices). `adb` itself is not
-  installed on the machine this was built on, so even `adb`'s own
-  swipe/scroll syntax could not be checked.
+  isolation with two physically connected devices). `swipe`/`scroll`
+  are now verified against a real device (see above); `adb` itself
+  turned out to be installed on the build machine, just not on `PATH`,
+  so it is no longer the blocker it was previously recorded as.
 - Verifying the runtime ADBKeyBoard download end-to-end against a real
   device (the download/cache/validate logic is unit/mock-verified; see
   the Unicode caveat above and `vendor/adbkeyboard/README.md`).
 - A published npm package (`npx explore-mobile` will work once this
   ships to the registry — today it only runs from a local checkout).
 
-The Android items above are unit/mock-verified against constructed
-`adb` command lines and mocked subprocess output, not against live
-hardware.
+The remaining Android items above (`tap`/`text`/`key`/`stop`/`doctor`/
+`reset`) are unit/mock-verified against constructed `adb` command lines
+and mocked subprocess output, not against live hardware; `swipe` and
+`scroll` are the exception — see above.
 
 ## Roadmap
 
@@ -802,7 +892,7 @@ hardware.
 | SPEC-ANDROID-001 | Android/adb device-control primitives + environment bootstrap | Implemented, e2e pending |
 | SPEC-IOS-001 | iOS Simulator backend (`idb`) — common schema + registry extension | Completed, verified on a real simulator |
 | SPEC-WEBVIEW-001 | iOS Simulator web content — DOM recognition + interaction (`ios-webkit-debug-proxy`) | Completed, verified on a real simulator |
-| SPEC-GESTURE-001 | `swipe`/`scroll` gesture primitives + off-viewport web element reach | Completed — iOS verified on a real simulator, Android argv-only (no `adb` on this machine) |
+| SPEC-GESTURE-001 | `swipe`/`scroll` gesture primitives + off-viewport web element reach | Completed — verified on a real iOS simulator and a real Android device (one device/density each) |
 | SPEC-04 | Prompt-driven exploration loop + multi-device scenario orchestration | Committed |
 | SPEC-05 | Codex skill wrapper + broader packaging | Committed |
 | — | Android WebView (CDP over `adb forward`) and iOS **physical-device** webviews | Committed — separate transports, separate SPECs |

@@ -251,16 +251,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `--amount` (0 excluded, 1 included) is `INVALID_AMOUNT`; a
     negative-looking literal is `INVALID_ARGS`, same as `--duration`. A
     ratio *inside* that valid range can still be rejected as
-    `AMOUNT_TOO_SMALL` (see the 0.4.0 and 0.5.0 amendments below) — a
-    **different** code from `INVALID_AMOUNT`, because it depends on
-    this specific screen's size rather than the contract range: the
-    platform's touch-slop floor, measured at 11pt on both axes (one
-    iPhone 17 Pro simulator, iOS 26.0 — not established for real
-    hardware, other iOS models, or Android), rejects any ratio whose
+    `AMOUNT_TOO_SMALL` (see the 0.4.0, 0.5.0, and 0.6.0 amendments
+    below) — a **different** code from `INVALID_AMOUNT`, because it
+    depends on this specific screen's size rather than the contract
+    range: the platform's touch-slop floor rejects any ratio whose
     resulting distance falls under it, and only the geometry step — not
-    a static validator — can tell. The response's `details.minValidRatio`
+    a static validator — can tell. Since the 0.6.0 amendment below, this
+    floor is asked of the connected device's own backend rather than a
+    single shared constant — iOS returns a measured 11pt constant (one
+    iPhone 17 Pro simulator, iOS 26.0 — not established for real
+    hardware or other iOS models), while Android derives
+    `floor(8dp × density) + 2px` from a live `wm density` query (verified
+    on one Samsung SM-S938N, 600 dpi — not established for other
+    densities or manufacturers). The response's `details.minValidRatio`
     reports the smallest ratio that would clear the floor on this
-    specific screen. No gesture is sent in either rejection case.
+    specific screen, and the new `details.minValidRatioBasis` field
+    (`"device-query"` | `"measured-constant"`) names which of the two
+    kinds of evidence produced it. No gesture is sent in either
+    rejection case.
   - **`tap --web` now reaches below-the-fold elements with a real
     touch.** An off-viewport web element previously fell back straight
     to the JS `click()` path. It is now scrolled into view, re-measured,
@@ -274,13 +282,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     not merely because `scrollIntoView` ran without error, which only
     confirms the target node existed (see the 0.4.0 and 0.5.0
     amendments below for the two rounds of defects this closes).
-- Android gesture support is **argv-verified only**: `adb` itself is not
-  installed on the machine this SPEC was built on, so not even
-  `adb shell input swipe --help` could be checked. `swipe`/`scroll`
-  argv construction for Android is unit-tested against the documented
-  contract, but no Android device or emulator confirmed either command
-  actually moves a screen — both iOS gestures and the off-viewport web
-  tap were confirmed on a booted simulator.
+- Android `swipe`/`scroll` are now confirmed against a real device
+  (SPEC-GESTURE-001 amendment 0.6.0, below) — a Samsung SM-S938N,
+  Android 16, 600 dpi. `adb`'s swipe syntax and its millisecond duration
+  argument both moved the screen as documented, and `scroll` moved the
+  screen in all four directions using a threshold now derived per
+  platform instead of a shared constant (see the `scroll` entry above
+  and the 0.6.0 amendment below). This is one device at one density —
+  it is not a claim about every Android device, manufacturer, or OS
+  version; real-device verification of the remaining Android commands
+  (`tap`/`text`/`key`/`stop`/`doctor`/`reset`) is still outstanding.
 
 ### Fixed
 
@@ -392,6 +403,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     command indefinitely (a forced kill was required). A 60,000 ms
     (60s) ceiling — a design choice, not a measurement — now rejects it
     as `INVALID_DURATION` (details above).
+- **A platform-independent movement threshold shipped as a defect,
+  found the first time a real Android device was connected**
+  (SPEC-GESTURE-001 amendment 0.6.0). `MIN_EFFECTIVE_SWIPE_PX` — the
+  11pt floor the 0.5.0 amendment above measured and shipped — was a
+  single constant used by both platforms. On a real Samsung SM-S938N
+  (Android 16, 600 dpi), 11px never once moved the screen (0 out of 5
+  vertical trials, 0 out of 6 horizontal): the device's actual touch
+  slop was roughly three times larger. This means every `AMOUNT_TOO_SMALL`
+  response `scroll` had ever sent on Android recommended a
+  `minValidRatio` that, fed back, would not have moved the screen
+  either — the same "error code returns a value that reproduces the
+  defect it exists to prevent" failure shape the 0.5.0 amendment closed
+  for iOS, reappearing on the platform it had never been checked
+  against.
+  - `DeviceBackend` gains a 10th method,
+    `getMinEffectiveSwipeThreshold(serial)`, implemented additively by
+    all three concrete backends (`AdbBackend`, `IdbBackend`, and the
+    `BackendRegistry` facade) — the existing 9 methods are unchanged.
+    `AdbBackend` queries `wm density` on the connected device at call
+    time and derives `floor(8dp × density) + 2px` (8dp is Android's own
+    documented touch-slop constant); `IdbBackend` returns the measured
+    11pt constant unchanged, with no device query at all. The interface
+    deliberately asks for the *threshold*, not the device's density —
+    exposing density would force the iOS backend to fabricate a
+    `dp × density` rule for a value that was never measured that way.
+  - The response now carries `details.minValidRatioBasis`
+    (`"device-query"` | `"measured-constant"`) alongside
+    `minValidRatio`, so a caller can tell whether the number came from
+    the device it is actually driving or from a constant measured on a
+    different device entirely — seeded by the exact shape of this
+    defect: a wrong number and a right number looked identical until
+    now.
+  - This also promotes **AC-GEST-006 (Android real-device swipe) from
+    PARTIAL to PASS**: the two conditions this project had withheld
+    promotion on — `adb` installed, and a device connected — are both
+    now satisfied, and a real device confirmed `swipe` and `scroll`
+    moving the screen (see the `adb`-not-installed correction below).
+  - Separately, this amendment corrects a claim this SPEC's own
+    reasoning had made about *why* the guard above is needed: a
+    sub-threshold swipe was assumed to most likely do nothing. **It does
+    not** — Android interprets a drag shorter than the touch slop as a
+    **tap**, activating whatever sits under the starting point.
+    Repeated short swipes on a device's Settings screen were observed
+    to open a pairing bottom sheet, including on an element the
+    normalized element tree itself reported as `tappable: false`. This
+    makes the `AMOUNT_TOO_SMALL` rejection *more* necessary, not less —
+    it prevents an unintended tap, an irreversible side effect, not
+    merely a wasted call — while it also means every threshold
+    measurement (this SPEC's and any future one) must distinguish "the
+    screen didn't move" from "a tap fired," a distinction the original
+    11pt measurement did not need to make only because its test page
+    happened to have nothing tappable at the swipe's start point.
+  - A separate, unrelated claim is also corrected here: earlier releases
+    of this file and the README stated `adb` was "not installed" on the
+    machine this SPEC was built on. That was an overgeneralization —
+    `adb` **was** installed, just not on `PATH` (`command -v adb` tests
+    reachability, not presence). The CLI itself calls the `adb` binary
+    by name and therefore cannot see it either way in that
+    configuration, so the practical guidance (`adb` must be on `PATH`
+    for this CLI to find it) is unchanged, but the "not installed"
+    wording itself was inaccurate and is corrected everywhere it
+    appeared.
 
 ### Changed
 
@@ -441,7 +514,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (AC-IOS-017) and a stale grep-literal wording in two AC descriptions
   (AC-IOS-003/AC-IOS-024); both are fixed and reflected above.
 - Android real-device verification remains outstanding — the Android
-  implementation is still unit/mock-verified only.
+  implementation is still unit/mock-verified only. (Later updated by
+  SPEC-GESTURE-001's 0.6.0 amendment: `devices`/`screenshot`/`dump`/
+  `launch`/`swipe`/`scroll` are since confirmed on a real device;
+  `tap`/`text`/`key`/`stop`/`doctor`/`reset` remain unit/mock-verified
+  only — see the SPEC-GESTURE-001 entries above.)
 - iOS web-path verification is **done** (2026-07-27, same simulator):
   `dump --web` returned 333 visible elements of 508 matched; a selector
   tap navigated to `shopping.naver.com`, confirmed by screenshot; an
@@ -497,13 +574,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run; the root cause (proxy attach/detach timing, not only page-count
   ambiguity) is out of that SPEC's scope and is recorded here so it is
   not rediscovered as new.
-- Recorded as **23 PASS / 2 PARTIAL / 0 FAIL across 25 acceptance
-  criteria** in `.moai/specs/SPEC-GESTURE-001/progress.md` (25 = the
+- Recorded as **28 PASS / 1 PARTIAL / 0 FAIL across 29 acceptance
+  criteria** in `.moai/specs/SPEC-GESTURE-001/progress.md` (29 = the
   original 17, plus 4 added by the 0.4.0 amendment (AC-GEST-018 through
-  021), plus 4 more added by the 0.5.0 amendment (AC-GEST-022 through
-  025)). The two PARTIALs are AC-GEST-006 (Android real-device swipe,
-  which cannot be promoted to PASS on this machine because `adb` itself
-  is not installed, not only because no device is connected) and
+  021), plus 4 added by the 0.5.0 amendment (AC-GEST-022 through 025),
+  plus 4 added by the 0.6.0 amendment (AC-GEST-026 through 029)).
+  AC-GEST-006 (Android real-device swipe) is now **PASS**, promoted by
+  the 0.6.0 amendment above — a real Android device connected and `adb`
+  turned out to be installed (see above), so the condition this project
+  had withheld promotion on is satisfied. The one remaining PARTIAL is
   AC-GEST-020 (the `--duration` omission reliability measurement, which
   is intermittent by nature and so is recorded as a measured rate rather
   than a pass/fail verdict). AC-GEST-021 (the `-scrolled` evidence fix
