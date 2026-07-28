@@ -1072,7 +1072,7 @@ m1_to_mN_commit_strategy: "M7은 단일 커밋(fix)으로 마감 -- 측정값이
 ```yaml
 sync_status: audit-ready
 sync_complete_at: "2026-07-28"
-sync_commit_sha: "pending-backfill-0.5.0-sync"   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 세 번 쓰인 패턴 그대로. 별도 후속 backfill 커밋에서 실제 SHA로 정정한다.
+sync_commit_sha: "3d01d4e"   # backfill 완료(자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 세 번 쓰인 패턴 그대로). 이 값을 담은 별도 chore backfill 커밋 참조.
 b12_self_test_a: "grep -c 'SPEC-GESTURE-001' CHANGELOG.md (편집 전) -> 6 -- 기존 [Unreleased] 블록(Added/Fixed/Notes)을 제자리에서 수정 + Fixed에 0.5.0 서브블록 1개 신규 추가(편집 후 7). 새 최상위 [Unreleased] 항목을 추가한 것이 아니라 기존 블록 내부를 갱신했으므로 중복 방출 아님"
 b12_self_test_b: "grep -cE '^### AC-GEST-[0-9]+' acceptance.md -> 25 -- CHANGELOG Notes/README Status의 '25 acceptance criteria' 표기와 일치"
 b12_self_test_c: "CHANGELOG/README가 인용한 모든 파일 경로를 커밋 전 Read로 실재 확인: src/cli/commands/scroll-geometry.ts(MIN_EFFECTIVE_SWIPE_PX/isDegenerateSwipe/minNonDegenerateRatio), scroll.ts, swipe.ts, web-support.ts(buildScrollIntoViewExpression), validators.ts(MAX_DURATION_MS/parseDurationMs). 인용한 모든 수치는 빌드된 dist/cli/bin.js를 부팅된 iPhone 17 Pro 시뮬레이터(D0B3A18C-E485-4E7C-A25E-504BF4CA6163)에 대해 직접 재실행해 확인(scroll down --amount 0.001/0.002/0.013/0.014, swipe --duration 0/60001/abc)"
