@@ -815,12 +815,14 @@ plan.md §A.6 M6 행: `src/cli/validators.ts`, `src/cli/commands/scroll-geometry
 
 ### 커밋
 
-아래 §E.3(M6 최종) 참조(커밋 완료 후 backfill).
+M6 커밋 SHA: `9bd8ae1`. 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — `9bd8ae1` 자신은 이 SHA를 몰랐으므로(자기참조 문제, spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3) 패턴 그대로) 아래 `run_commit_sha` 필드도 이 backfill 커밋에서 채운다.
 
 ## §E.3 Run-phase Audit-Ready Signal (M6 최종 — 0.4.0 amendment)
 
 ```yaml
 run_status: M6-complete
+run_complete_at: "2026-07-28"
+run_commit_sha: "9bd8ae1"   # backfill 완료(자기참조 해시 문제 — 위 참조). 이 값을 담은 별도 chore backfill 커밋 참조
 ac_pass_count: 3      # M6 자체 판정: AC-GEST-018, AC-GEST-019, AC-GEST-021(unit 기준 PASS)
 ac_fail_count: 0
 ac_partial_count: 1   # AC-GEST-020 (acceptance.md가 명시적으로 허용하는 PARTIAL — 간헐성 자체가 재확인됨)
