@@ -1279,7 +1279,7 @@ m1_to_mN_commit_strategy: "M8은 단일 커밋(fix)으로 마감 -- 백엔드 �
 ```yaml
 sync_status: audit-ready
 sync_complete_at: "2026-07-28"
-sync_commit_sha: "pending-backfill"   # 이 커밋 자신은 자기 SHA를 모른다(자기참조 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 여러 번 쓰인 패턴 그대로). 이 값을 담은 별도 chore backfill 커밋 참조.
+sync_commit_sha: "ad06692"   # backfill 완료(자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 여러 번 쓰인 패턴 그대로). 이 값을 담은 별도 chore backfill 커밋 참조.
 b12_self_test_a: "grep -c 'SPEC-GESTURE-001' CHANGELOG.md (편집 전, HEAD 519f8d8/3bf8874 시점) -> 7 -- 기존 [Unreleased] 블록(Added/Fixed/Notes)을 제자리에서 수정 + Fixed에 0.6.0 서브블록 1개 신규 추가(편집 후 11). 새 최상위 [Unreleased] 항목을 추가한 것이 아니라 기존 블록 내부를 갱신했으므로 중복 방출 아님"
 b12_self_test_b: "grep -cE '^### AC-GEST-[0-9]+' acceptance.md -> 29 -- CHANGELOG Notes/README Status의 '29 acceptance criteria' 표기와 일치"
 b12_self_test_c: "CHANGELOG/README가 인용한 모든 파일 경로를 커밋 전 Read/ls로 실재 확인: src/schema/device-backend.ts, src/backend/{adb-backend,idb-backend,registry}.ts, src/cli/commands/{swipe,scroll,scroll-geometry,web-support}.ts, src/cli/{args,validators,router}.ts, src/webview/coordinates.ts, vendor/adbkeyboard/README.md. 인용한 모든 수치는 빌드된 dist/cli/bin.js를 연결된 Android 실기기(adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp)와 부팅된 iPhone 17 Pro 시뮬레이터(D0B3A18C-E485-4E7C-A25E-504BF4CA6163) 양쪽에 대해 직접 재실행해 확인(scroll down --amount 0.001, minValidRatio/minValidRatioBasis 두 플랫폼 모두 재확인) + node -e로 computeScrollSwipe를 직접 호출해 Android 32px·iOS 12px 반올림 거리를 재계산 확인"
@@ -1321,4 +1321,4 @@ $ grep -cE '^  [a-zA-Z]+\(' src/schema/device-backend.ts   → 10
 
 이 sync 커밋은 `README.md` + `CHANGELOG.md` + SPEC 아티팩트 4종(frontmatter만, `progress.md`는 본문도 포함 — 이 §E.4 자체)을 담는다. `src/`는 건드리지 않는다(지시문 Section D). 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인한다. push는 지시문 Section C-4("Do NOT push. I hold that decision.")에 따라 수행하지 않는다.
 
-sync 커밋 SHA: pending-backfill(위 참조). 이 값은 별도의 후속 backfill 커밋에 기록한다 — 0.3.0/0.4.0/0.5.0 sync에서 이미 세 번 쓰인 패턴 그대로.
+sync 커밋 SHA: `ad06692`(`docs(SPEC-GESTURE-001): correct 0.6.0 amendment docs + 3-phase close`). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — 0.3.0/0.4.0/0.5.0 sync에서 이미 세 번 쓰인 패턴 그대로.
