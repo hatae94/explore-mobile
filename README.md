@@ -8,7 +8,7 @@ including multi-device interaction testing.
 
 > **Status**: core Android/adb primitives + environment bootstrap, the
 > iOS Simulator/idb backend, gesture primitives (`swipe`/`scroll`), and
-> the iOS **web content** path are implemented and unit/mock-tested (510
+> the iOS **web content** path are implemented and unit/mock-tested (553
 > tests, all green). The **iOS backend has been verified end-to-end
 > against a booted simulator** (2026-07-26, iPhone 17 Pro / iOS 26.0):
 > launch Safari, dump the element tree, tap by selector, type, send
@@ -230,9 +230,9 @@ read the page's DOM instead.
 ### `swipe <x1> <y1> <x2> <y2> [--duration <ms>]`
 
 Sends a raw swipe/drag gesture from one device-pixel coordinate to
-another, on both platforms. `--duration` is **milliseconds** — the CLI's
-one contract unit regardless of backend; omit it to use the platform
-default duration.
+another. `--duration` is **milliseconds** — the CLI's one contract unit
+regardless of backend; omit it to use the platform default duration (see
+the reliability caveat below before relying on the default).
 
 ```bash
 $ npx explore-mobile swipe 200 700 200 300 --duration 500
@@ -244,13 +244,43 @@ Internally, `AdbBackend` passes `--duration` straight through to
 to seconds before building `idb ui swipe`'s argv, because `idb`'s own
 `--duration` is seconds, not milliseconds. Both conversions are handled
 for you — a caller never has to know which platform it is talking to.
+**The Android half of this is argv-verified only**: the syntax above
+matches `adb`'s documented contract, but `adb` itself is not installed
+on the machine this was built on — not even `adb shell input swipe
+--help` can be run here, so no `swipe` has ever executed against a real
+Android device or emulator. iOS is confirmed end-to-end against a real
+simulator (see [Status](#status)).
 
-`--duration` must be a non-negative integer: an unparseable or empty
-value is rejected with `INVALID_DURATION`; a value that *looks* negative
-(`--duration -100`) is instead caught earlier by the argument parser as
-`INVALID_ARGS`. Either way, no gesture is sent. The four coordinates
-follow the same non-negative-integer rule as `tap`, returning
-`INVALID_COORDINATES` (or `INVALID_ARGS` for a negative literal).
+**Omitting `--duration` is unreliable — measured, not assumed.** On a
+static page, repeated trials moved the screen 3 out of 5 times in one
+session and 5 out of 5 times in a separate session: the omitted path is
+session-variable, neither a dependable default nor a guaranteed no-op.
+Pass an explicit `--duration <ms>` value when the caller needs the
+gesture to actually happen — `500` is confirmed 5/5 across both
+measurement sessions. [`scroll`](#scroll-updownleftright-amount-ratio)
+below is unaffected by this: it always sends its own internal, fixed
+duration, precisely because a convenience layer has to guarantee real
+movement — `swipe` itself stays a raw primitive and deliberately never
+injects a hidden default (design decision D1,
+`.moai/specs/SPEC-GESTURE-001/spec.md` §A.3).
+
+`--duration` must be a **positive** integer: `0` is rejected — a
+zero-duration gesture cannot move anything — the same as an unparseable
+or empty value, both returning `INVALID_DURATION`. A value that *looks*
+negative (`--duration -100`) is instead caught earlier by the argument
+parser as `INVALID_ARGS`. Every rejection sends zero gestures.
+Coordinates follow a *separate* rule and keep `0` as valid (e.g.
+`swipe 0 0 0 100` is legitimate) — only `--duration`'s own parser treats
+`0` as invalid:
+
+```bash
+$ npx explore-mobile swipe 200 700 200 300 --duration 0
+{"ok":false,"command":"swipe","error":{"code":"INVALID_DURATION","message":"swipe --duration requires a positive integer number of milliseconds.","details":{"received":"0"}}}
+```
+
+The four coordinates follow the same non-negative-integer rule as `tap`,
+returning `INVALID_COORDINATES` (or `INVALID_ARGS` for a negative
+literal).
 
 See [`scroll`](#scroll-updownleftright-amount-ratio) for a direction/ratio
 convenience layer built on this same command, and
@@ -292,12 +322,39 @@ value is `INVALID_AMOUNT`; a value that looks negative
 (`--amount -0.5`) is instead caught by the argument parser as
 `INVALID_ARGS`. Both send zero gestures.
 
+A ratio *inside* that valid range can still be rejected: on a small
+enough screen, a very small ratio rounds to the same start and end pixel
+after coordinate rounding, producing a swipe that would move nothing.
+That case returns `AMOUNT_TOO_SMALL` — a **different** code from
+`INVALID_AMOUNT`, because the ratio itself is not out of contract (a
+larger screen would accept the same ratio without complaint; the
+rejection depends on this screen's size, which only the geometry step
+knows). The response's `details.minValidRatio` reports the smallest
+ratio that *would* move this specific screen, so a caller knows what to
+retry with instead of guessing:
+
+```bash
+$ npx explore-mobile scroll down --amount 0.001
+{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"scroll --amount is too small to move the screen at this size; no gesture was sent.","details":{"requestedRatio":0.001,"minValidRatio":0.001271294429898262}}}
+
+$ npx explore-mobile scroll down --amount 0.002
+{"ok":true,"command":"scroll","data":{"serial":"D0B3A18C-…","direction":"down","from":{"x":201,"y":438},"to":{"x":201,"y":436}}}
+```
+
+No gesture is sent when `AMOUNT_TOO_SMALL` is returned.
+
 `scroll` cannot confirm the screen actually moved — like `swipe`, it
 sends the gesture and returns; re-run [`dump`](#dump) to check. It also
-always sends its swipe with a fixed, non-configurable internal duration:
-a duration-less swipe was found during development to be a **silent
-no-op** on a real device (the command reported success but nothing
-moved), so `scroll` never omits one.
+always sends its swipe with a fixed, non-configurable internal duration
+(500ms), because omitting one was measured to be **unreliable** rather
+than a guaranteed no-op — see the reliability disclosure under
+[`swipe`](#swipe-x1-y1-x2-y2-duration-ms) above. A convenience layer has
+to guarantee real movement on the caller's behalf, so `scroll` never
+leaves this to chance the way `swipe` itself deliberately does.
+
+Like `swipe`, the Android path here is **argv-verified only** — see the
+caveat under [`swipe`](#swipe-x1-y1-x2-y2-duration-ms); this command has
+not run against a real Android device or emulator.
 
 ### `doctor [--yes|--install] [--clean]`
 
@@ -412,10 +469,18 @@ scroll nor the fallback is ever silent:
 | `js-click` | JS fallback, no scroll needed. |
 | `js-click-scrolled` | Scrolled, still unconvertible, JS fallback. |
 
-The `-scrolled` suffix exists because the page's scroll position is a
-side effect the caller must not be surprised by — even when the tap
-still ends up going through the JS fallback, the caller needs to know
-the page moved.
+The `-scrolled` suffix is set only when the page's scroll position is
+**measured to have actually changed** — a `window.scrollY` comparison
+taken immediately before and after the `scrollIntoView` call, inside the
+same JS expression. `scrollIntoView` running without error only confirms
+the target node existed; it says nothing about whether the page moved
+(an already-visible element, or one inside a non-scrolling off-canvas
+container, leaves `scrollY` unchanged). An earlier version of this
+feature set `-scrolled` from that weaker existence signal alone, so a
+tap on such an element could be reported as `native-scrolled` or
+`js-click-scrolled` even though nothing moved — fixed in the
+SPEC-GESTURE-001 0.4.0 amendment after an independent review reproduced
+it live; see [CHANGELOG](CHANGELOG.md) for the exact defect.
 
 ```bash
 $ npx explore-mobile tap --web 'a[href*="Netscape"]' --page 1
@@ -455,6 +520,17 @@ $ npx explore-mobile dump --web --page 1
 Every successful web command reports the page it acted on under
 `data.page` — **including when there is only one**. Leaving that out is
 what let an earlier version read the wrong page without anyone noticing.
+
+**Known instability across separate CLI invocations.** Even against a
+single open page, consecutive `--web` calls have been observed to
+alternate between success, `AMBIGUOUS_PAGE`, and `NO_WEB_PAGE` (rarely
+`WEB_INSPECTOR_UNREACHABLE`) — a proxy attach/detach timing issue, not
+only page-count ambiguity, and it is unresolved (out of
+SPEC-GESTURE-001's scope; it belongs to SPEC-WEBVIEW-001's proxy
+lifecycle). Passing `--page <n>` explicitly and leaving a few seconds
+between calls was the most reliable mitigation found so far. An agent
+driving `--web` in a loop should expect and retry on these errors rather
+than treat any single one as fatal.
 
 ### Proxy lifecycle
 
@@ -548,8 +624,8 @@ contaminate either device's input-method state.
 
 Android (SPEC-ANDROID-001, all 8 milestones), the iOS Simulator backend
 (SPEC-IOS-001), the iOS web content path (SPEC-WEBVIEW-001), and gesture
-primitives (SPEC-GESTURE-001) are implemented, with 510 unit/mock tests
-green.
+primitives (SPEC-GESTURE-001, including its 0.4.0 amendment) are
+implemented, with 553 unit/mock tests green.
 
 **iOS: verified against a real simulator** (2026-07-26, iPhone 17 Pro /
 iOS 26.0, fb-idb 1.1.7). A full Safari journey — `doctor` → `devices` →
@@ -612,9 +688,30 @@ moves up" direction semantics; and the off-viewport `tap --web` case
 above (`method: "native-scrolled"`) is from this same verification run.
 Android gesture support is **argv-verified only** — `adb` itself is not
 installed on this machine, so neither `adb`'s own swipe syntax nor an
-actual device swipe could be checked. Recorded as 16 PASS / 1 PARTIAL / 0
-FAIL across 17 acceptance criteria in
-`.moai/specs/SPEC-GESTURE-001/progress.md`.
+actual device swipe could be checked; `adb shell input swipe`'s
+millisecond duration unit (§C.1-⑥ of the SPEC) remains a
+documentation-only claim, never locally confirmed.
+
+**A 0.4.0 amendment fixed four `ok:true`-with-no-effect defects**, found
+by an independent post-close review after this SPEC's initial (0.3.0)
+close: a near-zero `--amount` that rounded to no movement (now
+`AMOUNT_TOO_SMALL`, above), a `--duration 0` that was silently accepted
+(now `INVALID_DURATION`, above), and a `tap --web` response that could
+report `-scrolled` when the page had not actually moved (now gated on a
+`scrollY` comparison, above) — see [CHANGELOG](CHANGELOG.md) for the
+full account. The fourth defect was a documentation gap rather than a
+code defect: `swipe --duration` omission being unreliable, not a settled
+default, is now disclosed directly under
+[`swipe`](#swipe-x1-y1-x2-y2-duration-ms) instead of only here. Final
+tally: **19 PASS / 2 PARTIAL / 0 FAIL across 21 acceptance criteria** in
+`.moai/specs/SPEC-GESTURE-001/progress.md`. The two PARTIALs are
+AC-GEST-006 (Android, above) and AC-GEST-020 (the `--duration` omission
+reliability measurement — it is intermittent by nature, so a fixed
+pass/fail verdict would misstate it). One further item, AC-GEST-021 (the
+`-scrolled` evidence fix), is confirmed by unit tests that reproduce the
+exact defect condition, but its real-device reproduction was not
+completed in this amendment — recorded as an open gap, not claimed as
+verified.
 
 The `--web` proxy session (SPEC-WEBVIEW-001, unrelated to
 SPEC-GESTURE-001's own changes) was found to still be unstable across

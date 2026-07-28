@@ -217,11 +217,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     is seconds (confirmed against fb-idb's `hid.py`). Skipping that
     conversion has no type error and no runtime error — it just silently
     turns `--duration 500` into a 500-**second** swipe on iOS, which is
-    exactly the asymmetry this SPEC exists to close. An invalid
-    `--duration` (non-numeric, empty) is rejected with
-    `INVALID_DURATION`; a negative-looking literal (`--duration -100`)
-    is instead caught earlier by the argument parser as `INVALID_ARGS`
-    — either branch sends zero gestures.
+    exactly the asymmetry this SPEC exists to close. `--duration` must
+    be a **positive** integer — `0` is rejected as `INVALID_DURATION`
+    (a zero-duration gesture cannot move anything; see the 0.4.0
+    amendment below), same as an unparseable or empty value; a
+    negative-looking literal (`--duration -100`) is instead caught
+    earlier by the argument parser as `INVALID_ARGS` — every branch
+    sends zero gestures. Coordinates keep a separate, unaffected rule:
+    `0` remains a valid coordinate. Omitting `--duration` entirely is
+    accepted (the platform default is used) but was measured to be
+    **unreliable** on a real device — 3/5 and 5/5 movement across two
+    separate sessions — so this is now disclosed directly in the
+    `swipe` command's own README section (REQ-GEST-SWIPE-006), not only
+    in a limitations note.
   - **`scroll <up|down|left|right> [--amount <ratio>]`** is a convenience
     layer over the same `swipe` — no new backend method. Screen size is
     derived from the existing `dump` result via a two-step rule: the max
@@ -236,16 +244,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     real `from`/`to` coordinates so a caller can verify the semantics
     without re-dumping the screen. An out-of-range or unparseable
     `--amount` (0 excluded, 1 included) is `INVALID_AMOUNT`; a
-    negative-looking literal is `INVALID_ARGS`, same as `--duration`.
+    negative-looking literal is `INVALID_ARGS`, same as `--duration`. A
+    ratio *inside* that valid range can still be rejected as
+    `AMOUNT_TOO_SMALL` (see the 0.4.0 amendment below) — a **different**
+    code from `INVALID_AMOUNT`, because it depends on this specific
+    screen's size rather than the contract range: coordinate rounding
+    can collapse a small enough ratio to a zero-pixel swipe (e.g. `0.001`
+    on a 402×874 screen), and only the geometry step — not a static
+    validator — can tell. The response's `details.minValidRatio` reports
+    the smallest ratio that would move this specific screen. No gesture
+    is sent in either rejection case.
   - **`tap --web` now reaches below-the-fold elements with a real
     touch.** An off-viewport web element previously fell back straight
     to the JS `click()` path. It is now scrolled into view, re-measured,
     and tapped natively; JS `click()` still runs only if the element is
     *still* unconvertible after that. The response's `method` field
     grows from two values to four — `native`, `native-scrolled`,
-    `js-click`, `js-click-scrolled` — so a caller learns not only which
-    path fired but whether the page's scroll position changed as a side
-    effect, which it never does silently.
+    `js-click`, `js-click-scrolled`. The `-scrolled` suffix is set only
+    when the page's scroll position is **measured to have actually
+    changed** — a `window.scrollY` comparison taken immediately before
+    and after the `scrollIntoView` call, inside the same JS expression —
+    not merely because `scrollIntoView` ran without error, which only
+    confirms the target node existed (see the 0.4.0 amendment below for
+    the defect this closes).
 - Android gesture support is **argv-verified only**: `adb` itself is not
   installed on the machine this SPEC was built on, so not even
   `adb shell input swipe --help` could be checked. `swipe`/`scroll`
@@ -295,6 +316,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `isEmulator` was always `false`.
   - `idb screenshot` requires a `dest_path` positional; `-` is now passed
     to keep the no-disk-residue stdout contract.
+- **Four `ok:true`-with-no-observable-effect defects, found by an
+  independent post-close review and fixed before this entry's final
+  close** (SPEC-GESTURE-001 amendment 0.4.0). The SPEC closed once
+  (0.3.0); a subsequent sync-auditor pass reproduced four cases where
+  the CLI reported success while nothing observably changed on the
+  device — worse than an error for an AI-agent caller, which has no way
+  to detect a no-op success and proceeds on a false premise. The SPEC
+  was amended in place and the code fixed; the **Added** entries above
+  already describe the corrected, final behavior:
+  - `scroll --amount` values inside the valid `(0, 1]` range could still
+    round to a zero-pixel swipe on some screens (e.g. `0.001` on a
+    402×874 screen) and reported `ok:true` with `scrollY` unchanged. Now
+    rejected with `AMOUNT_TOO_SMALL` (details above).
+  - `swipe --duration 0` was accepted and reported
+    `{"ok":true, ..., "durationMs":0}`, though a zero-duration gesture
+    cannot move anything. `--duration` is now required to be a
+    **positive** integer (`0` is `INVALID_DURATION`) — the original
+    requirement text itself said "non-negative integer", so this was a
+    requirement defect, not only an implementation one.
+  - `tap --web`'s `-scrolled` suffix was set whenever `scrollIntoView`
+    ran without error, which only confirms the target node existed — not
+    that the page moved. An off-viewport element inside an
+    already-scrolled or non-scrolling container could report
+    `js-click-scrolled` while `window.scrollY` never changed. Now gated
+    on an explicit before/after `scrollY` comparison (details above).
+  - `swipe --duration` omitted entirely is intermittently a no-op on a
+    real device (measured 3/5 and 5/5 movement across two separate
+    sessions — session-variable, not a fixed rate). This one is not a
+    code defect: `swipe` is a raw primitive that deliberately never
+    injects a hidden default duration (design decision D1), so the fix
+    is a documentation obligation — the unreliability is now disclosed
+    directly in the [`swipe`](README.md#swipe-x1-y1-x2-y2-duration-ms)
+    command reference, not only in a separate limitations section.
 
 ### Changed
 
@@ -400,8 +454,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run; the root cause (proxy attach/detach timing, not only page-count
   ambiguity) is out of that SPEC's scope and is recorded here so it is
   not rediscovered as new.
-- Recorded as 16 PASS / 1 PARTIAL / 0 FAIL across 17 acceptance criteria
-  in `.moai/specs/SPEC-GESTURE-001/progress.md` — the PARTIAL is
-  AC-GEST-006 (Android real-device swipe), which cannot be promoted to
-  PASS on this machine because `adb` itself is not installed, not only
-  because no device is connected.
+- Recorded as **19 PASS / 2 PARTIAL / 0 FAIL across 21 acceptance
+  criteria** in `.moai/specs/SPEC-GESTURE-001/progress.md` (21 = the
+  original 17 plus 4 added by the 0.4.0 amendment above, AC-GEST-018
+  through 021). The two PARTIALs are AC-GEST-006 (Android real-device
+  swipe, which cannot be promoted to PASS on this machine because `adb`
+  itself is not installed, not only because no device is connected) and
+  AC-GEST-020 (the `--duration` omission reliability measurement, which
+  is intermittent by nature and so is recorded as a measured rate rather
+  than a pass/fail verdict). AC-GEST-021 (the `-scrolled` evidence fix)
+  is confirmed by unit tests reproducing the exact defect condition, but
+  its real-device reproduction was not completed in this amendment —
+  recorded as an open gap rather than claimed as verified.

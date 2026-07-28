@@ -2,7 +2,7 @@
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 진행 기록"
 version: "0.4.0"
-status: in-progress
+status: completed
 created: 2026-07-27
 updated: 2026-07-28
 author: hatae
@@ -844,3 +844,51 @@ m1_to_mN_commit_strategy: "M6은 단일 커밋(fix)으로 마감 -- 4건의 결�
 4. **`minNonDegenerateRatio`는 닫힌 형태 공식이 아니라 이진 탐색이다(스스로 내린 설계 결정)**: 화면 중심의 정수/반정수 정렬에 따라 임계 비율이 달라져 화면 크기·방향마다 다른 공식이 필요했을 것이므로, `computeScrollSwipe`/`isDegenerateSwipe`를 직접 재사용하는 이진 탐색(30회 반복, 실질적으로 기계 정밀도)을 택했다 — plan.md/spec.md 어디에도 구현 방식을 지정하지 않았다(§D "구현 세부는 plan.md 소관"과 일관).
 5. **범위 이탈 없음**: `src/normalize/*`, `src/webview/{inspector-client,proxy-service,calibration}.ts`(PRESERVE) 미변경. README.md/CHANGELOG.md 미변경(docs 위임). SPEC 본문 3종 미변경. `swipe.ts` 프로덕션 코드 미변경(위 1번 참조 — 테스트만 추가). frontmatter `status: in-progress` 그대로 — 재마감(`in-progress → implemented → completed`)은 manager-docs 소관.
 6. **sync-auditor 재확인 우선순위(다음 세션에게)**: (a) AC-GEST-021의 실기기 재현(위 2번 GAP), (b) `swipe.ts` 오류 메시지 문구 정정 여부(위 1번), (c) README/CHANGELOG의 REQ-GEST-SWIPE-006 고지 의무(별도 docs 위임 — 이 M6에서 다루지 않음) 순으로 확인할 것을 권한다.
+
+## §E.4 Sync-phase Audit-Ready Signal (0.4.0 amendment)
+
+> 0.3.0 마감 시점의 §E.4(위, "sync_commit_sha: 9b2828f")는 그대로 보존한다 — 이 절은 그 이후의 M6(0.4.0 amendment) 코드 수정 + 이번 문서 정정 sync를 마감하는 **별도의 새 sync 레코드**다.
+
+```yaml
+sync_status: audit-ready
+sync_complete_at: "2026-07-28"
+sync_commit_sha: "pending-backfill-0.4.0-docs-sync"   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3)이 허용하는, 이 파일에서 이미 세 번(M5/M6/0.3.0-sync) 쓰인 것과 동일한 패턴. 이 값을 담은 별도 chore backfill 커밋에서 채운다.
+b12_self_test_a: "grep -c 'SPEC-GESTURE-001' CHANGELOG.md (편집 후) -> 6 -- 기존 단일 블록을 제자리에서 수정했을 뿐 새 중복 블록을 추가하지 않았음을 확인(편집 전 5 -> 편집 후 6, 증가분은 0.4.0 amendment Fixed 신규 불릿 1개 언급뿐)"
+b12_self_test_b: "grep -cE '^### AC-GEST-[0-9]+' acceptance.md -> 21 -- CHANGELOG Notes의 '21 acceptance criteria' 및 README Status의 '21 acceptance criteria' 표기와 일치"
+b12_self_test_c: "CHANGELOG/README가 인용한 모든 파일 경로·명령 출력을 커밋 전 Read/Bash로 실재·실측 확인: src/cli/commands/{swipe,scroll,scroll-geometry,web-support}.ts, src/cli/validators.ts, 그리고 `node dist/cli/bin.js swipe 200 700 200 300 --duration 0`을 직접 재실행해 INVALID_DURATION 메시지 문구('positive integer')를 확인 -- git log로 이 문구가 HEAD(3feabfd, M6 이후 커밋)에서 이미 정정돼 있음도 함께 확인했다(위 M6 블로커 1번이 발견 시점 기준 남긴 기록과 달리, 현재 HEAD는 이미 고쳐진 상태)"
+changelog_entry_position: "[Unreleased] -> Added(swipe/scroll 두 불릿을 제자리 수정 -- AMOUNT_TOO_SMALL/양의 정수/생략 신뢰도 반영, -scrolled 서술을 scrollY 비교로 정정) + Fixed(0.4.0 amendment 요약 신규 불릿 1개, F1-F4 전부) + Notes(AC 집계 16/1/17 -> 19/2/21 갱신)"
+frontmatter_status_transitions:
+  spec_md: "in-progress -> completed"
+  plan_md: "in-progress -> completed"
+  acceptance_md: "in-progress -> completed"
+  progress_md: "in-progress -> completed"
+  updated_date: "2026-07-28 -> 2026-07-28 (당일 amendment 재마감, 4개 아티팩트 전부)"
+canary_compliance_check: not_applicable   # 본 SPEC은 자기 자신의 sync를 테스트하는 전향적 정책을 정의하지 않음
+amendment_doc_rationale: "독립 sync-auditor 감사(PASS-WITH-DEBT 0.69)의 MUST-FIX 문서 항목 2건(B-1 --duration 생략 신뢰도 고지 누락, B-2 -scrolled 허위 주장) + SHOULD-FIX 2건(B-4 Android 고지 로컬리티, B-5 --web 불안정성 로컬리티) + 신규 계약 문서화 누락 1건(B-3 AMOUNT_TOO_SMALL/양의 정수)을 닫는다 -- 코드는 이미 M6(9bd8ae1)에서 고쳐졌으나 README/CHANGELOG가 옛 상태를 계속 주장하고 있었다"
+```
+
+### 문서 반영 (0.4.0 amendment)
+
+| 문서 | 반영 내용 |
+|------|-----------|
+| `README.md` | B-1(`--duration` 생략 신뢰도 3/5·5/5 고지를 `swipe` 절 본문으로 이동, `scroll` 절의 줄바꿈에 걸쳐 있던 "silent no-op" 단정 문구 제거) · B-2(`-scrolled` 판정 근거를 `window.scrollY` 전후 비교로 정정 + 0.4.0 결함 고지) · B-3(`AMOUNT_TOO_SMALL` 문서화 + `--duration` 양의 정수 요구사항 + 예시 응답) · B-4(Android argv-only 고지를 `swipe`/`scroll` 절 로컬에 추가) · B-5(`--web` 프록시 불안정성 완화법을 `--page` 절에 추가) · Status 절 테스트/AC 집계 갱신(510→553 테스트, 16/1/17→19/2/21 AC) + 0.4.0 amendment 요약 신설 |
+| `CHANGELOG.md` | `[Unreleased]` 기존 SPEC-GESTURE-001 블록을 **제자리에서** 수정(모순되는 두 번째 블록을 추가하지 않음) — Added의 `swipe`/`scroll` 불릿에 B-3 반영, `-scrolled` 서술을 B-2대로 정정, `### Fixed`에 0.4.0 amendment 요약 신규 불릿(F1-F4 전부 포함), `### Notes`의 AC 집계 갱신 |
+
+### 잔여 관찰 (다음 세션 참고)
+
+- M6 블로커 1번(`swipe.ts`의 `INVALID_DURATION` 메시지가 "non-negative"로 남아 있다는 기록)은 **이 sync 시점에는 이미 해소돼 있었다** — `git log`로 확인한 결과 `3feabfd`(`fix(SPEC-GESTURE-001): INVALID_DURATION message states the positive-integer contract`, M6 커밋 `9bd8ae1` 이후)가 이미 "positive integer"로 정정했다. progress.md §E.2/§E.3(run-phase evidence, manager-develop 소관)의 해당 블로커 기록 자체는 body 콘텐츠이므로 이 sync에서 고치지 않는다 — 이 관찰만 §E.4에 남긴다.
+- M6 블로커 2번(AC-GEST-021 실기기 재현 GAP)은 이번 sync 범위(문서 정정 + 재마감) 밖이다 — 코드/실기기 재검증은 run-phase 소관이며, 이 amendment는 문서 정정만 위임받았다(지시문 Section D). 다음 세션의 재확인 우선순위로 그대로 남겨둔다.
+
+### 최종 검증 (실제 명령 출력)
+
+```
+$ pnpm vitest run   → 아래 §커밋 절 참조(문서·frontmatter만 수정 — src/ 미변경이므로 회귀 없음, 재확인 명령은 커밋 직전 실행)
+$ grep -c "SPEC-GESTURE-001" CHANGELOG.md   → 6
+$ grep -cE '^### AC-GEST-[0-9]+' .moai/specs/SPEC-GESTURE-001/acceptance.md   → 21
+```
+
+### 커밋
+
+이 sync 커밋은 `README.md` + `CHANGELOG.md` + SPEC 아티팩트 4종(frontmatter만, `progress.md`는 본문도 포함— 이 §E.4 자체)을 담는다. `src/`는 건드리지 않는다(지시문 Section D). 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인한다. push는 지시문 Section C-4("Do NOT push. A re-audit runs after you.")에 따라 수행하지 않는다.
+
+sync 커밋 SHA: 이 문단이 속한 커밋 자체가 자신의 SHA를 모르므로(자기참조 문제), 위 `sync_commit_sha: pending-backfill-0.4.0-docs-sync`를 별도의 후속 backfill 커밋에서 실제 값으로 채운다 — M5/M6/0.3.0-sync에서 이미 세 번 쓰인 패턴 그대로.
