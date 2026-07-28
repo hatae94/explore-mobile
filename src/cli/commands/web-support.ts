@@ -223,6 +223,24 @@ function buildClickExpression(cssSelector: string, sourceIndex: number): string 
  * was a behavioral regression against `737b9fb`), and (iii) horizontal
  * scroll (`window.scrollY` cannot see an X-axis move at all). `window.scrollY`
  * alone misses (ii) and (iii); the element's own rect cannot.
+ *
+ * `scrollIntoView` is called with `behavior: "instant"` (SPEC-GESTURE-001
+ * M9/0.7.0 amendment, REQ-GEST-WEB-001/002 0.7.0 note, spec.md §C.1-㉑).
+ * Without it, a page (or ancestor container) declaring CSS
+ * `scroll-behavior: smooth` makes the scroll ASYNCHRONOUS — the "after"
+ * rect sampled immediately below would then reflect the PRE-scroll
+ * position even though a scroll genuinely happens moments later, so `moved`
+ * would wrongly read `false` for a scroll that did occur, AND the same
+ * stale rect would be reused for coordinate conversion, silently degrading
+ * a native tap to the JS `click()` fallback (measured:
+ * `containerScrollTop 0 -> 0` immediately after the call, `-> 958` about
+ * 11s later). Forcing an instant/synchronous scroll makes the "after"
+ * sample always reflect the true post-scroll position. This deliberately
+ * ignores the page's own `scroll-behavior` — the CLI's purpose is a
+ * trustworthy coordinate, not animation fidelity (spec.md §A.2); waiting
+ * for the animation to finish was rejected because there is no standard
+ * completion signal, which would reopen the unbounded-wait hazard the
+ * `--duration` ceiling already closed (spec.md §C.1-⑮).
  */
 export function buildScrollIntoViewExpression(cssSelector: string, sourceIndex: number): string {
   return `(function(){
@@ -230,7 +248,7 @@ export function buildScrollIntoViewExpression(cssSelector: string, sourceIndex: 
   var el = nodes[${JSON.stringify(sourceIndex)}];
   if (!el) return { found: false, moved: false };
   var before = el.getBoundingClientRect();
-  el.scrollIntoView({block: "center"});
+  el.scrollIntoView({block: "center", behavior: "instant"});
   var after = el.getBoundingClientRect();
   var moved = before.top !== after.top || before.left !== after.left ||
     before.bottom !== after.bottom || before.right !== after.right;

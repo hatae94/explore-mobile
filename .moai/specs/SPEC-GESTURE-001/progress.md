@@ -1322,3 +1322,183 @@ $ grep -cE '^  [a-zA-Z]+\(' src/schema/device-backend.ts   → 10
 이 sync 커밋은 `README.md` + `CHANGELOG.md` + SPEC 아티팩트 4종(frontmatter만, `progress.md`는 본문도 포함 — 이 §E.4 자체)을 담는다. `src/`는 건드리지 않는다(지시문 Section D). 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인한다. push는 지시문 Section C-4("Do NOT push. I hold that decision.")에 따라 수행하지 않는다.
 
 sync 커밋 SHA: `ad06692`(`docs(SPEC-GESTURE-001): correct 0.6.0 amendment docs + 3-phase close`). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — 0.3.0/0.4.0/0.5.0 sync에서 이미 세 번 쓰인 패턴 그대로.
+
+### M9 — 유효 밀도 + 비동기 스크롤 표본 시점 (0.7.0 amendment)
+
+> **선행**: M1-M8은 0.6.0에서 마감·푸시됐다(HEAD `467e7df`). 이 마일스톤은 **새 기기도 새 감사도 아니고, M8이 spec.md §C.3에 "미측정"으로 남긴 Physical/Override 구분을 사용자 승인 하에 실측한 것**으로 열렸다(spec.md §C.1-⑳, plan.md §F M9 서문). 밀도는 이미 복원돼 있었다(`Physical density: 600`, Override 행 없음) — 이 마일스톤은 밀도를 다시 바꾸지 않고 픽스처로만 검증한다(AC-GEST-030).
+
+**산출물 (plan.md §F M9 1-5 전부 완료, RED-GREEN 사이클로 진행)**
+
+1. **유효 밀도 파서(`adb-backend.ts`) — `parsePhysicalDensity` → `parseEffectiveDensity`.** `Override density:` 행이 있으면 그 값, 없으면 `Physical density:` 값을 읽는다(정규식 우선순위: `Override density:\s*(\d+)` 매치 실패 시 `Physical density:\s*(\d+)`로 폴백). 문턱 산식(`floor(8dp × density) + 2px`)과 파싱 실패 시 명시적 throw는 불변 — 바뀌는 것은 곱해지는 밀도가 어느 줄에서 오는지뿐이다. `basis` 값도 `"device-query"` 그대로(읽는 줄이 바뀐 것이지 출처의 종류가 바뀐 게 아니다). 함수명·doc-comment("reads only the Physical line", §C.3을 "열린 질문"이라 적은 문구 포함)를 함께 갱신 — M1의 "8-method", M8의 "9-method"와 같은 거짓 앵커 재발을 막는다. `max(physical, override)`는 채택하지 않는다(축소 방향 과다 거부, 아래 RED/GREEN 절 참조).
+2. **오라클 표본 시점(`web-support.ts`) — `buildScrollIntoViewExpression`이 `el.scrollIntoView({block:"center"})` → `el.scrollIntoView({block:"center", behavior:"instant"})`로 변경.** 페이지 CSS `scroll-behavior: smooth`를 무시하고 동기 스크롤을 강제해, 직후 재측정하는 사각형이 항상 스크롤 완료 이후 값이 되게 한다. REQ 변경 없음(규범 문장은 이미 충분했다 — spec.md REQ-GEST-WEB-001/002 0.7.0 주석). 애니메이션 완료 대기(폴링/타임아웃)는 기각 — 완료 신호 표준이 없어 `--duration` 상한이 막은 무한 대기 계열을 웹 경로에 새로 여는 일이다.
+3. **픽스처(테스트).** `adb-backend.test.ts`: `wm density` 출력 4형태(override 없음 / 축소 / 확대 / 파싱 불가) → 32/26/32/error 고정, `max(physical,override)`가 실패하는 지점(fixture B)을 명시적으로 단언. `web-support.test.ts`: `node:vm` 샌드박스 stub이 "동기 스크롤을 요구하는 호출만 사각형을 호출 시점에 바꾸고, 그렇지 않으면 커밋을 미룬다"는 플랫폼 계약을 흉내낸다 — 어떤 인자 형태를 넘겼는지는 단언하지 않는다(AC-GEST-031).
+4. **문서 의무 기록 — 코드 변경 아님, 이 마일스톤에서 다루지 않는다.** NN8(README 가로 32px 5/6 반대 증거 누락)·NN4(거리 증가 폭 홀짝 서술 오류)는 README 소관이다. AC-GEST-032는 **이 마일스톤 종료 시점에 미충족**으로 남긴다(아래 AC 매트릭스 참조) — 집행은 후속 docs 패스.
+5. **회귀** — 아래 "테스트 스위트"/"iOS 회귀 확인"/"Android 회귀 확인" 절 참조.
+
+### AC PASS/FAIL 매트릭스 (M9 스코프)
+
+| AC ID | 상태 | 검증 명령 | 실제 결과 |
+|-------|------|-----------|-----------|
+| AC-GEST-030 | PASS | `pnpm vitest run src/backend/adb-backend.test.ts -t "AC-GEST-030"` | 4 tests PASS. Fixture A(override 없음, Physical 600) → 32px. Fixture B(축소, Physical 600/Override 480) → **26px**(`max(physical,override)`였다면 32px을 냈을 자리 — 별도 단언 `not.toBe(32)`로 그 구현의 실패를 명시). Fixture C(확대, Physical 480/Override 600) → **32px**(Physical-only였다면 26px을 냈을 자리 — 별도 단언 `not.toBe(26)`, 이것이 이번에 고친 출하된 결함). Fixture D(파싱 불가) → throw. RED 확인: `git stash push -- src/backend/adb-backend.ts` 후 재실행 시 fixture B/C 2건 실패(각각 기대 26 vs 실제 32, 기대 32 vs 실제 26 — 정확히 예측한 방향으로 실패) 확인 후 stash pop으로 복원 |
+| AC-GEST-031 | PASS | `pnpm vitest run src/cli/commands/web-support.test.ts -t "post-completion sampling"` | RED 확인(수정 전 코드로 실행): `AssertionError: expected {found:true, moved:false} ... { found: true, moved: true }` — vm 스텁이 재현한 "동기 스크롤이 아니면 커밋을 미룬다" 계약 하에서 구 코드가 무동작으로 오판. 수정 후: PASS — `behavior:"instant"` 요청 시 스텁이 즉시 커밋해 `moved:true` 정확히 판정. 스텁은 인자 형태를 단언하지 않는다(계약 만족 여부만 판정) |
+| AC-GEST-032 | **미충족** (문서 소관 — 이 마일스톤에서 다루지 않는다) | — | NN8·NN4는 README 정정이 필요하며 이는 후속 docs 패스의 책임이다. 관측하지 않은 것을 PASS로 쓰지 않는다는 이 SPEC의 원칙에 따라, 이 시점의 AC-GEST-032 상태를 정직하게 미충족으로 기록한다 |
+
+### RED-GREEN 사이클 증거 (D1 — `parseEffectiveDensity`)
+
+```
+$ git stash push -- src/backend/adb-backend.ts   # 수정 전 원본으로 되돌림
+$ pnpm vitest run src/backend/adb-backend.test.ts -t "AC-GEST-030"
+ FAIL  ... fixture B ...: expected 32 to deeply equal 26   (Physical만 읽어 3.75배 → 32, Override 480을 무시)
+ FAIL  ... fixture C ...: expected 26 to deeply equal 32   (Physical만 읽어 3.0배 → 26, Override 600을 무시 — 이것이 출하된 결함)
+ Test Files  1 failed | Tests  2 failed | 2 passed | 50 skipped (54)
+$ git stash pop   # 수정 복원
+$ pnpm vitest run src/backend/adb-backend.test.ts -t "getMinEffectiveSwipeThreshold"
+ Test Files  1 passed (1)
+      Tests  12 passed | 42 skipped (54)
+```
+
+### RED-GREEN 사이클 증거 (D2 — `buildScrollIntoViewExpression`)
+
+```
+$ pnpm vitest run src/cli/commands/web-support.test.ts -t "post-completion sampling"   # 수정 전
+AssertionError: expected { found: true, moved: false } to deeply equal { found: true, moved: true }
+ Tests  1 failed | 41 skipped (42)
+# behavior:"instant" 적용 후
+$ pnpm vitest run src/cli/commands/web-support.test.ts --reporter=verbose
+ Test Files  1 passed (1)
+      Tests  42 passed (42)
+```
+
+### Android 실기기 회귀 확인 (D-5, Section E 항목 2)
+
+밀도는 이 마일스톤 내내 변경하지 않았다 — `wm density`는 처음부터 끝까지 `Physical density: 600` 단일 행(Override 행 없음)이었다. 파생 규칙이 M9에서 바뀌었어도 이 기기에는 Override 행이 없으므로 fixture A와 동일 경로를 타 결과가 불변이어야 한다:
+
+```
+$ export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
+$ adb -s adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp shell wm density
+Physical density: 600
+$ node -e 'import("./dist/backend/adb-backend.js").then(async m => {
+    const b = new m.AdbBackend();
+    console.log(JSON.stringify(await b.getMinEffectiveSwipeThreshold(process.argv[1])));
+  })' adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp
+{"minEffectiveSwipePx":32,"basis":"device-query"}
+```
+
+**32px, `"device-query"`** — M8 시점과 바이트 동일. 거부 경로(무동작, 안전) 재확인:
+
+```
+$ node dist/cli/bin.js scroll down --amount 0.0001 --device adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp
+{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"scroll --amount is too small to move the screen at this size; no gesture was sent.","details":{"requestedRatio":0.0001,"minValidRatio":0.011039886623620987,"minValidRatioBasis":"device-query"}}}
+```
+
+거부이므로 기기에 어떤 제스처도 전송되지 않았다(exit 1, `ok:false`). 디스플레이 밀도는 이 마일스톤에서 한 번도 바꾸지 않았다(D-3 준수).
+
+### iOS 회귀 확인 (D-5, Section E 항목 3)
+
+`src/backend/idb-backend.ts`는 이 마일스톤에서 **한 줄도 수정하지 않았다**(`git diff --name-only HEAD`로 확인, 아래 Scope Check 참조) — `getMinEffectiveSwipeThreshold(_serial)`는 여전히 기기를 조회하지 않고 실측 상수(`MEASURED_MIN_EFFECTIVE_SWIPE_PX = 11`)를 그대로 반환한다. `minValidRatio`가 402x874에서 바이트 동일한지 직접 재계산으로 확인:
+
+```
+$ node -e 'import("./dist/cli/commands/scroll-geometry.js").then(m => {
+    console.log(JSON.stringify(m.minNonDegenerateRatio("down", {width:402,height:874}, 11)));
+  })'
+0.013984236866235733
+```
+
+M8/0.6.0 시점 기록값과 정확히 일치(12px 반올림 거리). iOS 경로는 이번 변경(Android 파싱 + 웹 오라클)의 영향을 받지 않는다.
+
+### 스크린-밖 스크롤 오라클 라이브 재현 (D-4/F-4, Section E 항목 4)
+
+부팅된 iPhone 17 Pro 시뮬레이터(D0B3A18C-E485-4E7C-A25E-504BF4CA6163)에서, `scroll-behavior: smooth`가 걸린 `overflow:auto` 컨테이너를 가진 실제 페이지에 대해 두 갈래로 확증했다.
+
+**잡음 기준선**: 정적 픽스처 페이지(요소 좌표는 코드로 계산되는 `getBoundingClientRect()` 값이라 스크린샷 노이즈의 영향을 받지 않는다 — 이 재현은 스크린샷 비교가 아니라 DOM 사각형 비교이므로 별도 잡음 기준선 확인이 불필요하다).
+
+**갈래 1 — 격리된 fixed-position 컨테이너(윈도우 스크롤 혼입 없음, 감사 자신의 재현 스크립트 `smooth.js`와 동일 구조).** `#smoothFixed` 컨테이너(`position:fixed`, 뷰포트 안에 완전히 위치, `scroll-behavior:smooth`) 안의 `#auditS` 링크에 대해, 수정 전 표현식(`{block:"center"}`)과 수정 후 표현식(`{block:"center", behavior:"instant"}`)을 같은 페이지·같은 컨테이너 형태로 각각 평가:
+
+```
+=== PRE-FIX (shipped, 0.6.0) oracle ===
+{"containerScrollTop":"0 -> 0 (immediately after scrollIntoView)","windowScrollY":"3865 -> 3865",
+ "rectTop":"1202 -> 1202","shippedOracle":{"found":true,"moved":false}}
+=== FIXED (M9, behavior:'instant') oracle ===
+{"containerScrollTop":"0 -> 958 (immediately after scrollIntoView)",
+ "rectTop":"1342 -> 384","fixedOracle":{"found":true,"moved":true}}
+```
+
+수정 전 수치(`containerScrollTop 0 -> 0`, `rectTop 1202 -> 1202`, `{found:true,moved:false}`)는 spec.md §C.1-㉑이 기록한 sync-auditor 재현 수치와 **정확히 일치**한다 — 같은 결함을 독립적으로 재현했다. 수정 후에는 `behavior:"instant"`가 호출 시점에 컨테이너 스크롤을 강제 커밋시켜 `moved:true`를 즉시 정확하게 판정한다.
+
+**갈래 2 — 프로덕션 픽스처(`site/audit.html`의 `#smoothwrap`/`#auditC`, `tap --web`과 동일 코드 경로)에서 실제 프로덕션 `buildScrollIntoViewExpression`(수정 후) 실행:**
+
+```
+BEFORE: {"rectTop":5323,"containerScrollTop":0}
+FIXED OUTCOME (found/moved decided at call time): {"found":true,"moved":true}
+AFTER (re-measured separately): {"rectTop":340,"containerScrollTop":1118}
+```
+
+이 갈래는 창(window) 레벨 스크롤도 함께 필요한 실제 페이지 배치라 `containerScrollTop`이 컨테이너 내부 스크롤만을 분리해서 보여주지만(0 -> 1118), 갈래 1이 창 스크롤 혼입 없이 컨테이너 단독의 비동기 커밋 문제를 순수하게 격리해 재현한다. 두 갈래 모두 실행 도구는 `WebRunDeps`가 사용하는 것과 동일한 `openWebProxy`/`connectWebInspector`(스크래치패드의 임시 스크립트로 직접 호출, 소스 파일은 건드리지 않음)이며, 프로덕션에서 export된 `buildScrollIntoViewExpression` 함수 자체를 그대로 가져와 실행했다(갈래 2). 이는 `web-support.test.ts`의 `node:vm` 스텁 단위 테스트(AC-GEST-031)로는 검증할 수 없는 것 — 실제 WebKit이 `scroll-behavior: smooth`를 정말로 비동기로 처리하고 `behavior:"instant"`가 정말로 그것을 우회하는지 — 를 확증한다.
+
+### 테스트 스위트
+
+```
+$ pnpm vitest run
+ Test Files  29 passed (29)
+      Tests  644 passed (644)
+```
+
+기준선 639 → 644(+5): `adb-backend.test.ts` 신규 4건(AC-GEST-030 fixture A/B/C/D), `web-support.test.ts` 신규 1건(AC-GEST-031 post-completion sampling). 신규 파일 없음(기존 2개 파일만 확장) — `total_run_phase_files`는 M8까지의 20에서 불변.
+
+### Typecheck + Build
+
+```
+$ pnpm typecheck  → exit 0
+$ pnpm build      → exit 0
+```
+
+### Scope Check
+
+```
+$ git status --porcelain --untracked-files=no
+ M src/backend/adb-backend.test.ts
+ M src/backend/adb-backend.ts
+ M src/cli/commands/web-support.test.ts
+ M src/cli/commands/web-support.ts
+```
+
+plan.md §A.6 M9 행: `src/backend/adb-backend.ts`(+`.test.ts`), `src/cli/commands/web-support.ts`(+`.test.ts`) — 전부 위 목록에 포함, 그 외 파일 없음. `src/backend/idb-backend.ts`(iOS 경로, PRESERVE 아니지만 M9 대상 아님)는 미변경 확인. `src/normalize/*`, `src/webview/{inspector-client,proxy-service,calibration}.ts`(PRESERVE 목록) 미변경. SPEC 본문 3종(spec.md/plan.md/acceptance.md) 미변경, frontmatter도 미변경(`status: in-progress` 그대로 — 이 SPEC은 이미 M1에서 `draft → in-progress` 전이를 마쳤고 M9는 그 상태를 유지만 한다). README.md/CHANGELOG.md 미변경(지시문 Section E — docs 패스가 후속으로 처리).
+
+### MX 태그 확인
+
+이번 두 산출물(유효 밀도 파서, 오라클 표본 시점)은 모두 기존 함수의 **동작을 바꾸는 리팩터**이지 새 exported 함수나 fan_in >= 3인 신규 진입점이 아니다 — `@MX:ANCHOR`/`@MX:WARN` 신설 기준(REQ-GEST-SCROLL-008 문턱 공급 자체는 M8에서 이미 앵커됨)에 해당하지 않는다. `parseEffectiveDensity`(private 함수, 유일한 호출자는 `getMinEffectiveSwipeThreshold`)와 `buildScrollIntoViewExpression`(exported, 이미 `activateElement` 안에서 사용 중이던 함수— fan_in 불변)에 새 태그를 추가하지 않았다. 기존 파일당 누적 한도(ANCHOR 3/WARN 5/NOTE 10/TODO 5) 확인:
+
+```
+$ grep -c "@MX:ANCHOR\|@MX:WARN\|@MX:NOTE" src/backend/adb-backend.ts src/cli/commands/web-support.ts
+src/backend/adb-backend.ts:4      # ANCHOR 1 · WARN 1 · NOTE 2 (M8 시점 그대로, 이번 변경으로 늘지 않음)
+src/cli/commands/web-support.ts:1 # NOTE 1 (M8 이전부터 존재, 이번 변경으로 늘지 않음)
+```
+
+`swipe.ts`는 이 마일스톤에서 건드리지 않았다(지시문 Section E — audit NN6은 여전히 미해결이며 별도 스코프).
+
+## 블로커 / 서프라이즈 (M9 종료 시점)
+
+1. **iOS 시뮬레이터 WebKit 원격 디버깅 프록시(`ios_webkit_debug_proxy`)가 이 세션에서 간헐적으로 페이지를 찾지 못했다(`NO_WEB_PAGE`).** 물리적으로 연결된 다른 Apple 기기(iPad, USB)에 대한 연결 시도가 실패하며 지연을 만드는 것으로 보이는 로그(`Unable to connect to ...iPad ... Please verify ... Web Inspector = ON`)가 관측됐다 — Safari 자체는 정상 동작 중이었고(`스크린샷으로 확인`) 페이지도 실제로 로드돼 있었다(수동으로 직접 `ios_webkit_debug_proxy`를 실행하면 페이지 목록이 즉시 나옴). CLI의 재시도 예산(기본 20회 × 250ms) 안에 이 지연이 해소되지 않는 경우가 있었다 — 여러 차례 재시도(및 Safari 강제종료·재실행) 끝에 성공하는 창을 확보해 D-4/F-4의 라이브 재현을 완료했다. **이 문제는 이번 M9 코드 변경과 무관한 환경 요인**이다(같은 증상이 `dump --web` 등 기존 명령에서도 발생) — 프로젝트 메모리에 별도 기록 후보(다음 세션이 이 기기에서 웹 경로 작업을 할 때 참고).
+2. **acceptance.md AC-GEST-030 문구의 "and that a `max(physical, override)` implementation fails fixture B" 요건은 별도 구현체 작성이 아니라 fixture B의 기댓값 단언(26px, `not.toBe(32)`)으로 충족했다** — `max(physical,override)`를 실제로 구현해 별도 실패 케이스를 만드는 대신, 그 구현이 냈을 값(32)과 다름을 명시적으로 단언하는 형태를 택했다. `max()` 구현 자체를 작성하면 프로덕션 코드에 죽은 분기를 남기게 되어 이 쪽이 더 낫다고 판단했다.
+3. **범위 이탈 없음.** `src/normalize/*`, `src/webview/{inspector-client,proxy-service,calibration}.ts`(PRESERVE), `src/backend/idb-backend.ts`(iOS 경로, M9 비대상), `src/cli/commands/swipe.ts`(M9 비대상, @MX 미해결 audit NN6는 그대로 남김), README.md/CHANGELOG.md(docs 패스 위임) 전부 미변경 확인. SPEC 본문 3종·frontmatter 미변경.
+4. **환경 정리 완료.** 라이브 재현에 쓴 로컬 `python3 -m http.server 8937`(스크래치패드의 `site/audit.html` 서빙)을 종료 확인(`lsof -i :8937` 무출력). `adb reverse --list` 빈 출력(Android 쪽은 이번 M9에서 `adb reverse` 매핑을 전혀 사용하지 않았다 — D-1의 체커보드 슬롭 픽스처는 이번 세션에서 열지 않았다). `wm density`는 `Physical density: 600` 단일 행, Override 행 없음(변경 없음, D-3 준수). `xcrun simctl list devices booted` → iPhone 17 Pro(D0B3A18C-...) 하나만 남음.
+5. **sync-auditor 재확인 우선순위(다음 세션에게)**: (a) AC-GEST-032 — README의 NN8(가로 32px 5/6 반대 증거 누락)·NN4(거리 증가 폭 홀짝 서술을 문턱이 아니라 화면 축 길이로 정정) 반영, (b) M8 블로커에서 이월된 acceptance.md AC-GEST-027 "4개 파일 7개 지점" 문구 정정 여부, (c) Android 스크롤 안정화 지연(M8 블로커 3번) 방법론 기록 여부 — 이 세 항목 모두 body 콘텐츠 수정 권한이 없는 이 세션 밖의 일이다.
+
+## §E.3 Run-phase Audit-Ready Signal (M9 최종 — 0.7.0 amendment)
+
+```yaml
+run_status: M9-complete
+run_complete_at: "2026-07-28"
+run_commit_sha: pending-backfill-m9   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3). 후속 backfill 커밋에서 채운다(0.3.0~0.6.0 sync에서 이미 여러 번 쓰인 패턴 그대로).
+ac_pass_count: 2      # M9 자체 판정: AC-GEST-030, AC-GEST-031
+ac_fail_count: 0
+ac_partial_count: 0
+ac_deferred_count: 1  # AC-GEST-032 -- 문서 소관, docs 패스에서 집행(미충족으로 정직하게 기록)
+preserve_list_post_run_count: 0   # src/normalize/*, src/webview/{inspector-client,proxy-service,calibration}.ts 미변경
+l44_pre_commit_fetch: "git fetch origin master && git rev-list --count --left-right origin/master...HEAD -> 확인 예정(커밋 직전 재실행)"
+l44_post_push_fetch: not_applicable   # 이 SPEC은 push하지 않는다(지시문 Section E "Do not push")
+new_warnings_or_lints_introduced: false
+cross_platform_build: { windows: not_applicable, note: "TypeScript/Node 프로젝트, GOOS 교차빌드 대상 아님" }
+total_run_phase_files: 20   # M9는 기존 2개 파일(+테스트)만 확장 -- 신규 파일 없음, M8까지의 20에서 불변
+m1_to_mN_commit_strategy: "M9는 단일 커밋(fix)으로 마감 -- 유효 밀도 파서(산출물 1)와 오라클 표본 시점(산출물 2)은 plan.md §G가 명시한 대로 서로 독립이지만 같은 amendment의 두 결함을 함께 닫으므로 분리가 인위적이다(M6/M7/M8과 동일 판단)"
+```

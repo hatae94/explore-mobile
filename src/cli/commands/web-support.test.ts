@@ -628,3 +628,50 @@ describe("buildScrollIntoViewExpression — rect-based moved oracle (SPEC-GESTUR
     expect(outcome).toEqual({ found: false, moved: false });
   });
 });
+
+/**
+ * Post-completion sampling under CSS `scroll-behavior: smooth`
+ * (SPEC-GESTURE-001 M9/0.7.0 amendment, AC-GEST-031, spec.md §C.1-㉑).
+ *
+ * `scrollIntoView` is ASYNCHRONOUS when the page (or an ancestor) declares
+ * `scroll-behavior: smooth` -- a rect sampled immediately after the call
+ * reflects the PRE-scroll position, not the post-scroll one, even though a
+ * scroll genuinely did happen. This stub simulates that platform contract:
+ * a call that requests SYNCHRONOUS scrolling commits the rect change
+ * immediately; any other call defers the commit to a later tick that never
+ * arrives within this synchronous `vm` script (mirroring an animation still
+ * in flight when the caller samples the rect). The stub asserts NOTHING
+ * about which argument shape the generated expression passes (AC-GEST-031
+ * deliberately asserts no specific argument) -- any implementation that
+ * actually requests synchronous scrolling passes; one that does not, fails.
+ */
+describe("buildScrollIntoViewExpression — post-completion sampling under async scroll-behavior:smooth (SPEC-GESTURE-001 M9, AC-GEST-031)", () => {
+  function fakeAsyncElement(rects: Array<{ top: number; left: number; bottom: number; right: number }>) {
+    let committed = false;
+    return {
+      getBoundingClientRect: () => rects[committed ? 1 : 0],
+      scrollIntoView: (opts?: { behavior?: string }) => {
+        if (opts?.behavior === "instant") {
+          committed = true;
+        }
+        // else: an animated/smooth scroll -- the commit is deferred past
+        // this synchronous call, exactly as the real platform behaves
+        // under `scroll-behavior: smooth` (spec.md §C.1-㉑: the audit's
+        // own reproduction sampled `containerScrollTop 0 -> 0` immediately
+        // after the call, `-> 958` about 11s later).
+      },
+    };
+  }
+
+  it("credits movement when the generated expression requests synchronous scrolling, even though the underlying scroll mechanism is otherwise asynchronous (AC-GEST-031)", () => {
+    const el = fakeAsyncElement([
+      { top: 900, left: 20, bottom: 948, right: 86 }, // pre-scroll (stale, if sampled too early)
+      { top: 300, left: 20, bottom: 348, right: 86 }, // post-scroll (correct, once committed)
+    ]);
+    const document = { querySelectorAll: () => [el] };
+
+    const outcome = runInNewContext(buildScrollIntoViewExpression("a.off", 0), { document });
+
+    expect(outcome).toEqual({ found: true, moved: true });
+  });
+});

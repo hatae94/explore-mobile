@@ -365,6 +365,58 @@ describe("AdbBackend", () => {
     });
   });
 
+  describe("getMinEffectiveSwipeThreshold — effective (Override) density (AC-GEST-030 — SPEC-GESTURE-001 M9)", () => {
+    it("fixture A -- no Override line: reads Physical density alone (600dpi -> 32px, unchanged from M8)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("Physical density: 600\n"));
+
+      const backend = new AdbBackend(exec);
+      const threshold = await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+
+      expect(threshold).toEqual({ minEffectiveSwipePx: 32, basis: "device-query" });
+    });
+
+    it("fixture B -- shrink override (Physical 600 / Override 480): reads the Override line, not Physical -- floor(8 * 3.0) + 2 = 26px", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("Physical density: 600\nOverride density: 480\n"));
+
+      const backend = new AdbBackend(exec);
+      const threshold = await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+
+      // A max(physical, override) implementation would derive
+      // floor(8 * 3.75) + 2 = 32 here -- over-rejecting on the shrink
+      // direction (spec.md §B.9 H3). This fixture is the one that fails
+      // that implementation: the effective (Override) density alone is
+      // the only correct basis, giving 26, not 32.
+      expect(threshold).toEqual({ minEffectiveSwipePx: 26, basis: "device-query" });
+      expect(threshold.minEffectiveSwipePx).not.toBe(32);
+    });
+
+    it("fixture C -- enlarge override (Physical 480 / Override 600): reads the Override line -- floor(8 * 3.75) + 2 = 32px, NOT the 26px a Physical-only reader derives (the shipped defect this amendment fixes, spec.md §C.1-⑳/§B.9 H1)", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("Physical density: 480\nOverride density: 600\n"));
+
+      const backend = new AdbBackend(exec);
+      const threshold = await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+
+      // Reading Physical alone (480dpi -> floor(8*3.0)+2=26) sits BELOW the
+      // OS slop under the active Override (floor(8*3.75)=30) -- an
+      // AMOUNT_TOO_SMALL threshold that would be silently interpreted as a
+      // TAP on the real device (spec.md §C.1-⑱). The fix must derive 32.
+      expect(threshold).toEqual({ minEffectiveSwipePx: 32, basis: "device-query" });
+      expect(threshold.minEffectiveSwipePx).not.toBe(26);
+    });
+
+    it("fixture D -- unparseable output (no Physical or Override line): throws rather than guessing a threshold", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("unexpected output\n"));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.getMinEffectiveSwipeThreshold("R3CY106LKVX")).rejects.toThrow();
+    });
+  });
+
   describe("sendKeyEvent", () => {
     it("maps a supported alias to its Android KEYCODE (REQ-INPUT-005)", async () => {
       const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok(""));

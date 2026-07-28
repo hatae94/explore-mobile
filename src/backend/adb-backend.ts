@@ -114,16 +114,26 @@ const TOUCH_SLOP_DP = 8;
 const TOUCH_SLOP_MARGIN_PX = 2;
 
 /**
- * Parses `wm density`'s `"Physical density: N"` line into a density
- * multiplier (`N / 160`, the baseline DPI). Returns `undefined` when the
- * expected line is absent (unparseable output — spec.md §C.3 leaves the
- * Physical/Override distinction as an open question for a device with an
- * active display-size override; this reads only the Physical line, which
- * is the value actually measured on the reference device — spec.md
- * §C.1-⑰).
+ * Parses `wm density`'s output into the EFFECTIVE density multiplier
+ * (`N / 160`, the baseline DPI) — the density that actually governs
+ * Android's touch slop (REQ-GEST-SCROLL-008, SPEC-GESTURE-001 M9, spec.md
+ * §C.1-⑳). Reads the `Override density:` line when present; falls back to
+ * `Physical density:` otherwise. Returns `undefined` when neither line is
+ * present or parseable (unparseable output) — an explicit error, never a
+ * guessed threshold (spec.md §D "화면 크기 추측 폴백"과 같은 계열).
+ *
+ * 0.6.0 -> 0.7.0 (spec.md §B.9): this function used to read ONLY the
+ * Physical line, leaving the Physical/Override distinction as an open
+ * question (§C.3). That default was measured to be the WRONG one — on a
+ * device with an active ENLARGING override (Override > Physical), reading
+ * Physical alone under-derives the threshold below the OS touch slop
+ * governed by the override, so an `AMOUNT_TOO_SMALL`-rejected distance
+ * would in fact be interpreted by the device as a TAP (spec.md §C.1-⑱).
+ * `max(physical, override)` was considered and rejected — it over-rejects
+ * on the shrinking-override direction (spec.md §C.1-⑳, §B.9 H3).
  */
-function parsePhysicalDensity(output: string): number | undefined {
-  const match = /Physical density:\s*(\d+)/.exec(output);
+function parseEffectiveDensity(output: string): number | undefined {
+  const match = /Override density:\s*(\d+)/.exec(output) ?? /Physical density:\s*(\d+)/.exec(output);
   if (!match) return undefined;
   const dpi = Number(match[1]);
   return Number.isFinite(dpi) && dpi > 0 ? dpi / 160 : undefined;
@@ -501,16 +511,19 @@ export class AdbBackend implements DeviceBackend {
    * never a stored pixel constant. Queries `wm density`, then computes
    * `floor(TOUCH_SLOP_DP * density) + TOUCH_SLOP_MARGIN_PX` so the returned
    * threshold sits safely above the measured probabilistic boundary
-   * (spec.md §C.1-⑰). `basis: "device-query"` marks this as derived from a
-   * live query of the target device, distinct from `IdbBackend`'s
-   * `"measured-constant"` (a value measured on a DIFFERENT device) — see
-   * `SwipeThreshold`.
+   * (spec.md §C.1-⑰). `density` is the EFFECTIVE density — the `Override
+   * density:` line when present, else `Physical density:` (M9, spec.md
+   * §C.1-⑳) — since that is the value that actually governs touch slop on
+   * a device with an active display-size override. `basis: "device-query"`
+   * marks this as derived from a live query of the target device, distinct
+   * from `IdbBackend`'s `"measured-constant"` (a value measured on a
+   * DIFFERENT device) — see `SwipeThreshold`.
    */
   async getMinEffectiveSwipeThreshold(serial: string): Promise<SwipeThreshold> {
     const result = await this.exec(["-s", serial, "shell", "wm", "density"]);
     assertSuccess(result, "shell wm density");
 
-    const density = parsePhysicalDensity(result.stdout.toString("utf-8"));
+    const density = parseEffectiveDensity(result.stdout.toString("utf-8"));
     if (density === undefined) {
       throw new Error(`Could not parse 'wm density' output for device '${serial}'.`);
     }
