@@ -1510,7 +1510,7 @@ m1_to_mN_commit_strategy: "M9는 단일 커밋(fix)으로 마감 -- 유효 밀�
 ```yaml
 sync_status: audit-ready
 sync_complete_at: "2026-07-28"
-sync_commit_sha: "pending-backfill"   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 네 번(0.3.0/0.4.0/0.5.0/0.6.0) 쓰인 패턴 그대로. 별도 chore backfill 커밋에서 채운다(다섯 번째)
+sync_commit_sha: "392c9b2"   # backfill 완료(자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 다섯 번 쓰인 패턴 그대로). 이 값을 담은 별도 chore backfill 커밋 참조.
 b12_self_test_a: "grep -c 'SPEC-GESTURE-001' CHANGELOG.md (편집 전, HEAD c89cf78 시점) -> 11 -- 기존 [Unreleased] 블록(Added/Fixed/Notes)을 제자리에서 수정 + Fixed에 0.7.0 서브블록 2개 신규 추가(편집 후 13). 새 최상위 [Unreleased] 항목을 추가한 것이 아니라 기존 블록 내부를 갱신했으므로 중복 방출 아님"
 b12_self_test_b: "grep -cE '^### AC-GEST-[0-9]+' acceptance.md -> 32 -- CHANGELOG Notes/README Status의 '32 acceptance criteria' 표기와 일치(29 + 0.7.0 신규 3건)"
 b12_self_test_c: "CHANGELOG/README가 인용한 모든 파일 경로를 커밋 전 ls로 실재 확인: src/backend/adb-backend.ts, src/cli/commands/{web-support,scroll-geometry}.ts. 인용한 모든 수치는 이 sync 세션에서 직접 재실행해 확인 -- pnpm vitest run(29 files/644 tests, exit 0) + pnpm typecheck(exit 0) + pnpm build(exit 0) + 연결된 Android 실기기(adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp)에서 `wm density`(Physical density: 600, Override 없음 -- 변경/복원 아님, 애초에 그대로) 재확인 + `scroll down --amount 0.0001` 거부 경로로 minValidRatio 0.011039886623620987/basis device-query 재확인(기기에 어떤 제스처도 전송되지 않음, exit 1) + 부팅된 iPhone 17 Pro 시뮬레이터(D0B3A18C-E485-4E7C-A25E-504BF4CA6163)에서 같은 거부 경로로 minValidRatio 0.013984236866235733/basis measured-constant 재확인. spec.md §C.1-⑳/⑰의 22/25/26/30/31/32px 수치, §C.1-㉑의 11초 지연 수치는 M9 run-phase 실측 기록(위 §E.2)을 그대로 인용하고 별도 재측정하지 않음(디스플레이 밀도 재변경 금지, 지시문 Section D) -- 인용원인 progress.md 자체가 이미 이 세션의 검증 대상이므로 이중 재측정은 불필요"
@@ -1571,4 +1571,4 @@ $ node dist/cli/bin.js scroll down --amount 0.0001 --device D0B3A18C-E485-4E7C-A
 
 이 sync 커밋은 `README.md` + `CHANGELOG.md` + SPEC 아티팩트 4종(frontmatter만, `progress.md`는 본문도 포함 — 이 §E.4 자체)을 담는다. `src/`는 건드리지 않는다(지시문 Section D). 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인한다. push는 지시문 Section C-4("Do NOT push. I hold that decision.")에 따라 수행하지 않는다.
 
-sync 커밋 SHA: `pending-backfill`(`docs(SPEC-GESTURE-001): correct 0.7.0 amendment docs + 3-phase close`). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — 0.3.0/0.4.0/0.5.0/0.6.0 sync에서 이미 네 번 쓰인 패턴 그대로(다섯 번째).
+sync 커밋 SHA: `392c9b2`(`docs(SPEC-GESTURE-001): correct 0.7.0 amendment docs + 3-phase close`). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — 0.3.0/0.4.0/0.5.0/0.6.0 sync에서 이미 네 번 쓰인 패턴 그대로(다섯 번째).
