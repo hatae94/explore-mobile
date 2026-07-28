@@ -19,7 +19,13 @@ import type { DeviceBackend } from "../../schema/device-backend.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { parseRatio } from "../validators.js";
-import { computeScrollSwipe, deriveScreenSize, type ScrollDirection } from "./scroll-geometry.js";
+import {
+  computeScrollSwipe,
+  deriveScreenSize,
+  isDegenerateSwipe,
+  minNonDegenerateRatio,
+  type ScrollDirection,
+} from "./scroll-geometry.js";
 import { errorMessage, type CommandHandler } from "./types.js";
 
 /**
@@ -43,6 +49,8 @@ const DEFAULT_AMOUNT = 0.5;
  * 보장할 책임이 있으므로(spec.md §A.2 "기기를 스와이프·스크롤할 수
  * 있게 한다"), 사용자에게 노출하지 않는 이 내부 기본값을 항상 싣는다.
  * `swipe` 명령 자체의 `--duration` 옵션(REQ-GEST-SWIPE-002)과는 별개다.
+ *
+ * @MX:NOTE: [AUTO] 500이라는 값 자체가 위 실측(SSIM 1.000000 -> 0.52)에서 나온 매직 넘버다 -- 바꾸려면 같은 시뮬레이터·페이지에서 재실측이 필요하다
  */
 const SCROLL_SWIPE_DURATION_MS = 500;
 
@@ -102,6 +110,20 @@ export const scrollCommand: CommandHandler = async (args, backend: DeviceBackend
   }
 
   const { from, to } = computeScrollSwipe(directionRaw, ratio, screen);
+
+  // REQ-GEST-SCROLL-007 (SPEC-GESTURE-001 M6/0.4.0 amendment, F1): 반올림 후
+  // from/to가 같은 점이면 거리 0인 스와이프다 — ok:true로 보고하면서 아무
+  // 것도 움직이지 않는 결함(sync-auditor 사후 감사)을 여기서 거부한다.
+  // 어떤 제스처도 보내지 않는다 — 1px 클램프 같은 "성공하게 만드는" 보정은
+  // 하지 않는다(spec.md REQ-GEST-SCROLL-007 근거, plan.md §F M6 item 3).
+  if (isDegenerateSwipe({ from, to })) {
+    return failure(
+      "scroll",
+      "AMOUNT_TOO_SMALL",
+      "scroll --amount is too small to move the screen at this size; no gesture was sent.",
+      { requestedRatio: ratio, minValidRatio: minNonDegenerateRatio(directionRaw, screen) },
+    );
+  }
 
   try {
     await backend.swipe(target.serial, from, to, { durationMs: SCROLL_SWIPE_DURATION_MS });

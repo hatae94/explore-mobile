@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isValidPackageName, parseCoordinate, parseIndex, parseRatio } from "./validators.js";
+import { isValidPackageName, parseCoordinate, parseDurationMs, parseIndex, parseRatio } from "./validators.js";
 
 describe("isValidPackageName", () => {
   it("accepts reverse-DNS-style dotted package names", () => {
@@ -43,6 +43,29 @@ describe("parseIndex", () => {
     expect(parseIndex("abc")).toBeUndefined();
     expect(parseIndex("-1")).toBeUndefined();
     expect(parseIndex("1.5")).toBeUndefined();
+  });
+});
+
+describe("parseDurationMs (SPEC-GESTURE-001 M6 — AC-GEST-019)", () => {
+  it("parses a positive integer string", () => {
+    expect(parseDurationMs("500")).toBe(500);
+    expect(parseDurationMs("1")).toBe(1); // 경계값 — 거부되지 않는다
+  });
+
+  it("0.4.0에서 0을 거부한다 (0.3.0은 '음이 아닌 정수'라 0을 허용했다 — REQ 결함이었다)", () => {
+    expect(parseDurationMs("0")).toBeUndefined();
+  });
+
+  it("rejects non-digit strings", () => {
+    expect(parseDurationMs("abc")).toBeUndefined();
+    expect(parseDurationMs("-5")).toBeUndefined();
+    expect(parseDurationMs("1.5")).toBeUndefined();
+    expect(parseDurationMs("")).toBeUndefined();
+  });
+
+  it("parseCoordinate와 다른 판정 함수다 — 좌표 0은 여전히 유효하다 (공유하면 AC-GEST-003/AC-GEST-019가 동시에 통과할 수 없다)", () => {
+    expect(parseCoordinate("0")).toBe(0);
+    expect(parseDurationMs("0")).toBeUndefined();
   });
 });
 

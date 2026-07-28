@@ -8,7 +8,13 @@
 
 import { describe, expect, it } from "vitest";
 import type { CommonElement } from "../../schema/common-element.js";
-import { computeScrollSwipe, deriveScreenSize, roundPixel } from "./scroll-geometry.js";
+import {
+  computeScrollSwipe,
+  deriveScreenSize,
+  isDegenerateSwipe,
+  minNonDegenerateRatio,
+  roundPixel,
+} from "./scroll-geometry.js";
 
 function element(overrides: Partial<CommonElement> = {}): CommonElement {
   return {
@@ -186,5 +192,56 @@ describe("computeScrollSwipe", () => {
     const { from, to } = computeScrollSwipe("left", 0.5, screen400x800);
     expect(from.y).toBe(400); // height / 2
     expect(to.y).toBe(400);
+  });
+});
+
+describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6 — AC-GEST-018, F1)", () => {
+  // spec.md §C.1-⑫ 실측 화면 크기 — 402x874, witness 있음.
+  const SCREEN_402X874 = { width: 402, height: 874 };
+
+  describe("실측 재현 — 402x874에서 --amount 0.001/0.0012는 퇴화, 0.002는 정상", () => {
+    it("0.001 -> from.y=to.y=437 (거리 0, 퇴화)", () => {
+      const coords = computeScrollSwipe("down", 0.001, SCREEN_402X874);
+      expect(coords.from.y).toBe(437);
+      expect(coords.to.y).toBe(437);
+      expect(isDegenerateSwipe(coords)).toBe(true);
+    });
+
+    it("0.0012 -> from.y=to.y=437 (거리 0, 퇴화)", () => {
+      const coords = computeScrollSwipe("down", 0.0012, SCREEN_402X874);
+      expect(isDegenerateSwipe(coords)).toBe(true);
+    });
+
+    it("0.002 -> from.y=438 to.y=436 (거리 2, 비퇴화)", () => {
+      const coords = computeScrollSwipe("down", 0.002, SCREEN_402X874);
+      expect(coords.from.y).toBe(438);
+      expect(coords.to.y).toBe(436);
+      expect(isDegenerateSwipe(coords)).toBe(false);
+    });
+  });
+
+  describe("네 방향 전부에서 퇴화·비퇴화 대역이 존재한다 (가로·세로 임계 비율이 다르다)", () => {
+    for (const direction of ["up", "down", "left", "right"] as const) {
+      it(`${direction}: --amount 0.0001은 퇴화하고, minNonDegenerateRatio()가 계산한 경계 비율은 퇴화하지 않는다`, () => {
+        expect(isDegenerateSwipe(computeScrollSwipe(direction, 0.0001, SCREEN_402X874))).toBe(true);
+
+        const boundary = minNonDegenerateRatio(direction, SCREEN_402X874);
+        expect(boundary).toBeGreaterThan(0);
+        expect(boundary).toBeLessThan(0.01); // 실측 임계값(약 0.0013)과 같은 자릿수
+        expect(isDegenerateSwipe(computeScrollSwipe(direction, boundary, SCREEN_402X874))).toBe(false);
+      });
+    }
+
+    it("가로(width=402)와 세로(height=874)의 임계 비율이 서로 다르다 -- 한 축만 맞춘 구현은 이 테스트에서 걸린다", () => {
+      const verticalBoundary = minNonDegenerateRatio("down", SCREEN_402X874);
+      const horizontalBoundary = minNonDegenerateRatio("right", SCREEN_402X874);
+      expect(verticalBoundary).not.toBeCloseTo(horizontalBoundary, 5);
+    });
+  });
+
+  it("--amount 1은 모든 방향에서 비퇴화다 (동작 경계)", () => {
+    for (const direction of ["up", "down", "left", "right"] as const) {
+      expect(isDegenerateSwipe(computeScrollSwipe(direction, 1, SCREEN_402X874))).toBe(false);
+    }
   });
 });

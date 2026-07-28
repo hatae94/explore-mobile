@@ -715,3 +715,130 @@ $ pnpm typecheck    → exit 0
 $ pnpm build        → exit 0
 $ grep -c "SPEC-GESTURE-001" CHANGELOG.md   → 5 (한 항목 블록 내 5회 언급)
 ```
+
+### M6 — `ok:true`-무효과 결함 4건 수정 (0.4.0 amendment)
+
+> **선행**: M1-M5는 0.3.0에서 마감됐다(§E.4 참조). 이 마일스톤은 sync-auditor 사후 감사(PASS-WITH-DEBT 0.69, SAFE TO PUSH: No)로 열렸다 — plan.md §B.6, 근거는 실측 F1-F4.
+
+**산출물 (plan.md §F M6 1-4 전부 완료)**
+
+1. `src/cli/validators.ts` — `parseDurationMs`가 새 `parsePositiveInteger`(`>= 1`)를 쓰도록 전환(F3, REQ-GEST-SWIPE-005). `parseCoordinate`가 쓰는 `parseNonNegativeInteger`와 **의도적으로 분리된 별도 함수** — 공유하면 좌표 `0`(유효)과 `--duration 0`(무효)이 동시에 성립할 수 없다.
+2. `src/cli/commands/scroll-geometry.ts` — `isDegenerateSwipe(coords)`(반올림 후 `from`/`to` 전체 비교) + `minNonDegenerateRatio(direction, screen)`(이진 탐색으로 이 화면·방향에서 유효한 최소 비율을 계산) 추가(F1, REQ-GEST-SCROLL-007). `deriveScreenSize`에 `@MX:ANCHOR`+`@MX:REASON` 추가.
+3. `src/cli/commands/scroll.ts` — `computeScrollSwipe` 직후 `isDegenerateSwipe` 검사를 삽입해 퇴화 시 `AMOUNT_TOO_SMALL`로 거부(`requestedRatio`+`minValidRatio`를 응답에 실음, 제스처 0회 전송). `SCROLL_SWIPE_DURATION_MS`에 `@MX:NOTE` 추가.
+4. `src/cli/commands/web-support.ts` — `buildScrollIntoViewExpression`이 `window.scrollY` 전/후 비교로 `{found, moved}`를 반환하도록 변경(기존 bare boolean에서 확장). `activateElement`는 `moved`로만 `-scrolled` 접미사를 붙이고 `found`로만 재측정을 시도한다(F4, REQ-GEST-WEB-002 강화). `native-scrolled`/`js-click-scrolled` 양쪽 모두 같은 증거 요건 적용.
+
+**스코프 판단(명시)**: plan.md §A.6 M6 행에는 `swipe.ts`가 없다 — `parseDurationMs`를 이미 통해서 위임하므로 `swipe.ts` 자체는 무변경. 다만 AC-GEST-019(신규)는 `swipe` 커맨드의 종단 동작이라 `swipe.test.ts`에 자동화 테스트 3건을 추가했다(검증 커버리지 완결을 위한 스코프 판단, 아래 "블로커/서프라이즈" 1번 참조) — `swipe.ts` 프로덕션 코드 자체는 건드리지 않았다.
+
+### AC PASS/FAIL/PARTIAL 매트릭스 (M6 스코프)
+
+| AC ID | 상태 | 검증 명령 | 실제 결과 |
+|-------|------|-----------|-----------|
+| AC-GEST-018 | PASS | `pnpm vitest run src/cli/commands/scroll-geometry.test.ts src/cli/commands/scroll.test.ts -t "AC-GEST-018"` | 402x874 화면에서 4방향(up/down/left/right) 각각 퇴화 대역(0.0001/0.001/0.0012) → `AMOUNT_TOO_SMALL` + 무동작(swipe 0회), 동작 경계(`minNonDegenerateRatio()` 계산값, `--amount 1`) → 정상 성공. `down --amount 0.002` → `from.y=438 to.y=436`(거리 2) 실측치 그대로 재현. `AMOUNT_TOO_SMALL !== INVALID_AMOUNT` 별도 확인. 가로(width=402)·세로(height=874) 임계 비율이 다름을 `expect(verticalBoundary).not.toBeCloseTo(horizontalBoundary, 5)`로 확인 |
+| AC-GEST-019 | PASS | `pnpm vitest run src/cli/validators.test.ts src/cli/commands/swipe.test.ts -t "AC-GEST-019"` | `--duration 0` → `INVALID_DURATION` + 무동작. `--duration 1`(경계) → 거부되지 않음, `backend.swipe`가 `{durationMs:1}`로 정확히 호출됨. 좌표 `0`은 `--duration 0`이 같은 호출에서 거부되는 동안에도 여전히 유효(`swipe 0 0 0 100 --duration 0` → 거부, `swipe 0 0 0 100` → 성공, `to:{x:0,y:100}`) — 공유-파서 함정을 `parseDurationMs`/`parseCoordinate` 분리로 회피했음을 증명 |
+| AC-GEST-020 | **PARTIAL**(acceptance.md가 명시적으로 허용) | `pnpm vitest run src/cli/commands/scroll.test.ts -t "AC-GEST-020"` + 아래 "실기기 반복 시행" | unit: `swipe`는 `--duration` 생략 시 `backend.swipe`에 4번째 인자가 `undefined`(옵션 자체 없음), `scroll`은 항상 `{durationMs:500}`을 싣는다 — 비대칭이 코드로 고정됨. 실기기 반복 시행 결과는 PARTIAL(간헐성 자체가 관측됐으므로) — 아래 참조 |
+| AC-GEST-021 | PASS(unit) / **GAP**(실기기) | `pnpm vitest run src/cli/commands/web-support.test.ts -t "AC-GEST-021"` | unit: 감사자의 실측 재현 픽스처(`scrollIntoView` → `found:true, moved:false`, `scrollY` 불변) → `method:"js-click"`(접미사 없음), `h.taps` 빈 배열. `found:true, moved:true`(실제 이동) → 기존 `"-scrolled"` 표기 유지(회귀 없음). `native`/`native-scrolled` 양쪽 모두 같은 `moved` 플래그로 분기됨을 별도 확인(3건 전부 PASS). **실기기 재현은 아래 "블로커/서프라이즈" 2번 참조 — GAP으로 명시** |
+
+### 실기기 라이브 재검증 (Section E 항목 2 — 세 결함 재현·재확인)
+
+```
+$ node dist/cli/bin.js scroll down --amount 0.001 --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"scroll --amount is too small to move the screen at this size; no gesture was sent.","details":{"requestedRatio":0.001,"minValidRatio":0.001271294429898262}}}
+
+$ node dist/cli/bin.js swipe 200 700 200 300 --duration 0 --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":false,"command":"swipe","error":{"code":"INVALID_DURATION","message":"swipe --duration requires a non-negative integer number of milliseconds.","details":{"received":"0"}}}
+```
+
+두 결함(F1/F3) 모두 프로덕션 빌드(`dist/`)를 통해 부팅된 iPhone 17 Pro 시뮬레이터에서 재현·재확인됐다 — was `ok:true`, now correctly rejected. `swipe --duration 0`의 오류 메시지 문구("non-negative integer")는 0.3.0 문구 그대로 남아 있다 — `swipe.ts`가 M6 스코프 밖이라 손대지 않았기 때문이며, 사실과 약간 어긋난다(이제는 "positive integer"가 맞다). 아래 "블로커/서프라이즈" 1번 참조.
+
+**F4(`-scrolled` 정직성)의 실기기 재현은 완료하지 못했다** — 아래 "블로커/서프라이즈" 2번에 상세 기록.
+
+### 공유-파서 함정 회귀 증명 (Section E 항목 3)
+
+```
+$ node dist/cli/bin.js swipe 0 0 0 100 --duration 0 --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":false,"command":"swipe","error":{"code":"INVALID_DURATION","message":"swipe --duration requires a non-negative integer number of milliseconds.","details":{"received":"0"}}}
+
+$ node dist/cli/bin.js swipe 0 0 0 100 --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":true,"command":"swipe","data":{"serial":"D0B3A18C-...","from":{"x":0,"y":0},"to":{"x":0,"y":100}}}
+```
+
+같은 좌표(`0 0 0 100`)에서 `--duration 0`은 거부되고 `--duration` 생략은 성공한다 — 좌표 `0`이 아니라 `duration 0`이 거부 원인이었다는 직접 증거. `parseDurationMs`/`parseCoordinate` 분리 설계가 AC-GEST-003(좌표 0 유효)과 AC-GEST-019(duration 0 무효)를 동시에 성립시킨다.
+
+### `--duration` 생략 경로 반복 시행 (Section E 항목 4)
+
+**방법**: `xcrun simctl io screenshot`으로 전/후 캡처 → `sips --cropOffset 220 0 -c 2402 1206`으로 상단 상태바(시계) 제거 → `shasum -a 256`으로 크롭된 본문 영역 바이트 비교. 대조군(스와이프 없이 전/후 캡처 3회)에서 크롭된 해시가 항상 동일함을 먼저 확인해 이 방법론에 시계 변화 등으로 인한 거짓 양성이 없음을 검증했다.
+
+**대상**: `en.wikipedia.org/wiki/JavaScript`(정적 롱페이지, 이미 로드돼 있던 세션). `swipe 200 700 200 300 [--duration 500]`을 5회씩 반복.
+
+**결과(이번 세션)**:
+
+| 조건 | 이동 관측 | 비율 |
+|------|-----------|------|
+| `--duration` 생략 | 5/5 | 100% |
+| `--duration 500` | 5/5 | 100% |
+
+**spec.md §C.1-⑩ 기록값(이전 세션, 2026-07-28)과의 비교**: 생략 3/5(60%), `--duration 500` 5/5(100%). **이번 세션의 5/5는 이전 세션의 3/5와 다르다** — 두 독립 세션을 합치면 생략 경로는 8/10(80%)이고, 세션 간 편차 자체가 이 경로의 간헐성을 뒷받침하는 증거다. "생략 경로가 이제 안정적으로 동작한다"고 쓰지 않는다 — 5회 시행(또는 10회 합산)으로는 참 성공률을 확정할 수 없고, 두 세션이 다른 값을 보였다는 사실 자체가 정확히 REQ-GEST-SWIPE-002/006이 "신뢰할 수 없다"고 기술한 그 현상이다. AC-GEST-020은 acceptance.md가 명시적으로 허용한 대로 **PARTIAL**로 마감한다.
+
+### 테스트 스위트
+
+```
+$ pnpm vitest run
+ Test Files  29 passed (29)
+      Tests  553 passed (553)
+```
+
+기준선(0.3.0 마감, M5 종료) 510 → 553(+43): `validators.test.ts` `parseDurationMs` 신규 4건, `swipe.test.ts` AC-GEST-019 신규 3건, `scroll-geometry.test.ts` `isDegenerateSwipe`/`minNonDegenerateRatio` 신규 9건, `scroll.test.ts` AC-GEST-018(4방향×5건=20건) + AC-GEST-020 비대칭 1건 = 신규 24건, `web-support.test.ts` AC-GEST-021 신규 3건. 신규 파일 없음(기존 5개 파일만 확장) — `total_run_phase_files`는 M5까지의 20에서 불변.
+
+### Typecheck + Build
+
+```
+$ pnpm typecheck  → exit 0
+$ pnpm build      → exit 0
+```
+
+### Scope Check
+
+```
+$ git status --porcelain --untracked-files=no
+ M src/cli/commands/scroll-geometry.test.ts
+ M src/cli/commands/scroll-geometry.ts
+ M src/cli/commands/scroll.test.ts
+ M src/cli/commands/scroll.ts
+ M src/cli/commands/swipe.test.ts
+ M src/cli/commands/web-support.test.ts
+ M src/cli/commands/web-support.ts
+ M src/cli/validators.test.ts
+ M src/cli/validators.ts
+```
+
+plan.md §A.6 M6 행: `src/cli/validators.ts`, `src/cli/commands/scroll-geometry.ts`, `src/cli/commands/scroll.ts`, `src/cli/commands/web-support.ts` — 전부 위 목록에 포함. `swipe.test.ts`는 지시문 Section D가 명시한 4개 M6 파일 목록에 없으나, AC-GEST-019(신규 AC)의 자동화 커버리지를 위해 스스로 판단해 추가했다(위 "스코프 판단" 참조, `swipe.ts` 프로덕션 코드는 미변경). `src/normalize/*`, `src/webview/{inspector-client,proxy-service,calibration}.ts`(PRESERVE 목록) 미변경. README.md/CHANGELOG.md 미변경(지시문 Section D — 별도 docs 위임). SPEC 본문(spec.md/plan.md/acceptance.md) 미변경, frontmatter도 미변경(`status: in-progress` 그대로 — 재마감은 manager-docs 소관).
+
+### 커밋
+
+아래 §E.3(M6 최종) 참조(커밋 완료 후 backfill).
+
+## §E.3 Run-phase Audit-Ready Signal (M6 최종 — 0.4.0 amendment)
+
+```yaml
+run_status: M6-complete
+ac_pass_count: 3      # M6 자체 판정: AC-GEST-018, AC-GEST-019, AC-GEST-021(unit 기준 PASS)
+ac_fail_count: 0
+ac_partial_count: 1   # AC-GEST-020 (acceptance.md가 명시적으로 허용하는 PARTIAL — 간헐성 자체가 재확인됨)
+ac_gap_count: 1        # AC-GEST-021의 실기기(e2e) 증거 — unit은 PASS, 실기기 재현만 GAP(아래 블로커 2번)
+total_run_phase_files: 20   # M6은 기존 5개 파일만 확장(swipe.test.ts 포함) -- 신규 파일 없음, M5까지의 20에서 불변
+new_warnings_or_lints_introduced: false
+preserve_list_post_run_count: 0   # src/normalize/*, src/webview/{inspector-client,proxy-service,calibration}.ts 미변경
+l44_pre_commit_fetch: pending
+l44_post_push_fetch: not_applicable   # 이 SPEC은 push하지 않는다(지시문 Section D "Do not push")
+cross_platform_build: { windows: not_applicable, note: "TypeScript/Node 프로젝트, GOOS 교차빌드 대상 아님" }
+m1_to_mN_commit_strategy: "M6은 단일 커밋(fix)으로 마감 -- 4건의 결함이 서로 얽혀 있어(공유 파서, 같은 파일들) 개별 분리가 인위적임"
+```
+
+## 블로커 / 서프라이즈 (M6 종료 시점 — 0.4.0 amendment 최종)
+
+1. **`swipe.ts`의 `INVALID_DURATION` 오류 메시지가 이제 사실과 약간 어긋난다(코드 변경 없음, 스스로 발견)**: `parseDurationMs`가 양의 정수만 받도록 좁혀졌는데(`validators.ts`), `swipe.ts`의 실패 메시지는 여전히 "requires a non-negative integer"라고 말한다. plan.md §A.6 M6 행에 `swipe.ts`가 없고 지시문 Section D의 명시적 4파일 목록에도 없어 **스코프 판단으로 손대지 않았다** — 대신 AC-GEST-019 자동화 테스트는 `swipe.test.ts`에 추가했다(코드 0줄, 테스트만). 이 문구 불일치는 후속 세션(또는 이 보고서를 읽는 오케스트레이터)이 결정할 사항으로 명시적으로 남긴다: 고칠지, docs 위임에 포함할지.
+2. **[가장 중요] AC-GEST-021 실기기 재현을 완료하지 못했다**: 감사자의 실제 드로어 링크 대신 합성 오프캔버스 테스트 페이지(`position:fixed; left:-9999px`)를 로컬 HTTP 서버(포트 8934)로 만들어 `xcrun simctl openurl`로 열려 했으나 `LSApplicationWorkspaceErrorDomain error 115`로 실패했고, 이어진 Safari 재시작 시도 중 `xcrun simctl io screenshot`이 순수 검정 프레임만 반환하는 상태가 됐다(단, `dump`로 확인한 접근성 계층은 계속 정상 — Safari는 살아 있었고, 홈 탭에 페이지가 로드되지 않은 상태였다). 이 상태에서 웹 재현을 더 시도하는 대신 중단했다 — 공유 시뮬레이터를 더 불안정하게 만들 위험과 대비, 이미 확보한 근거(3건의 mock 기반 unit 테스트가 감사자의 정확한 재현 조건 `found:true, moved:false`를 그대로 픽스처화함)로 충분하다고 판단했다. 로컬 HTTP 서버는 정리했다(`pkill`). **이것은 관측하지 않은 것을 PASS로 기록하지 않는다는 원칙(verification-claim-integrity.md)에 따른 정직한 GAP**이다 — sync-auditor가 재현을 원하면 이 기록을 출발점으로 삼을 수 있다.
+3. **`--duration` 생략 경로의 이번 세션 측정치(5/5)가 spec.md §C.1-⑩의 이전 세션 기록(3/5)과 다르다**: 대조군(무-스와이프 반복 캡처)으로 크롭-비교 방법론 자체의 거짓양성 가능성을 배제했으므로, 이 차이는 방법론 결함이 아니라 **경로 자체의 세션 간 변동성**으로 해석했다 — 정확히 REQ-GEST-SWIPE-002/006이 "신뢰할 수 없다"고 이미 기술한 현상이다. "이번엔 안정적이었다"고 쓰지 않고 두 세션 값을 나란히 기록했다(위 "반복 시행" 절).
+4. **`minNonDegenerateRatio`는 닫힌 형태 공식이 아니라 이진 탐색이다(스스로 내린 설계 결정)**: 화면 중심의 정수/반정수 정렬에 따라 임계 비율이 달라져 화면 크기·방향마다 다른 공식이 필요했을 것이므로, `computeScrollSwipe`/`isDegenerateSwipe`를 직접 재사용하는 이진 탐색(30회 반복, 실질적으로 기계 정밀도)을 택했다 — plan.md/spec.md 어디에도 구현 방식을 지정하지 않았다(§D "구현 세부는 plan.md 소관"과 일관).
+5. **범위 이탈 없음**: `src/normalize/*`, `src/webview/{inspector-client,proxy-service,calibration}.ts`(PRESERVE) 미변경. README.md/CHANGELOG.md 미변경(docs 위임). SPEC 본문 3종 미변경. `swipe.ts` 프로덕션 코드 미변경(위 1번 참조 — 테스트만 추가). frontmatter `status: in-progress` 그대로 — 재마감(`in-progress → implemented → completed`)은 manager-docs 소관.
+6. **sync-auditor 재확인 우선순위(다음 세션에게)**: (a) AC-GEST-021의 실기기 재현(위 2번 GAP), (b) `swipe.ts` 오류 메시지 문구 정정 여부(위 1번), (c) README/CHANGELOG의 REQ-GEST-SWIPE-006 고지 의무(별도 docs 위임 — 이 M6에서 다루지 않음) 순으로 확인할 것을 권한다.

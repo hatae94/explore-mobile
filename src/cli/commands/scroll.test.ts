@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CommonElement } from "../../schema/common-element.js";
 import type { DeviceBackend, DeviceInfo } from "../../schema/device-backend.js";
 import { runCli } from "../router.js";
+import { minNonDegenerateRatio } from "./scroll-geometry.js";
 
 function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -53,6 +54,9 @@ const CHROME_ONLY_NO_WITNESS: CommonElement[] = [
   element({ bounds: { x: 0, y: 60, w: 402, h: 44 } }),
   element({ bounds: { x: 0, y: 104, w: 402, h: 16 } }),
 ];
+
+/** AC-GEST-018 — spec.md §C.1-⑫ 실측 화면 크기(witness == 유일한 최상위 요소). */
+const KNOWN_SCREEN_402X874: CommonElement[] = [element({ bounds: { x: 0, y: 0, w: 402, h: 874 } })];
 
 function createMockBackend(
   devices: DeviceInfo[] = [device()],
@@ -266,6 +270,107 @@ describe("scroll", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe("SCREEN_SIZE_UNKNOWN");
       expect(backend.swipe).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("AC-GEST-018 — 퇴화 --amount 거부 + 동작 경계 (SPEC-GESTURE-001 M6/0.4.0 amendment, F1)", () => {
+    it("down: --amount 0.001 -> AMOUNT_TOO_SMALL, 무동작 (실측 재현, spec.md §C.1-⑫)", async () => {
+      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+
+      const result = await runCli(["scroll", "down", "--amount", "0.001"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("AMOUNT_TOO_SMALL");
+        expect(result.error.details?.["requestedRatio"]).toBe(0.001);
+        expect(typeof result.error.details?.["minValidRatio"]).toBe("number");
+        expect((result.error.details?.["minValidRatio"] as number)).toBeGreaterThan(0.001);
+      }
+      expect(backend.swipe).not.toHaveBeenCalled();
+    });
+
+    it("down: --amount 0.002 -> 정상 성공, from.y=438 to.y=436 (거리 2, 동작 경계)", async () => {
+      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+
+      const result = await runCli(["scroll", "down", "--amount", "0.002"], backend);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        const data = result.data as { from: { y: number }; to: { y: number } };
+        expect(data.from.y).toBe(438);
+        expect(data.to.y).toBe(436);
+      }
+      expect(backend.swipe).toHaveBeenCalledTimes(1);
+    });
+
+    it("AMOUNT_TOO_SMALL은 INVALID_AMOUNT와 다른 코드다 -- 0.001은 계약 범위(0 초과 1 이하) 안에 있다", async () => {
+      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+      const result = await runCli(["scroll", "down", "--amount", "0.001"], backend);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).not.toBe("INVALID_AMOUNT");
+    });
+
+    for (const direction of ["up", "down", "left", "right"] as const) {
+      describe(`방향=${direction}`, () => {
+        for (const ratio of [0.0001, 0.001, 0.0012]) {
+          it(`--amount ${ratio} -> AMOUNT_TOO_SMALL, 무동작`, async () => {
+            const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+
+            const result = await runCli(["scroll", direction, "--amount", String(ratio)], backend);
+
+            expect(result.ok).toBe(false);
+            if (!result.ok) expect(result.error.code).toBe("AMOUNT_TOO_SMALL");
+            expect(backend.swipe).not.toHaveBeenCalled();
+          });
+        }
+
+        it("minNonDegenerateRatio()가 계산한 경계 비율은 정상 성공한다 (가로·세로 임계값이 다르므로 방향별로 확인)", async () => {
+          const boundaryRatio = minNonDegenerateRatio(direction, { width: 402, height: 874 });
+          const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+
+          const result = await runCli(["scroll", direction, "--amount", String(boundaryRatio)], backend);
+
+          expect(result.ok).toBe(true);
+          expect(backend.swipe).toHaveBeenCalledTimes(1);
+        });
+
+        it("--amount 1은 정상 성공한다 (동작 경계)", async () => {
+          const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+          const result = await runCli(["scroll", direction, "--amount", "1"], backend);
+          expect(result.ok).toBe(true);
+        });
+      });
+    }
+  });
+
+  describe("AC-GEST-020 — swipe/scroll의 --duration argv 비대칭 (SPEC-GESTURE-001 M6, F2 문서 고지의 코드 쪽 anchor)", () => {
+    it("swipe는 --duration 생략 시 backend.swipe에 durationMs 옵션을 전혀 싣지 않지만, scroll은 항상 내부 고정값(500ms)을 싣는다", async () => {
+      const swipeBackend = createMockBackend();
+      const scrollBackend = createMockBackend();
+
+      await runCli(["swipe", "200", "700", "200", "300"], swipeBackend);
+      await runCli(["scroll", "down"], scrollBackend);
+
+      // swipe: --duration 생략 -> 옵션 인자 자체가 undefined (REQ-GEST-SWIPE-002,
+      // D1 -- CLI가 숨은 기본값을 주입하지 않는다).
+      expect(swipeBackend.swipe).toHaveBeenCalledWith(
+        "R58N90ABCDE",
+        { x: 200, y: 700 },
+        { x: 200, y: 300 },
+        undefined,
+      );
+
+      // scroll: 항상 SCROLL_SWIPE_DURATION_MS(500)를 명시적으로 싣는다 --
+      // 편의 계층은 실제 이동을 보장할 책임이 있다(spec.md §A.2,
+      // scroll.ts의 SCROLL_SWIPE_DURATION_MS 주석). 이 비대칭은 의도된
+      // 것이며 REQ-GEST-SWIPE-006이 문서로 고지한다.
+      const scrollCall = (scrollBackend.swipe as ReturnType<typeof vi.fn>).mock.calls[0] as [
+        string,
+        unknown,
+        unknown,
+        { durationMs?: number } | undefined,
+      ];
+      expect(scrollCall[3]).toEqual({ durationMs: 500 });
     });
   });
 

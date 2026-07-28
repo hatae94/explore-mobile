@@ -20,6 +20,20 @@ function parseNonNegativeInteger(value: string): number | undefined {
   return Number.isInteger(n) && n >= 0 ? n : undefined;
 }
 
+/**
+ * Parses a string as a positive integer (`>= 1`), or undefined if invalid.
+ * Deliberately a SEPARATE predicate from `parseNonNegativeInteger` (SPEC-GESTURE-001
+ * M6, F3/AC-GEST-019) — `0` must be valid for coordinates (`parseCoordinate`)
+ * but invalid for `--duration` (`parseDurationMs`). Sharing one predicate
+ * between the two would make AC-GEST-003 (coordinate `0` valid) and
+ * AC-GEST-019 (`--duration 0` rejected) mutually exclusive.
+ */
+function parsePositiveInteger(value: string): number | undefined {
+  if (!/^\d+$/.test(value)) return undefined;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 ? n : undefined;
+}
+
 /** Parses a coordinate string into a non-negative integer, or undefined if invalid. */
 export function parseCoordinate(value: string): number | undefined {
   return parseNonNegativeInteger(value);
@@ -31,15 +45,26 @@ export function parseIndex(value: string): number | undefined {
 }
 
 /**
- * Parses a `swipe --duration` string into a non-negative integer of
+ * Parses a `swipe --duration` string into a positive integer of
  * milliseconds, or undefined if invalid (REQ-GEST-SWIPE-005,
- * SPEC-GESTURE-001 M2). Deliberately reuses the same
- * `parseNonNegativeInteger` seam as `parseCoordinate`/`parseIndex` — the
- * three rejection paths (coordinates, `--duration`, and M3's `--amount`)
- * must not diverge in shape (plan.md §F M2 item 3).
+ * SPEC-GESTURE-001 M6/0.4.0 amendment — F3).
+ *
+ * 0.3.0 used `parseNonNegativeInteger` here (same seam as
+ * `parseCoordinate`/`parseIndex`), so `--duration 0` parsed to `0` and the
+ * command returned `{"ok":true, ..., "durationMs":0}` — a REQ defect, not
+ * an implementation defect: a zero-duration gesture cannot move anything,
+ * but the 0.3.0 REQ text said "non-negative integer" and the implementation
+ * correctly followed it. 0.4.0 narrows REQ-GEST-SWIPE-005 to "positive
+ * integer", so this parser switches to `parsePositiveInteger` — a
+ * DELIBERATELY SEPARATE predicate from `parseCoordinate`'s
+ * `parseNonNegativeInteger` (AC-GEST-019: coordinate `0` stays valid,
+ * `--duration 0` does not; sharing one predicate would make AC-GEST-003 and
+ * AC-GEST-019 mutually exclusive). The rejection SHAPE (parse failure or
+ * out-of-range both return `undefined`) still matches `parseRatio`'s, so
+ * `swipeCommand`/`scrollCommand` apply the same structure of rejection.
  */
 export function parseDurationMs(value: string): number | undefined {
-  return parseNonNegativeInteger(value);
+  return parsePositiveInteger(value);
 }
 
 /** 소수(0 초과 1 이하)를 허용하는 정규식 — 정수 전용인 `^\d+$`로는 `--amount`의 비율 값을 받을 수 없다. */

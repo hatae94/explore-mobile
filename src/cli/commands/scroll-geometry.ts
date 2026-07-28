@@ -48,6 +48,9 @@ export interface SwipeCoordinates {
  * 화면 크기를 신뢰할 수 없으면(빈 배열, 퇴화 크기, witness 없음)
  * `undefined`를 반환한다 — REQ-GEST-SCROLL-004, 호출자(`scroll.ts`)가
  * 이를 `SCREEN_SIZE_UNKNOWN`으로 거부하고 어떤 제스처도 보내지 않는다.
+ *
+ * @MX:ANCHOR: [AUTO] scroll 편의 계층 전체가 기대는 화면 크기 파생 불변식 — witness 없이 채택하면 되돌릴 수 없는 제스처를 잘못된 크기로 보낸다
+ * @MX:REASON: fan_in >= 3(scroll.ts 호출 + scroll.test.ts·scroll-geometry.test.ts 다수 픽스처가 이 계약에 고정) — witness 요건(원점 조건 포함)을 깨면 AC-GEST-008/017이 검증하는 정확한 회귀(Safari 크롬-only 402x120 오채택)가 조용히 재발한다(plan.md §B.5)
  */
 export function deriveScreenSize(elements: CommonElement[]): ScreenSize | undefined {
   if (elements.length === 0) return undefined;
@@ -133,4 +136,51 @@ export function computeScrollSwipe(direction: ScrollDirection, ratio: number, sc
     : { x: roundPixel(endPos), y: fixedAxis };
 
   return { from, to };
+}
+
+/**
+ * `computeScrollSwipe`가 만든 좌표가 퇴화(같은 점)인지 판정한다(SPEC-GESTURE-001
+ * M6/0.4.0 amendment — F1, REQ-GEST-SCROLL-007, plan.md §F M6 item 2).
+ *
+ * 판정 위치는 **반올림 이후** 좌표다 — 반올림 전 거리는 0.79px처럼 0이
+ * 아닐 수 있지만, 정수 픽셀로 반올림된 뒤 같은 픽셀로 접히는 것이 실제
+ * 결함이다(402x874에서 `--amount 0.001` -> `from.y=to.y=437`, 실측
+ * `scrollY 3212->3212`, 스크린샷 바이트 동일, spec.md §C.1-⑫). 반올림
+ * 전 값으로 판정하면 이 결함을 못 잡는다.
+ *
+ * 스크롤 축이 아닌 좌표(세로 스크롤의 x, 가로 스크롤의 y)는 항상 두 점에서
+ * 같으므로(§ computeScrollSwipe `fixedAxis`), `from`·`to` 전체가 같은지만
+ * 보면 방향에 관계없이 충분하다.
+ */
+export function isDegenerateSwipe(coords: SwipeCoordinates): boolean {
+  return coords.from.x === coords.to.x && coords.from.y === coords.to.y;
+}
+
+/**
+ * 이 화면·방향에서 퇴화하지 않는 최소 `--amount` 비율을 찾는다(F1,
+ * REQ-GEST-SCROLL-007) — 거부 응답에 실어 호출자가 다시 시도할 값을 알 수
+ * 있게 한다(AC-GEST-018).
+ *
+ * 반올림된 좌표 차이는 비율이 커질수록 늘거나 그대로다(단조 비감소) —
+ * `center ± half`가 각각 바깥으로만 움직이므로 독립 반올림 결과의 차이도
+ * 줄어들 수 없다. 그래서 이진 탐색으로 임계값을 찾는 것이 안전하다.
+ * 화면의 정확한 중심 정렬(정수/반정수)에 따라 임계 비율이 달라지므로
+ * 닫힌 형태 공식 대신 실제 `computeScrollSwipe` 출력으로 직접 탐색한다.
+ *
+ * `ratio=1`은 비퇴화라고 가정한다 — 실제 기기 화면 크기(수백 px 이상)에서는
+ * 항상 참이다. 화면이 지나치게 작아 `ratio=1`도 퇴화라면(비현실적인 입력),
+ * 그 경우는 이미 REQ-GEST-SCROLL-004의 화면 크기 거부 대상이다.
+ */
+export function minNonDegenerateRatio(direction: ScrollDirection, screen: ScreenSize): number {
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 30; i++) {
+    const mid = (lo + hi) / 2;
+    if (isDegenerateSwipe(computeScrollSwipe(direction, mid, screen))) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return hi;
 }

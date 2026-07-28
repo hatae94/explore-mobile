@@ -141,6 +141,52 @@ describe("swipe", () => {
     });
   });
 
+  describe("AC-GEST-019 — --duration 0 거부 (SPEC-GESTURE-001 M6/0.4.0 amendment, F3)", () => {
+    it("rejects --duration 0 with INVALID_DURATION and sends zero gestures", async () => {
+      const backend = createMockBackend();
+
+      const result = await runCli(["swipe", "200", "700", "200", "300", "--duration", "0"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("INVALID_DURATION");
+        expect(result.error.details?.["received"]).toBe("0");
+      }
+      expect(backend.swipe).not.toHaveBeenCalled();
+    });
+
+    it("does not reject --duration 1 (positive-integer boundary)", async () => {
+      const backend = createMockBackend();
+
+      const result = await runCli(["swipe", "200", "700", "200", "300", "--duration", "1"], backend);
+
+      expect(result.ok).toBe(true);
+      expect(backend.swipe).toHaveBeenCalledWith(
+        "R58N90ABCDE",
+        { x: 200, y: 700 },
+        { x: 200, y: 300 },
+        { durationMs: 1 },
+      );
+    });
+
+    it("coordinate 0 stays valid even when --duration 0 is rejected in the same call (shared-parser trap, AC-GEST-003 vs AC-GEST-019)", async () => {
+      const backend = createMockBackend();
+
+      // 좌표 0은 유효하지만 --duration 0은 거부된다 -- 같은 파서를
+      // 공유하면 이 두 AC가 동시에 통과할 수 없다(plan.md §F M6 item 1).
+      const rejected = await runCli(["swipe", "0", "0", "0", "100", "--duration", "0"], backend);
+      expect(rejected.ok).toBe(false);
+      if (!rejected.ok) expect(rejected.error.code).toBe("INVALID_DURATION");
+      expect(backend.swipe).not.toHaveBeenCalled();
+
+      // 같은 좌표에서 --duration을 생략하면(또는 양수를 주면) 정상 통과한다
+      // -- 거부된 것은 좌표 0이 아니라 duration 0이었다는 증거.
+      const accepted = await runCli(["swipe", "0", "0", "0", "100"], backend);
+      expect(accepted.ok).toBe(true);
+      expect(backend.swipe).toHaveBeenCalledWith("R58N90ABCDE", { x: 0, y: 0 }, { x: 0, y: 100 }, undefined);
+    });
+  });
+
   describe("AC-GEST-003 — invalid coordinates", () => {
     it("rejects a wrong coordinate count (3 instead of 4) with INVALID_COORDINATES and sends zero gestures", async () => {
       const backend = createMockBackend();

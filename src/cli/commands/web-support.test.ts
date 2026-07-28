@@ -61,7 +61,13 @@ function harness(
     collected?: unknown;
     /** What the M4 re-measure (the second `buildCollectExpression` call, after a scroll) returns. Defaults to `collected` — i.e. scrolling changed nothing. */
     postScrollCollected?: unknown;
-    /** Overrides the `scrollIntoView` eval's return. Defaults to `true` (element found and scrolled). */
+    /**
+     * Overrides the `scrollIntoView` eval's return. Defaults to
+     * `{found: true, moved: true}` (element found and the page actually
+     * moved) — SPEC-GESTURE-001 M6, AC-GEST-021. Pass
+     * `{found: true, moved: false}` for the "ran but nothing moved"
+     * regression, or `false` for "node not found at all".
+     */
     scrollResult?: unknown;
     clickResult?: unknown;
     proxyError?: Error;
@@ -101,7 +107,12 @@ function harness(
     evaluate: async <T>(expression: string): Promise<T> => {
       evaluated.push(expression);
       if (expression.includes("screenHeight")) return VIEWPORT_SIGNATURE as T;
-      if (expression.includes("scrollIntoView")) return (options.scrollResult ?? true) as T;
+      // SPEC-GESTURE-001 M6 (AC-GEST-021): production now returns
+      // `{found, moved}` instead of a bare boolean. Defaulting to
+      // `{found: true, moved: true}` keeps every pre-existing "-scrolled"
+      // fixture's expectation unchanged; tests that need the drawer-link
+      // regression shape (found but not moved) pass `scrollResult` explicitly.
+      if (expression.includes("scrollIntoView")) return (options.scrollResult ?? { found: true, moved: true }) as T;
       if (expression.includes(".click()")) return (options.clickResult ?? true) as T;
       // buildCollectExpression: the first call is the initial lookup: later
       // calls are the M4 re-measure after a scroll (REQ-GEST-WEB-001).
@@ -426,6 +437,49 @@ describe("runWebTap — off-viewport scroll (SPEC-GESTURE-001 M4, REQ-GEST-WEB-0
     expect(result.ok).toBe(true);
     expect(result.ok && (result.data as { method: string }).method).toBe("js-click");
     expect(h.taps).toEqual([]);
+  });
+
+  it("does not credit a scrollIntoView that ran but did not move the page (AC-GEST-021, off-canvas-drawer regression)", async () => {
+    // The auditor's live repro: an off-viewport drawer link where
+    // `scrollIntoView` returns `true` (the node exists) but `scrollY` is
+    // unchanged before/after — the element is still off-viewport after the
+    // call, so the fallback path applies, and it must NOT be labelled
+    // `-scrolled` (spec.md §C.1-⑪, REQ-GEST-WEB-002 강화).
+    const h = harness({
+      collected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })],
+      postScrollCollected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })], // unchanged -- the page never moved
+      scrollResult: { found: true, moved: false },
+    });
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && (result.data as { method: string }).method).toBe("js-click");
+    expect(h.taps).toEqual([]);
+  });
+
+  it("still credits -scrolled when scrollIntoView both found the node AND the page moved but re-measurement is still off-viewport (AC-GEST-021 does not remove existing js-click-scrolled behavior)", async () => {
+    const h = harness({
+      collected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })],
+      postScrollCollected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })],
+      scrollResult: { found: true, moved: true },
+    });
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && (result.data as { method: string }).method).toBe("js-click-scrolled");
+  });
+
+  it("reports plain 'native' (not 'native-scrolled') when the page did not move even though the element became tappable (AC-GEST-021 applies to the native path too)", async () => {
+    const h = harness({
+      collected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })],
+      postScrollCollected: [rawEl({ rect: { x: 20, y: 300, w: 60, h: 40 } })],
+      scrollResult: { found: true, moved: false },
+    });
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && (result.data as { method: string }).method).toBe("native");
+    expect(h.taps).toEqual([{ x: 50, y: 382 }]);
   });
 
   it("does not attempt a scroll for an element already inside the viewport (regression, B-3)", async () => {

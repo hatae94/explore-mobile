@@ -205,22 +205,54 @@ function buildClickExpression(cssSelector: string, sourceIndex: number): string 
  * Re-queries the page with the same selector and scrolls the node at its RAW
  * `sourceIndex` into view (REQ-GEST-WEB-001). Mirrors {@link buildClickExpression}'s
  * addressing scheme so both paths always agree on which node they mean.
+ *
+ * Returns `{found, moved}` rather than a bare boolean (SPEC-GESTURE-001
+ * M6/0.4.0 amendment — F4, REQ-GEST-WEB-002 강화). `found` only says the
+ * node existed and `scrollIntoView` was called on it; it says nothing about
+ * whether the page actually moved. `moved` is decided INSIDE this one
+ * expression by comparing `window.scrollY` immediately before and after the
+ * call — the caller must not infer movement from the return value alone
+ * (the auditor's off-canvas-drawer regression: `scrollIntoView` -> `true`,
+ * `scrollY` unchanged, yet the old code reported `-scrolled`).
  */
 function buildScrollIntoViewExpression(cssSelector: string, sourceIndex: number): string {
   return `(function(){
   var nodes = document.querySelectorAll(${JSON.stringify(cssSelector)});
   var el = nodes[${JSON.stringify(sourceIndex)}];
-  if (!el) return false;
+  if (!el) return { found: false, moved: false };
+  var before = window.scrollY;
   el.scrollIntoView({block: "center"});
-  return true;
+  var after = window.scrollY;
+  return { found: true, moved: before !== after };
 })()`;
+}
+
+/** The shape {@link buildScrollIntoViewExpression} evaluates to on the page. */
+interface ScrollIntoViewOutcome {
+  found: boolean;
+  moved: boolean;
+}
+
+/** Narrows an `evaluate<unknown>` result to {@link ScrollIntoViewOutcome}, defaulting to "nothing happened" otherwise. */
+function readScrollIntoViewOutcome(value: unknown): ScrollIntoViewOutcome {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { found?: unknown }).found === "boolean" &&
+    typeof (value as { moved?: unknown }).moved === "boolean"
+  ) {
+    return value as ScrollIntoViewOutcome;
+  }
+  return { found: false, moved: false };
 }
 
 /**
  * How the element was reached — reported to the caller so a fallback (or a
  * page-scrolling side effect) is never silent (REQ-WEB-ACT-002, REQ-GEST-WEB-002).
- * The `-scrolled` suffix marks that `scrollIntoView` actually ran before the
- * tap/click — the page's scroll position changed as a side effect.
+ * The `-scrolled` suffix marks that the page's scroll position ACTUALLY
+ * CHANGED as a side effect (evidenced by a `window.scrollY` comparison,
+ * SPEC-GESTURE-001 M6/0.4.0 amendment — F4) — not merely that
+ * `scrollIntoView` was called on an existing node.
  */
 interface Activation {
   method: "native" | "native-scrolled" | "js-click" | "js-click-scrolled";
@@ -254,21 +286,22 @@ async function activateElement(
     return { method: "native", x: point.x, y: point.y };
   }
 
-  const scrolled = await ctx.client.evaluate<unknown>(buildScrollIntoViewExpression(css, entry.sourceIndex));
-  if (scrolled === true) {
+  const scrollResult = await ctx.client.evaluate<unknown>(buildScrollIntoViewExpression(css, entry.sourceIndex));
+  const { found, moved } = readScrollIntoViewOutcome(scrollResult);
+  if (found) {
     const reEntry = await findWebElement(ctx, css, index);
     if (reEntry !== null) {
       const rePoint = webRectToDevicePoint(reEntry.element.bounds, viewport);
       if (rePoint !== null) {
         await backend.tap(ctx.serial, rePoint.x, rePoint.y);
-        return { method: "native-scrolled", x: rePoint.x, y: rePoint.y };
+        return { method: moved ? "native-scrolled" : "native", x: rePoint.x, y: rePoint.y };
       }
     }
   }
 
   const clicked = await ctx.client.evaluate<unknown>(buildClickExpression(css, entry.sourceIndex));
   if (clicked !== true) return null;
-  return { method: scrolled === true ? "js-click-scrolled" : "js-click" };
+  return { method: moved ? "js-click-scrolled" : "js-click" };
 }
 
 /** Collects the selector's matches and returns the one at `index`, or `null`. */
