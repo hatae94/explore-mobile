@@ -1,11 +1,12 @@
 ---
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 구현 계획"
-version: "0.3.0"
-status: completed
+version: "0.4.0"
+status: in-progress
 created: 2026-07-27
 updated: 2026-07-28
 author: hatae
+amendment_of: SPEC-GESTURE-001
 ---
 
 # 구현 계획 — SPEC-GESTURE-001
@@ -38,10 +39,12 @@ PRESERVE 목록에 없으면서 실제로 손대는 파일. 여기 없는 파일
 | `src/backend/registry.ts` | M1 | `swipe` 파사드 위임 |
 | `src/schema/device-backend.test.ts` / `src/backend/registry.test.ts` / `src/cli/router.test.ts` / `src/cli/commands/web-support.test.ts` | M1 | 테스트 더블 9번째 메서드 보강 |
 | `src/cli/args.ts` | M2·M3 | `duration`(M2) / `amount`(M3) 옵션 추가 |
-| `src/cli/validators.ts` | M3 | 0..1 비율 파서 추가 |
 | `src/cli/router.ts` + `src/cli/commands/` 신규 | M2·M3 | `swipe` / `scroll` 명령 |
 | `src/webview/coordinates.ts` | M4 | 모듈 주석 갱신(화면 밖 도달이 더는 SPEC-04가 아님) |
-| `src/cli/commands/web-support.ts` | M4 | 뷰포트 밖 분기 추가 |
+| `src/cli/commands/web-support.ts` | M4·M6 | M4 뷰포트 밖 분기 추가 / M6 `-scrolled` 표기에 이동 증거 요건 |
+| `src/cli/validators.ts` | M3·M6 | M3 비율 파서 / M6 `--duration` 양의 정수화(`0` 거부) |
+| `src/cli/commands/scroll-geometry.ts` | M6 | 퇴화 거리 판정(`from === to`) 노출 |
+| `src/cli/commands/scroll.ts` | M6 | `AMOUNT_TOO_SMALL` 거부 경로 |
 
 ## §B. 알려진 이슈 / 리스크
 
@@ -87,6 +90,25 @@ Safari가 전면일 때 `idb ui describe-all`은 **브라우저 크롬 6개만**
 > 0.2.0의 이 항목은 "witness 없음 → 퇴화 검사가 잡아준다"고 적었는데 **그 전제가 틀렸다.** max-extent는 크기 0이 아닌 요소가 하나라도 있으면 언제나 양수를 낸다. 0.1.0의 "루트 요소" 규칙은 최소한 아무것도 못 돌려줄 수 있었지만, max-extent는 사실상 항상 무언가를 돌려준다 — 결정성을 얻는 대가로 조용한 오답 가능성이 **커졌다.** witness 요건이 그 대가를 되갚는 부분이다.
 
 이 점검을 M3 뒤로 미루면 M3 설계 전체가 헛돌 수 있다.
+
+### B.6 `ok:true`인데 효과가 없다 [최고 — 0.4.0 amendment의 존재 이유]
+
+sync-auditor 사후 감사가 **PASS-WITH-DEBT 0.69 / SAFE TO PUSH: No**를 반환하고 결함 4건을 지목했다. 증상은 서로 다르지만 **하나의 실패 계열**이다.
+
+| 결함 | 증상 | 실측 |
+|------|------|------|
+| F1 | `scroll --amount 0.001` → `from.y=to.y=437`, 거리 0, `ok:true` | `scrollY 3212→3212`, 스크린샷 바이트 동일(§C.1-⑫) |
+| F2 | `swipe --duration` 생략 시 간헐 무동작 | 5회 중 3회만 이동. `--duration 500`은 5/5(§C.1-⑩) |
+| F3 | `swipe --duration 0` 수용 → `{"ok":true, ..., "durationMs":0}` | REQ가 "음이 아닌 정수"라 **구현은 REQ대로**였다 |
+| F4 | `js-click-scrolled`가 일어나지 않은 스크롤을 표기 | `scrollIntoView` → `true`, `scrollY 1485→1485`(§C.1-⑪) |
+
+**왜 이것이 최고 리스크인가.** 이 CLI의 소비자는 AI 에이전트다. 오류는 에이전트가 읽고 대응할 수 있지만, **효과 없는 성공은 탐지할 수단이 없다** — 에이전트는 거짓 전제 위에서 다음 단계로 진행한다. 그래서 `ok:true`-무효과는 오류보다 나쁘다. 본 SPEC이 0.2.0(witness 규칙)·0.3.0(`SCREEN_SIZE_UNKNOWN` 강화)에서 두 번 막으려 했던 것과 정확히 같은 계열이 다른 입구로 재발했다.
+
+**F2의 간헐성이 특히 나쁘다.** 항상 실패하면 첫 시도에 잡힌다. 60% 성공은 재현되지 않는 에이전트 실패를 만든다.
+
+**대응**: F1·F3은 거부로(REQ-GEST-SCROLL-007 / SWIPE-005 강화), F4는 이동 증거 요건으로(REQ-GEST-WEB-002 강화), F2는 문서 고지로(REQ-GEST-SWIPE-006) 막는다. **F2에 숨은 기본값을 넣는 대응은 채택하지 않는다** — `swipe`는 원시 동작이고(D1), 기본값을 넣으면 `scroll`과의 차이가 조용해진다.
+
+**AC 세트 구멍이 근본 원인이다.** 다섯 마일스톤의 검증이 F2를 놓친 이유는 단순하다 — **모든 검증이 `--duration 500`을 썼다.** 생략 경로를 도는 AC가 없었다. AC 위반이 아니라 AC 부재이므로, 지속적인 해결책은 구멍을 메우는 것이다(AC-GEST-018~021).
 
 ## §C. 사전 점검 (Pre-flight)
 
@@ -191,14 +213,31 @@ iOS 시뮬레이터에서: `swipe`로 화면 이동 확증 → `scroll down`/`up
 
 **이 마일스톤 없이는 `completed` 마감하지 않는다.**
 
+### M6 — `ok:true`-무효과 결함 4건 수정 [0.4.0 amendment · 마감 재개 조건]
+
+> **선행**: M1~M5 완료(0.3.0에서 마감). 이 마일스톤은 sync-auditor 사후 감사 결과로 열린 것이며, B.6이 근거다.
+
+**산출물**
+
+1. **`src/cli/validators.ts` — `--duration` 파서를 양의 정수로 좁힌다(F3, REQ-GEST-SWIPE-005).** `0`은 `INVALID_DURATION`. 기존 "음이 아닌 정수" 판정을 쓰는 자리를 전부 찾아 바꾼다 — 좌표 파서(`parseCoordinate`)는 `0`이 유효하므로 **공유하면 안 된다.**
+2. **`src/cli/commands/scroll-geometry.ts` — 퇴화 거리 판정을 노출한다(F1, REQ-GEST-SCROLL-007).** `computeScrollSwipe`가 만든 `from`/`to`가 같은 점인지 호출자가 알 수 있어야 한다. 판정 위치는 반올림 **이후**다 — 반올림 전 거리는 0.79처럼 0이 아니지만 반올림 후 접히는 것이 문제이므로, 반올림 전 값으로 판정하면 이 결함을 못 잡는다.
+3. **`src/cli/commands/scroll.ts` — `AMOUNT_TOO_SMALL` 거부 경로(F1).** 응답에 거부된 비율 + 그 화면에서 유효한 최소 비율을 싣는다. **어떤 제스처도 보내지 않는다.**
+4. **`src/cli/commands/web-support.ts` — `-scrolled` 표기에 이동 증거를 요구한다(F4, REQ-GEST-WEB-002).** `scrollIntoView` 호출 전후의 `scrollY`(또는 대상 사각형)를 비교해 **변화가 있을 때만** `-scrolled`를 붙인다. `native-scrolled`·`js-click-scrolled` 양쪽에 적용한다. `buildScrollIntoViewExpression`(`:209-217`)이 `true`를 주는 조건은 "노드 존재"뿐이라는 점을 잊지 말 것.
+
+**AC**: AC-GEST-018(F1) / 019(F3) / 020(F2) / 021(F4). AC-GEST-007의 "끝점 y < 시작점 y"는 **성공한 scroll에 한정**되도록 문구가 조정됐다(AC-GEST-018이 퇴화 대역을 따로 맡는다).
+
+**F2는 코드 변경이 아니다.** REQ-GEST-SWIPE-006은 문서 고지 의무이고, README/CHANGELOG 수정은 **이 마일스톤 밖**(별도 docs 위임)이다. M6에서는 AC-GEST-020으로 생략 경로의 동작을 고정하기만 한다.
+
+**이 마일스톤을 끝내기 전에는 push하지 않는다** — sync-auditor가 SAFE TO PUSH: No를 냈고 11개 커밋이 로컬에 남아 있다.
+
 ## §G. 마일스톤 의존 관계
 
 ```
 M1 (인터페이스+백엔드+레지스트리) ──┬──> M2 (swipe 명령) ──┐
                                     │                      │
-                                    └──> M3 (scroll) ──────┼──> M5 (e2e)
+                                    └──> M3 (scroll) ──────┼──> M5 (e2e) ──> M6 (결함 4건)
                                                            │
                           M4 (웹 보강, M1과 독립) ─────────┘
 ```
 
-M2와 M3는 둘 다 M1의 `swipe`를 호출하므로 M1 뒤다. M4는 웹 경로 단독이라 M1과 독립이지만, e2e는 함께 돈다.
+M2와 M3는 둘 다 M1의 `swipe`를 호출하므로 M1 뒤다. M4는 웹 경로 단독이라 M1과 독립이지만, e2e는 함께 돈다. **M6는 M5 마감 후 사후 감사에서 열린 마일스톤**이므로 M2·M3·M4의 산출물을 모두 건드린다 — 순서상 마지막이다.

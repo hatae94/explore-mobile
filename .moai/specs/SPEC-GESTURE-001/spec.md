@@ -1,11 +1,12 @@
 ---
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — swipe · scroll, 그리고 화면 밖 웹 요소 도달"
-version: "0.3.0"
-status: completed
+version: "0.4.0"
+status: in-progress
 created: 2026-07-27
 updated: 2026-07-28
 author: hatae
+amendment_of: SPEC-GESTURE-001
 priority: P1
 phase: "v0.3.0 target"
 module: "src/"
@@ -24,6 +25,31 @@ depends_on: [SPEC-ANDROID-001, SPEC-IOS-001, SPEC-WEBVIEW-001]
 | 0.1.0 | 2026-07-27 | hatae | 최초 작성. SPEC-04 선행 스파이크로 iOS 쪽을 실측한 뒤 작성 — §C.1. SPEC-WEBVIEW-001 §D가 SPEC-04로 미뤄둔 제스처 항목을 분리해 먼저 처리한다. |
 | 0.2.0 | 2026-07-27 | hatae | plan-auditor 1차 감사 **FAIL(0.66 / Tier M 기준 0.80)** 반영. 주요 수정: ① `--duration` 단위 비대칭 명시(CLI ms / iOS 초 — 그대로 흘리면 500초 스와이프, §C.1-⑦) ② `BackendRegistry`를 세 번째 구현체로 명시(§A.4) ③ 화면 크기 파생 규칙을 `CommonElement[]`에 대해 결정적으로 재정의(REQ-GEST-SCROLL-002) ④ `--amount` 범위 오류에 `INVALID_AMOUNT` 코드 부여 ⑤ `adb` 미설치 사실 정정(§C.2) ⑥ REQ-GEST-SCROLL-001에 섞여 있던 응답 표기 요구를 REQ-GEST-SCROLL-005로 분리 ⑦ GEARS 패턴 라벨 정정(Where→When/While, When→Ubiquitous) ⑧ `related_specs` → `depends_on`. |
 | 0.3.0 | 2026-07-27 | hatae | plan-auditor 2차 감사 **PASS(0.84 / 기준 0.80)** + must-fix 3건 반영. **MF-1** max-extent가 조각들로부터 그럴듯하지만 틀린 크기를 만들어내는 구멍을 **witness 요건**으로 막음(REQ-GEST-SCROLL-002/004) — Safari 크롬-only 상태에서 402x120을 반환하고 성공을 보고하던 경로가 이제 `SCREEN_SIZE_UNKNOWN`으로 간다. **MF-2** `--amount 0` 경계가 REQ와 AC에서 서로 반대였던 모순 해소(§B.2). **MF-3** `--duration` 검증 부재 → `INVALID_DURATION` 신설. 부수: 오류 경로 REQ 분리(SWIPE-005·SCROLL-006), §C.1-④ 다중 최상위로 완화 + ⑨ 신설, 테스트 더블 수 정정(5 → 4파일 7지점), §D 불릿화. |
+| 0.4.0 | 2026-07-28 | hatae | **in-place amendment** — sync-auditor 사후 감사 **PASS-WITH-DEBT 0.69 / SAFE TO PUSH: No**. `ok:true`인데 관측 가능한 효과가 없는 결함 4건을 REQ 층위에서 막는다. 아래 `## Amendments` 참조. |
+
+## Amendments
+
+### 0.4.0 — `ok:true`-무효과 결함군 (2026-07-28)
+
+| 항목 | 값 |
+|------|-----|
+| 직전 completed 버전 | **0.3.0** |
+| `prior_completed_sha` | **`9b2828f`** (`docs(SPEC-GESTURE-001): sync-phase artifacts + 3-phase close`) |
+| 전이 | `completed → in-progress` (in-place amendment, `amendment_of` 자기참조) |
+
+**근거.** 0.3.0이 마감된 뒤 sync-auditor가 **PASS-WITH-DEBT 0.69 / SAFE TO PUSH: No**를 반환했고, 독립 재현으로 결함 4건이 모두 확인됐다. 네 건은 서로 다른 증상이지만 **하나의 실패 계열**이다 — *`ok:true`를 반환하면서 관측 가능한 효과가 없다.* 이것은 본 SPEC이 0.2.0·0.3.0 두 번의 개정으로 막으려 했던 바로 그것(witness 규칙, `SCREEN_SIZE_UNKNOWN`, refuse-don't-guess)이며, AI 에이전트를 구동하는 CLI에서는 **오류보다 나쁘다** — 에이전트는 무효과를 탐지할 수단이 없어 거짓 전제 위에서 다음 단계로 진행한다. 네 건 중 둘(`--duration 0` 수용, 스크롤하지 않은 스크롤 표기)은 **REQ가 쓰인 대로 구현하면 결함이 나오는** 경우이므로 구현 이전에 REQ를 고쳐야 한다.
+
+**범위 — 영향받는 §B REQ ID.**
+
+| REQ | 변경 |
+|-----|------|
+| `REQ-GEST-SWIPE-002` | 생략 경로의 신뢰도(5회 중 3회, §C.1-⑩)를 명시. 숨은 기본값은 **넣지 않는다**(D1) |
+| `REQ-GEST-SWIPE-005` | "음이 아닌 정수" → **"양의 정수"**. `--duration 0` 거부 |
+| `REQ-GEST-SWIPE-006` | **신설** — 생략 경로 불안정성의 문서 고지 의무 |
+| `REQ-GEST-SCROLL-007` | **신설** — 계산된 `from`/`to`가 같은 점이면 `AMOUNT_TOO_SMALL`로 거부 |
+| `REQ-GEST-WEB-002` | 스크롤 표기에 **페이지가 실제로 움직였다는 증거**를 요구하도록 강화 |
+
+신규 AC는 AC-GEST-018~021(append-only). 구현은 plan.md §F M6.
 
 ## §A. 개요 (Context & Goal)
 
@@ -77,12 +103,19 @@ DeviceBackend      ← swipe() 1개 추가 (8 → 9 메서드). 기존 8개 동�
 
 - **REQ-GEST-SWIPE-001** (When 이벤트): **When** `swipe <x1> <y1> <x2> <y2>`가 호출될 때, the CLI **shall** 시작점에서 끝점으로 스와이프를 전송한다. Android·iOS 양쪽에서 동작한다.
 - **REQ-GEST-SWIPE-002** (When 이벤트): **When** `--duration <ms>`가 주어질 때, the CLI **shall** 그 지속시간으로 스와이프한다. 생략 시 플랫폼 기본값을 쓴다.
+  - **생략 경로는 신뢰할 수 없다** — 같은 정적 페이지에서 5회 중 3회만 화면이 움직였다(§C.1-⑩). 그럼에도 `swipe`에 **숨은 기본 지속시간을 넣지 않는다**: `swipe`는 원시 동작이고 판단은 호출자 몫이다(D1). 여기에 기본값을 넣으면 `swipe`와 `scroll`이 조용히 다르게 동작하고, "무엇을 보냈는지"가 응답에서 사라진다.
+  - `scroll`은 다르다 — 편의층이므로 실제 이동을 보장할 책임이 있고, 내부 고정값(`scroll.ts:47` `SCROLL_SWIPE_DURATION_MS = 500`, `:107`에서 전달)을 항상 싣는다. 이 비대칭은 의도된 것이며 REQ-GEST-SWIPE-006이 문서로 고지한다.
   - **CLI 계약 단위는 밀리초(ms)다.** 하나의 CLI가 두 단위를 노출할 수는 없으므로 ms로 고정한다.
   - `AdbBackend`는 ms를 **그대로 통과**시킨다 — `adb shell input swipe`의 지속시간 인자가 이미 ms다(§C.1-⑥).
   - `IdbBackend`는 argv를 만들기 **전에 ms → 초(float)로 환산**한다 — `idb`의 `--duration`은 **초**다(§C.1-⑦). 이 환산을 빠뜨리면 오류 없이 `--duration 500`이 **500초 스와이프**가 되어 e2e에서 정지처럼 보인다.
 - **REQ-GEST-SWIPE-003** (When 감지된-이상상태): **When** 좌표가 음이 아닌 정수 4개가 아닐 때, the CLI **shall** `INVALID_COORDINATES`로 거부한다 — 기존 `tap`과 동일한 계약.
 - **REQ-GEST-SWIPE-004** (Ubiquitous): the `DeviceBackend` 인터페이스 **shall** `swipe`를 얻되 **기존 8개 메서드의 시그니처·동작은 변경하지 않는다**(가법 확장). 구현체는 `AdbBackend`·`IdbBackend`·`BackendRegistry` **세 개 전부**다(§A.4).
-- **REQ-GEST-SWIPE-005** (When 감지된-이상상태): **When** `--duration` 값이 **음이 아닌 정수로 파싱되지 않을** 때, the CLI **shall** `INVALID_DURATION`으로 거부하고 **어떤 제스처도 전송하지 않는다**. 검증은 ms → 초 환산 **이전**에 끝난다 — 그러지 않으면 `NaN`이 나눗셈을 통과해 `--duration NaN`(iOS) 또는 `"NaN"`(Android)이 그대로 도구에 전달된다. `--amount`(REQ-GEST-SCROLL-006)·좌표(REQ-GEST-SWIPE-003)와 동일한 계열의 거부 계약이다.
+- **REQ-GEST-SWIPE-005** (When 감지된-이상상태): **When** `--duration` 값이 **양의 정수로 파싱되지 않을** 때(즉 `0` 이하이거나 정수가 아니거나 수가 아닐 때), the CLI **shall** `INVALID_DURATION`으로 거부하고 **어떤 제스처도 전송하지 않는다**. 검증은 ms → 초 환산 **이전**에 끝난다 — 그러지 않으면 `NaN`이 나눗셈을 통과해 `--duration NaN`(iOS) 또는 `"NaN"`(Android)이 그대로 도구에 전달된다. `--amount`(REQ-GEST-SCROLL-006)·좌표(REQ-GEST-SWIPE-003)와 동일한 계열의 거부 계약이다.
+  - **0.4.0 개정 — "음이 아닌" → "양의".** 0.3.0의 문구는 `0`을 허용했고 구현은 그대로 따라 `swipe ... --duration 0` → `{"ok":true, ..., "durationMs":0}`를 반환했다. 즉 **구현이 아니라 REQ가 틀렸다.** 지속시간 0인 제스처는 아무것도 움직일 수 없으므로, 이를 수용하는 것은 본 SPEC이 막으려는 `ok:true`-무효과 케이스를 스펙이 직접 만들어내는 일이다.
+
+- **REQ-GEST-SWIPE-006** (Ubiquitous): the `swipe` 명령 문서 **shall** `--duration` 생략 경로가 신뢰할 수 없다는 사실(§C.1-⑩)을 **명령을 설명하는 그 자리에서** 고지한다. 멀리 떨어진 "알려진 한계" 절에만 적는 것으로는 충족되지 않는다 — 사용법 예시를 보고 그대로 따라 쓰는 독자가 고지를 만나지 못하기 때문이다.
+  - 고지에는 (a) 측정된 신뢰도(5회 중 3회), (b) 권장 대안(명시적 `--duration` 값 전달), (c) `scroll`이 내부 고정값을 쓴다는 비대칭이 포함된다.
+  - 같은 문서 안에서 생략 형태를 "정상 사용법"으로 제시하면서 다른 절에서 "조용한 무동작"이라고 적는 것은 **자기모순**이며 이 요구사항 위반이다.
 
 ### B.2 스크롤 편의 (REQ-GEST-SCROLL)
 
@@ -98,6 +131,11 @@ DeviceBackend      ← swipe() 1개 추가 (8 → 9 메서드). 기존 8개 동�
 - **REQ-GEST-SCROLL-004** (When 감지된-이상상태): **When** 화면 크기를 신뢰할 수 없을 때(REQ-GEST-SCROLL-002의 파생 결과 `width` 또는 `height`가 0 이하이거나, witness 요소가 없거나, `dumpUiHierarchy`가 빈 배열일 때), the CLI **shall** `SCREEN_SIZE_UNKNOWN`으로 거부한다 — **추측한 좌표로 스와이프하지 않는다.** 엉뚱한 제스처는 되돌릴 수 없다.
 - **REQ-GEST-SCROLL-005** (When 이벤트): **When** `scroll`이 성공할 때, the CLI **shall** 응답에 **방향과 실제 시작·끝 좌표를 함께** 싣는다. 방향 의미는 반대로 구현해도 오류가 나지 않으므로(plan.md §B.2), 호출자가 응답만 보고 즉시 검증할 수 있어야 한다.
 - **REQ-GEST-SCROLL-006** (When 감지된-이상상태): **When** `--amount` 값이 **0 이하이거나 1을 초과하거나 수로 파싱되지 않을** 때, the CLI **shall** `INVALID_AMOUNT`으로 거부하고 **어떤 제스처도 전송하지 않는다** — 기존 `INVALID_COORDINATES`/`INVALID_INDEX`/`INVALID_PAGE`와 같은 명명 계열. `0`은 이동 거리 0인 제스처라 거부하고, `1`은 화면 한 장 분량이므로 허용한다.
+- **REQ-GEST-SCROLL-007** (When 감지된-이상상태): **When** REQ-GEST-SCROLL-001~003으로 계산한 `from`과 `to`가 **같은 점**일 때, the CLI **shall** `AMOUNT_TOO_SMALL`로 거부하고 **어떤 제스처도 전송하지 않는다.** 응답에는 거부된 비율과 그 화면 크기에서 유효한 최소 비율을 함께 싣는다.
+  - **왜 거부인가(0.4.0 설계 결정).** 좌표는 정수 픽셀이어야 하므로(`parseCoordinate`의 `^\d+$`) 최종 단계에 반올림이 들어간다. 402x874 화면에서 `--amount 0.001`은 이동 거리 0.79px를 만들고 양끝이 같은 픽셀(437)로 접혀 **거리 0인 스와이프**가 된다 — 그런데 응답은 `ok:true`다. 실측: `0.001`·`0.0012` → `from.y=437 to.y=437`, `scrollY 3212→3212`, 스크린샷 바이트 동일. `0.002`부터 정상(438→436).
+  - **1px 클램프를 택하지 않은 이유가 결정의 핵심이다.** 최소 1px로 늘리면 응답은 `from.y=438 to.y=437`이 되어 **거리가 0이 아닌 것처럼 보이지만**, 1px은 어떤 터치 슬롭 임계값보다도 작아 기기에서는 여전히 아무 일도 일어나지 않을 가능성이 크다. 그러면 **탐지 가능한 실패를 탐지 불가능한 실패로 바꾸는 것** — 호출자는 응답만 보고는 무효과를 알아낼 방법이 없어진다. 게다가 "1px이면 움직인다"는 것은 **아무도 측정하지 않은 기기 동작 주장**이고, 본 SPEC은 관측하지 않은 것을 근거로 삼지 않는다(§C.2).
+  - **`INVALID_AMOUNT`으로 접을 수 없는 이유**: 이 실패는 **화면 크기에 의존한다.** `--amount 0.001`은 874px 화면에서 퇴화하지만 10000px 화면에서는 약 9px을 움직여 정상이다. 계약 범위(0 초과 1 이하) 안에 있으므로 정적 검증기는 판정할 수 없고, 기하 계산 단계만이 판정할 수 있다. 따라서 별도 코드가 맞다 — `INVALID_AMOUNT`은 "계약 밖 값", `AMOUNT_TOO_SMALL`은 "계약 안이지만 이 화면에서 퇴화".
+  - 새 오류 코드 1개를 추가하는 비용을 치르지만, 그 대가로 호출자는 **행동 가능한** 정보를 얻는다("이 화면에서는 비율을 더 크게").
 
 ### B.3 화면 밖 웹 요소 도달 (REQ-GEST-WEB)
 
@@ -105,6 +143,10 @@ DeviceBackend      ← swipe() 1개 추가 (8 → 9 메서드). 기존 8개 동�
 
 - **REQ-GEST-WEB-001** (While 상태): **While** `tap --web`의 대상이 뷰포트 밖일 때, the CLI **shall** 먼저 그 요소를 뷰포트 안으로 끌어오고(`scrollIntoView`) 좌표를 **다시 측정**한 뒤 네이티브 탭을 시도한다.
 - **REQ-GEST-WEB-002** (When 이벤트): **When** 위 스크롤이 일어났을 때, the CLI **shall** 그 사실을 응답에 표기한다 — 페이지 스크롤 위치는 **부작용**이므로 조용히 바꾸지 않는다. 경로 표기는 기존 `method` 필드를 확장한다.
+  - **표기 조건은 "페이지가 실제로 움직였다는 증거"다(0.4.0 강화).** `scrollIntoView`를 **호출했다는 사실만으로는 부족하다** — 호출 전후의 `scrollY`(또는 대상 요소의 사각형)를 비교해 **변화가 관측됐을 때만** `-scrolled` 표기를 붙인다. 변화가 없으면 스크롤 없는 표기(`native` / `js-click`)를 쓴다.
+  - **이것은 REQ 공백이 아니라 구현 결함이다.** 위 문장은 0.3.0에서도 "스크롤이 **일어났을 때**"라고 쓰여 있었으므로, 일어나지 않은 스크롤을 표기하는 것은 처음부터 REQ 위반이다. 조건을 명시적으로 적는 이유는 다시 느슨하게 읽히지 않게 하기 위해서다.
+  - 실제 결함: `buildScrollIntoViewExpression`(`web-support.ts:209-217`)은 `if (!el) return false`만 있고 그 외에는 무조건 `true`를 돌려준다 — 즉 `true`는 **"노드가 존재했다"**는 뜻이지 "페이지가 움직였다"는 뜻이 아니다. 그런데 `:258`·`:271`이 그 값을 스크롤 발생으로 읽어 `js-click-scrolled`를 표기한다. 화면 밖 드로어 링크에서 실측: `scrollIntoView` → `true`, `scrollY 1485 → 1485`, 재측정 사각형 불변.
+  - `native-scrolled`·`js-click-scrolled` **두 값 모두**에 같은 증거 요건이 적용된다.
 - **REQ-GEST-WEB-003** (When 감지된-이상상태): **When** 끌어온 뒤에도 좌표 변환이 불가능할 때, the CLI **shall** 기존 JS `click()` 폴백으로 내려간다(SPEC-WEBVIEW-001 REQ-WEB-ACT-002 불변).
 
 ## §C. 제약 (Constraints)
@@ -122,6 +164,9 @@ DeviceBackend      ← swipe() 1개 추가 (8 → 9 메서드). 기존 8개 동�
 | ⑦ | **`idb`의 `--duration`은 초(float)다** — `adb`의 ms와 단위가 다르다 | fb-idb `idb/common/hid.py`(`duration: Optional[float]` → `HIDDelay(duration=duration)`), 그리고 이 저장소가 이미 그 의미에 의존한다: `src/backend/idb-backend.ts:100` `MODIFIER_HOLD_SECONDS = 2`를 `--duration 2`로 넘겨(`:239-247`) "2초 홀드"로 동작 중 | **실측(iOS)** |
 | ⑧ | iOS `describe-all`은 **중첩 없는 평탄 배열**이고, Safari로 웹 페이지를 띄우면 **브라우저 크롬 6개만** 돌아온다(페이지 내용 0) | `src/backend/idb-backend.ts:154-159` @MX:NOTE/@MX:WARN(SPEC-IOS-001 실측 기록) | **실측(iOS)** |
 | ⑨ | **Android도 최상위 항목이 여럿일 수 있다** — 단일 루트가 아니다. ④의 "루트 노드 하나"는 그 픽스처의 성질일 뿐 규칙이 아니다 | `src/normalize/uiautomator.ts:119`가 `collectChildNodes(hierarchy).map(toCommonElement)` — `hierarchy`의 **자식들을 배열로** 반환한다. `src/normalize/uiautomator.test.ts:77`은 `expect(result).toHaveLength(2)`로 최상위 2개를 단언한다 | **실측(테스트 픽스처)** |
+| ⑩ | **`--duration` 생략 시 스와이프가 간헐적으로 무동작이다 — 5회 중 3회만 이동(60%).** `--duration 500`은 5회 중 5회 이동(100%) | 정적 위키백과 페이지에서 반복 시행. 상단 상태바(시계)를 잘라낸 **본문 영역만** 비교해 판정 — 시계 변화가 오탐을 만들기 때문. 2026-07-28 | **실측(iOS)** |
+| ⑪ | **`scrollIntoView` 표현식의 `true`는 "노드가 존재했다"는 뜻이지 "페이지가 움직였다"는 뜻이 아니다** | `src/cli/commands/web-support.ts:209-217` — `if (!el) return false` 외에는 무조건 `true`. 화면 밖 드로어 링크에서 `true` 반환 + `scrollY 1485 → 1485` + 재측정 사각형 불변을 실측 | **실측(iOS)** |
+| ⑫ | **좌표 반올림이 작은 `--amount`를 거리 0으로 접는다.** 402x874에서 `0.001`·`0.0012` → `from.y=to.y=437`(거리 0), `0.002` → 438→436(거리 2) | `computeScrollSwipe`(`scroll-geometry.ts:112-136`) + `roundPixel`(`:95`)의 `Math.round`. `scrollY 3212→3212`, 스크린샷 바이트 동일로 무동작 확증 | **실측(iOS)** |
 
 ### C.2 Android는 실측하지 못했다
 
@@ -137,6 +182,9 @@ DeviceBackend      ← swipe() 1개 추가 (8 → 9 메서드). 기존 8개 동�
 - **스크롤 컨테이너를 고르지 못한다.** 화면 전체 기준 스와이프이므로, 중첩 스크롤 영역 중 어디가 움직일지는 OS와 앱이 정한다.
 - **웹 페이지가 떠 있으면 iOS `dump`가 화면 크기를 못 준다.** Safari 전면 상태에서 `describe-all`은 크롬 6개만 돌려준다(§C.1-⑧). 그 6개 중 화면 전체 크기를 가진 항목이 없으면 `scroll`은 REQ-GEST-SCROLL-004에 따라 `SCREEN_SIZE_UNKNOWN`으로 거부한다 — 본 SPEC의 대표 사용례에서 바로 걸릴 수 있는 한계다(plan.md §B.5).
 - `scrollIntoView`는 **웹 경로 전용**이다. 네이티브 화면 밖 요소를 끌어오는 기능은 이 SPEC에 없다.
+- **`scrollIntoView`의 반환값은 이동의 증거가 아니다.** 표현식이 `true`를 주는 것은 노드를 찾았다는 뜻뿐이며(§C.1-⑪), 이미 화면에 있거나 스크롤 불가능한 컨테이너(화면 밖 드로어 등)에 있으면 페이지는 그대로다. `-scrolled` 표기는 `scrollY` 또는 사각형 비교로 **변화를 관측한 뒤에만** 붙인다(REQ-GEST-WEB-002). **이 오독이 실제 결함을 만들었다.**
+- **`swipe --duration` 생략은 간헐적으로 무동작이다**(5회 중 3회 이동, §C.1-⑩). 원시 동작이므로 CLI가 대신 기본값을 넣지 않고(D1), 대신 문서에서 고지한다(REQ-GEST-SWIPE-006). 확실한 이동이 필요하면 명시적 `--duration` 값을 넘긴다.
+- **작은 `--amount`는 이 화면에서 거부된다.** 반올림으로 이동 거리가 0이 되는 비율은 `AMOUNT_TOO_SMALL`이다(REQ-GEST-SCROLL-007). 임계 비율은 화면 크기에 따라 달라진다 — 402x874에서는 약 0.0013 미만.
 
 ## §D. 범위에서 제외 (Exclusions)
 
@@ -173,6 +221,11 @@ DeviceBackend      ← swipe() 1개 추가 (8 → 9 메서드). 기존 8개 동�
 - witness가 없을 때 기본 해상도·크롬 오프셋 등으로 화면 크기를 **추정하는 경로를 만들지 않는다**(REQ-GEST-SCROLL-004).
 - 크기를 모르면 거부한다. 되돌릴 수 없는 제스처에 추측을 섞지 않는 것이 이 SPEC의 기본 계약이다.
 
+### Out of Scope — 무효과 제스처의 사후 보정
+
+- 이동 거리가 0으로 접히거나 지속시간이 0일 때 **CLI가 값을 키워서 대신 성공시키지 않는다**(REQ-GEST-SCROLL-007, REQ-GEST-SWIPE-005). 거부하고 호출자에게 돌려준다.
+- 1px 클램프, 최소 지속시간 주입 같은 "성공하게 만들어 주는" 보정은 탐지 가능한 실패를 탐지 불가능한 실패로 바꾸므로 넣지 않는다.
+
 ### Out of Scope — 구현 세부(HOW)
 
 - 함수 분해·모듈 배치·시그니처 확정은 plan.md 소관이다.
@@ -184,7 +237,7 @@ DeviceBackend      ← swipe() 1개 추가 (8 → 9 메서드). 기존 8개 동�
 | SPEC-ANDROID-001 | completed | `DeviceBackend` 인터페이스의 출처 — 본 SPEC이 확장한다. JSON 봉투 계약(REQ-ARCH-001)도 여기서 온다 |
 | SPEC-IOS-001 | completed | iOS 백엔드 — 본 SPEC이 `swipe`를 추가한다 |
 | SPEC-WEBVIEW-001 | completed (0.2.0) | §D에서 제스처를 미뤄뒀고, 화면 밖 요소 제약을 본 SPEC이 완화한다 |
-| **SPEC-GESTURE-001** | **draft** | **본 SPEC** |
+| **SPEC-GESTURE-001** | **in-progress (0.4.0 amendment)** | **본 SPEC** — 0.3.0에서 completed로 마감했다가 sync-auditor 결함 4건으로 in-place amendment 진입 |
 | SPEC-04 | 커밋 | 탐색 루프 + 두 기기 상호작용. **본 SPEC의 제스처를 전제로 함** |
 
 ## §F. 명령 → 백엔드 → 도구 매핑 (설계 계약)

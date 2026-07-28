@@ -1,11 +1,12 @@
 ---
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 인수 기준"
-version: "0.3.0"
-status: completed
+version: "0.4.0"
+status: in-progress
 created: 2026-07-27
 updated: 2026-07-28
 author: hatae
+amendment_of: SPEC-GESTURE-001
 ---
 
 # 인수 기준 — SPEC-GESTURE-001
@@ -35,6 +36,10 @@ author: hatae
 | AC-GEST-015 | JSON 봉투 계약 준수 | REQ-ARCH-001 (SPEC-ANDROID-001 계승) | unit + e2e |
 | AC-GEST-016 | `scroll` 성공 응답에 방향 + 실제 좌표 표기 | REQ-GEST-SCROLL-005 | unit |
 | AC-GEST-017 | witness 없는 조각 집합 → `SCREEN_SIZE_UNKNOWN` | REQ-GEST-SCROLL-002, REQ-GEST-SCROLL-004 | unit(mock) |
+| AC-GEST-018 | 퇴화 `--amount`(거리 0) → `AMOUNT_TOO_SMALL`, 무동작 + 동작 경계 | REQ-GEST-SCROLL-007 | unit + e2e |
+| AC-GEST-019 | `--duration 0` → `INVALID_DURATION`, 무동작 | REQ-GEST-SWIPE-005 | unit |
+| AC-GEST-020 | `--duration` 생략 경로의 동작·고지 | REQ-GEST-SWIPE-002, REQ-GEST-SWIPE-006 | unit + e2e·manual |
+| AC-GEST-021 | `scrollIntoView`가 돌았지만 안 움직임 → 스크롤 표기 안 함 | REQ-GEST-WEB-002 | unit(mock) + e2e |
 
 ---
 
@@ -57,7 +62,7 @@ author: hatae
 - **And** **iOS** argv는 `"--duration"` 토큰을 포함하고, 그 **다음 토큰을 수로 읽으면 `0.5`다**(`500`이 아니다). ms → 초 환산이 `IdbBackend` 안에서 일어난다.
 - **And** `--duration` 토큰 쌍은 **4개 좌표 positional 사이에 끼워 넣지 않는다** — 좌표 앞이나 뒤에 모아 둔다. 위치 인덱스는 고정하지 않되 `["ui","swipe","--udid",s,"100","800","--duration","0.5","100","200"]` 같은 배치는 금지한다. Python argparse는 positional 사이에 낀 optional을 안정적으로 받아들이지 않으므로, 이 배치는 AC 문구는 만족하면서 런타임에 실패할 수 있다.
 - **And** 생략 시에는 **양 플랫폼 모두** 지속시간 인자를 붙이지 않는다(플랫폼 기본값 사용). iOS argv에 `"--duration"` 토큰이 없어야 한다.
-- **And** **When** `--duration abc` / `--duration ""`을 주면 각각 `INVALID_DURATION`이 반환된다(REQ-GEST-SWIPE-005).
+- **And** **When** `--duration abc` / `--duration ""` / **`--duration 0`**을 주면 각각 `INVALID_DURATION`이 반환된다(REQ-GEST-SWIPE-005). `0`은 0.4.0에서 추가된 거부 대상이다 — 상세는 AC-GEST-019.
 - **And** **When** `--duration -100`(음수 리터럴)을 주면 `INVALID_ARGS`가 반환된다 — AC-GEST-003의 음수 좌표, AC-GEST-009의 음수 `--amount`와 **동일한 파서 계층 거부**다.
 - **And** **When** `--duration`을 값 없이 단독으로 주면 `INVALID_ARGS`가 반환된다.
 - **And** 위 네 갈래 **모두에서 어떤 제스처도 전송되지 않는다**(mock 실행기 호출 0회). 특히 `abc`가 `Number()`를 거쳐 `NaN`이 되고 `NaN/1000`이 argv에 실리는 일이 없어야 한다.
@@ -105,6 +110,8 @@ author: hatae
 - **Then** 시작·끝 좌표가 방향에 맞게 계산된다.
 - **And** `scroll down`은 **아래 내용을 보기 위해 손가락을 위로 미는** 좌표를 만든다(끝점 y < 시작점 y).
 - **And** 좌표가 화면 밖으로 나가지 않는다.
+
+> **0.4.0 범위 조정**: 위 부등호 절은 **성공한 `scroll`에 한정**된다. 반올림으로 `from === to`가 되는 퇴화 비율은 이제 좌표를 방출하지 않고 `AMOUNT_TOO_SMALL`로 거부되므로(REQ-GEST-SCROLL-007), 부등호가 성립하지 않는 경우가 응답으로 나오는 일 자체가 없다. 퇴화 대역은 AC-GEST-018이 맡는다. 이 조정이 없으면 `--amount 0.001`이 만든 `from.y = to.y = 437`이 이 AC의 반례가 된다 — 실제로 그랬다.
 
 ### AC-GEST-008 — 화면 크기 파생
 
@@ -208,3 +215,57 @@ author: hatae
 - **And** 이 픽스처는 **느슨한 witness 규칙도 배제한다.** 원점 조건 없이 `x+w === width && y+h === height`만 보면 인덱스 2(`x+w=402`, `y+h=120`)가 witness로 통과해 402 x 120이 채택된다. 원점 조건(`x===0 && y===0`)까지 요구해야 이 AC가 통과한다.
 - **And** witness 검증이 없는 구현은 402 x 120을 채택해 `0.8 × 120 = 96px`를 상태 표시줄 안에서만 스와이프하고 **성공을 보고한다** — 되돌릴 수 없는 제스처를 추측으로 보내는 것이며, 이 AC가 막는 대상이 정확히 그것이다.
 - **And** AC-GEST-008의 3항목 픽스처와 **역할이 다르다**: 그쪽은 witness가 있는 상태에서 인덱스 0 가정을 배제하고, 이쪽은 witness가 없는 상태에서 채택 자체를 막는다. 둘 다 필요하다.
+
+---
+
+## 0.4.0 amendment 신규 AC (AC-GEST-018 ~ 021)
+
+> 네 AC는 sync-auditor가 지목한 **`ok:true`인데 효과 없음** 결함군을 막는다(plan.md §B.6). 기존 AC 번호는 건드리지 않는다 — progress.md와 감사 보고서가 참조 중이다.
+
+### AC-GEST-018 — 퇴화 `--amount` 거부 + 동작 경계
+
+- **Given** 402 x 874 화면(witness 있음),
+- **When** `scroll down --amount <값>`을 **퇴화 대역**의 값으로 실행하면 — `0.0001`, `0.001`, `0.0012`,
+- **Then** 각각 `AMOUNT_TOO_SMALL`이 반환되고 **어떤 제스처도 전송되지 않는다**(mock 실행기 호출 0회).
+- **And** 응답에 거부된 비율과 **그 화면에서 유효한 최소 비율**이 함께 실린다 — 호출자가 다시 시도할 값을 알 수 있어야 한다.
+- **And** **When** **동작 경계**의 값으로 실행하면 — `0.002`, `1` — 정상 성공하고 `from ≠ to`다. `0.002`는 `from.y=438 to.y=436`(거리 2)이다.
+- **And** 위 두 대역을 **네 방향 전부**(`up`/`down`/`left`/`right`)에 대해 확인한다. 가로 방향은 화면 폭(402)이 기준이므로 임계 비율이 세로와 다르다 — 방향별로 따로 확인하지 않으면 한 축만 맞은 구현이 통과한다.
+- **And** `AMOUNT_TOO_SMALL`은 `INVALID_AMOUNT`과 **다른 코드**다. `--amount 0.001`은 계약 범위(0 초과 1 이하) **안에** 있으므로 정적 검증기가 거부해서는 안 되고, 10000px 화면에서는 약 9px을 움직여 정상이다. 화면 크기에 의존하는 판정이라 기하 계산 단계에서만 내려질 수 있다.
+
+> 실측 근거(spec.md §C.1-⑫): `0.001`·`0.0012` → `from.y = to.y = 437`, `scrollY 3212→3212`, 스크린샷 바이트 동일. `Math.round`가 양끝을 같은 픽셀로 접는다.
+>
+> **1px 클램프 구현은 이 AC를 통과하지 못한다** — 클램프하면 `--amount 0.001`이 `from.y=438 to.y=437`로 성공해 버리기 때문이다. 이는 의도된 것이다: 클램프는 탐지 가능한 실패를 탐지 불가능한 실패로 바꾸며, "1px이면 기기가 움직인다"는 것은 측정된 바 없는 주장이다(spec.md REQ-GEST-SCROLL-007 근거).
+
+### AC-GEST-019 — `--duration 0` 거부
+
+- **Given** mock 실행기,
+- **When** `swipe 200 700 200 300 --duration 0`을 실행하면,
+- **Then** `INVALID_DURATION`이 반환되고 **어떤 제스처도 전송되지 않는다**.
+- **And** `--duration 1`은 거부되지 않는다(양의 정수 경계).
+- **And** 좌표 검증은 영향받지 않는다 — `swipe 0 0 0 100`처럼 **좌표** `0`은 여전히 유효하다. 지속시간 파서와 좌표 파서를 같은 함수로 공유하면 이 AC와 AC-GEST-003이 동시에 통과할 수 없다.
+
+> 0.3.0에서는 REQ가 "음이 아닌 정수"였고 구현은 그대로 따랐다 — `{"ok":true, ..., "durationMs":0}`. **구현 결함이 아니라 REQ 결함**이었으므로 0.4.0에서 REQ를 고쳤다(REQ-GEST-SWIPE-005).
+
+### AC-GEST-020 — `--duration` 생략 경로
+
+- **Given** mock 실행기,
+- **When** `swipe 200 700 200 300`을 `--duration` 없이 실행하면,
+- **Then** 양 플랫폼 argv에 지속시간 인자가 **붙지 않는다** — CLI가 숨은 기본값을 주입하지 않는다(REQ-GEST-SWIPE-002, D1).
+- **And** `scroll`은 반대로 **항상** 내부 고정값을 싣는다(`scroll.ts:47` `SCROLL_SWIPE_DURATION_MS = 500`). 두 명령의 argv를 나란히 비교해 이 비대칭이 의도적으로 유지되는지 확인한다.
+- **And** (e2e·manual) 생략 경로의 실기기 신뢰도를 **반복 시행으로** 기록한다. 판정은 상단 상태바(시계)를 잘라낸 **본문 영역 비교**로 한다 — 시계가 바뀌면 스크린샷 전체 비교는 항상 "변화 있음"이 되어 무의미하다. 기준선: 생략 3/5, `--duration 500` 5/5(spec.md §C.1-⑩).
+- **And** 이 AC는 **PARTIAL 마감이 허용된다** — 간헐 동작이므로 5회 시행으로 확률을 확정할 수 없다. 관측된 비율을 그대로 기록하고 "안정적으로 동작한다"고 쓰지 않는다.
+
+> **이 AC의 부재가 F2를 다섯 마일스톤 동안 숨겼다.** M1~M5의 모든 검증이 `--duration 500`을 썼기 때문에 생략 경로는 한 번도 실행되지 않았다. AC 위반이 아니라 **AC 세트의 구멍**이었고, 이 항목이 그 구멍이다.
+
+### AC-GEST-021 — 안 움직인 `scrollIntoView`는 스크롤로 표기하지 않는다
+
+- **Given** `scrollIntoView`는 성공(`true`)하지만 **페이지가 움직이지 않는** 요소 — 예: 화면 밖 드로어 안의 링크,
+- **When** `tap --web "<CSS>"`를 실행하면,
+- **Then** 응답의 `method`가 **`-scrolled` 접미사를 갖지 않는다** — `js-click` 또는 `native`다.
+- **And** 판정 근거는 `scrollIntoView` 호출 **전후의 `scrollY`(또는 대상 사각형) 비교**이며, 표현식의 반환값이 아니다.
+- **And** 실제로 페이지가 움직인 경우(AC-GEST-012/013의 상황)에는 여전히 `-scrolled`가 붙는다 — 이 AC가 표기를 없애는 것이 아니라 **증거를 요구**하는 것이다.
+- **And** `native-scrolled`·`js-click-scrolled` **두 값 모두**에 같은 요건이 적용된다.
+
+> 실측 근거(spec.md §C.1-⑪): 화면 밖 드로어 링크에서 `scrollIntoView` → `true`, `scrollY 1485 → 1485`, 재측정 사각형 불변인데 응답은 `js-click-scrolled`였다. `buildScrollIntoViewExpression`(`web-support.ts:209-217`)은 `if (!el) return false` 외에는 무조건 `true`를 돌려주므로 그 값은 **"노드가 존재했다"**는 뜻일 뿐이다.
+>
+> REQ-GEST-WEB-002는 0.3.0에서도 "스크롤이 **일어났을 때**"라고 쓰여 있었다 — 따라서 이것은 **REQ 공백이 아니라 REQ 위반**이며, AC-GEST-013이 "구분 가능하게 표기"만 검사하고 표기의 **진실성**을 검사하지 않아 통과했다.

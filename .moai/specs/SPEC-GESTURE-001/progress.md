@@ -1,11 +1,12 @@
 ---
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 진행 기록"
-version: "0.3.0"
-status: completed
+version: "0.4.0"
+status: in-progress
 created: 2026-07-27
 updated: 2026-07-28
 author: hatae
+amendment_of: SPEC-GESTURE-001
 ---
 
 # 진행 기록 — SPEC-GESTURE-001
