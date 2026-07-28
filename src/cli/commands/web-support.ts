@@ -209,21 +209,32 @@ function buildClickExpression(cssSelector: string, sourceIndex: number): string 
  * Returns `{found, moved}` rather than a bare boolean (SPEC-GESTURE-001
  * M6/0.4.0 amendment — F4, REQ-GEST-WEB-002 강화). `found` only says the
  * node existed and `scrollIntoView` was called on it; it says nothing about
- * whether the page actually moved. `moved` is decided INSIDE this one
- * expression by comparing `window.scrollY` immediately before and after the
- * call — the caller must not infer movement from the return value alone
- * (the auditor's off-canvas-drawer regression: `scrollIntoView` -> `true`,
- * `scrollY` unchanged, yet the old code reported `-scrolled`).
+ * whether the page actually moved.
+ *
+ * `moved` is decided by comparing the TARGET ELEMENT's own
+ * `getBoundingClientRect()` immediately before and after the call
+ * (SPEC-GESTURE-001 M7/0.5.0 amendment — C-3, REQ-GEST-WEB-002 sentence
+ * already permitted this oracle: "scrollY 또는 대상 요소의 사각형"). The
+ * element rect is the GENERAL oracle — a single predicate covers (i) window
+ * scroll, (ii) an ancestor `overflow:auto` container scrolling (the element
+ * moves on screen even though `window.scrollY` never changes — measured:
+ * `containerScrollTop 0->755`, `scrollY 1626->1626`, and the 0.4.0
+ * `window.scrollY`-only oracle reported `native`, i.e. "no movement", which
+ * was a behavioral regression against `737b9fb`), and (iii) horizontal
+ * scroll (`window.scrollY` cannot see an X-axis move at all). `window.scrollY`
+ * alone misses (ii) and (iii); the element's own rect cannot.
  */
-function buildScrollIntoViewExpression(cssSelector: string, sourceIndex: number): string {
+export function buildScrollIntoViewExpression(cssSelector: string, sourceIndex: number): string {
   return `(function(){
   var nodes = document.querySelectorAll(${JSON.stringify(cssSelector)});
   var el = nodes[${JSON.stringify(sourceIndex)}];
   if (!el) return { found: false, moved: false };
-  var before = window.scrollY;
+  var before = el.getBoundingClientRect();
   el.scrollIntoView({block: "center"});
-  var after = window.scrollY;
-  return { found: true, moved: before !== after };
+  var after = el.getBoundingClientRect();
+  var moved = before.top !== after.top || before.left !== after.left ||
+    before.bottom !== after.bottom || before.right !== after.right;
+  return { found: true, moved: moved };
 })()`;
 }
 

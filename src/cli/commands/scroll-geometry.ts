@@ -139,27 +139,71 @@ export function computeScrollSwipe(direction: ScrollDirection, ratio: number, sc
 }
 
 /**
- * `computeScrollSwipe`가 만든 좌표가 퇴화(같은 점)인지 판정한다(SPEC-GESTURE-001
- * M6/0.4.0 amendment — F1, REQ-GEST-SCROLL-007, plan.md §F M6 item 2).
+ * 화면을 신뢰성 있게 움직이는 최소 스와이프 거리(SPEC-GESTURE-001 M7/0.5.0
+ * amendment, REQ-GEST-SCROLL-007). 이 SPEC이 정하는 수가 아니라 **측정한**
+ * 수다 — 근본 물리량은 터치 슬롭(touch slop)이라는 플랫폼 속성이며 문서나
+ * 추론으로 확정할 수 없다.
  *
- * 판정 위치는 **반올림 이후** 좌표다 — 반올림 전 거리는 0.79px처럼 0이
- * 아닐 수 있지만, 정수 픽셀로 반올림된 뒤 같은 픽셀로 접히는 것이 실제
- * 결함이다(402x874에서 `--amount 0.001` -> `from.y=to.y=437`, 실측
- * `scrollY 3212->3212`, 스크린샷 바이트 동일, spec.md §C.1-⑫). 반올림
- * 전 값으로 판정하면 이 결함을 못 잡는다.
+ * 단위는 `swipe`/`dump` 좌표계와 동일한 pt(포인트)다 — 비율이 아니다. 화면별
+ * 최소 비율은 이 값에서 파생한다(그 역이 아니다).
+ *
+ * 실측(2026-07-28, iPhone 17 Pro 시뮬레이터 iOS 26.0
+ * D0B3A18C-E485-4E7C-A25E-504BF4CA6163): 로컬 체커보드 테스트 페이지(40pt
+ * 격자, 6000x6000pt)에서 이분 탐색 + 후보별 반복 시행(세로 15회, 가로
+ * 10-15회) + 상태바 제외 본문 스크린샷 해시 비교로 측정. 세로 10pt는 2/15만
+ * 이동(잡음), 11pt는 15/15 이동(항상 신뢰). 가로 10pt는 1/15, 11pt는
+ * 10/10. 두 축 모두 같은 정수(11)로 수렴했다 — 전체 시행 기록은
+ * spec.md §C.1-⑭ 참조. Android는 `adb`가 없어 측정하지 못했다(§C.2) —
+ * 이 값은 iOS 전용이며 Android 근거로 쓰지 않는다.
+ *
+ * @MX:NOTE: [AUTO] 11이라는 값 자체가 위 실측(세로 15/15, 가로 10/10 @ 11pt)에서 나온 측정값이다 -- 바꾸려면 같은 시뮬레이터·방법론으로 재실측이 필요하다(spec.md §C.1-⑭)
+ */
+export const MIN_EFFECTIVE_SWIPE_PX = 11;
+
+/**
+ * `computeScrollSwipe`가 만든 좌표가 화면을 움직일 수 없는지 판정한다
+ * (SPEC-GESTURE-001 M7/0.5.0 amendment — REQ-GEST-SCROLL-007 술어 교체).
+ *
+ * 0.4.0(M6)의 `from === to`(거리 0) 판정은 **축 길이가 짝수일 때만**
+ * 발동할 수 있었다 — `center = dimension/2`가 홀수 축에서는 반정수라
+ * `round(center ± ε)`가 극소 비율에서도 항상 갈라져 1px을 방출했다(빌드
+ * 모듈 재현, spec.md §C.1-⑬: `402x874` 두 축 발동 / `393x852`는 `down`만
+ * 발동 / `375x667` 두 축 미발동). 술어를 **"거리가 0"에서 "거리가
+ * `MIN_EFFECTIVE_SWIPE_PX` 미만"**으로 바꾸면 이 구멍이 사라진다 — 1px도,
+ * 10px도 화면을 움직이지 못한다면 똑같이 거부된다.
+ *
+ * 판정 위치는 **반올림 이후** 좌표다(0.4.0에서 확립, 유지) — 반올림 전
+ * 거리는 0.79px처럼 0이 아닐 수 있지만, 정수 픽셀로 반올림된 뒤 실제로
+ * 기기가 인식하는 거리가 실제 결함이다.
  *
  * 스크롤 축이 아닌 좌표(세로 스크롤의 x, 가로 스크롤의 y)는 항상 두 점에서
- * 같으므로(§ computeScrollSwipe `fixedAxis`), `from`·`to` 전체가 같은지만
- * 보면 방향에 관계없이 충분하다.
+ * 같으므로(§ computeScrollSwipe `fixedAxis`), `Math.max(|dx|, |dy|)`가
+ * 방향에 관계없이 정확한 스크롤 축 거리를 준다 — 어느 축이 스크롤 축인지
+ * 별도로 알 필요가 없다.
+ *
+ * @MX:ANCHOR: [AUTO] REQ-GEST-SCROLL-007 전체가 기대는 판정 — 이 술어가 틀리면 화면을 움직이지 못하는 제스처가 ok:true로 성공 보고된다
+ * @MX:REASON: fan_in >= 3(scroll.ts의 AMOUNT_TOO_SMALL 거부 경로 + minNonDegenerateRatio 내부 이진 탐색 + scroll-geometry.test.ts·scroll.test.ts 다수 픽스처) — 0.4.0의 `from===to` 술어가 홀수 축에서 전혀 발동하지 않았던 정확한 회귀(spec.md §C.1-⑬)가 술어를 다시 좁히면 재발한다
  */
 export function isDegenerateSwipe(coords: SwipeCoordinates): boolean {
-  return coords.from.x === coords.to.x && coords.from.y === coords.to.y;
+  const dx = Math.abs(coords.from.x - coords.to.x);
+  const dy = Math.abs(coords.from.y - coords.to.y);
+  return Math.max(dx, dy) < MIN_EFFECTIVE_SWIPE_PX;
 }
 
 /**
- * 이 화면·방향에서 퇴화하지 않는 최소 `--amount` 비율을 찾는다(F1,
- * REQ-GEST-SCROLL-007) — 거부 응답에 실어 호출자가 다시 시도할 값을 알 수
- * 있게 한다(AC-GEST-018).
+ * 이 화면·방향에서 `MIN_EFFECTIVE_SWIPE_PX`를 **넘는** 최소 `--amount` 비율을
+ * 찾는다(REQ-GEST-SCROLL-007, SPEC-GESTURE-001 M7/0.5.0 amendment로 의미
+ * 재정의) — 거부 응답의 `minValidRatio`에 실어 호출자가 다시 시도할 값을
+ * 알 수 있게 한다(AC-GEST-018, AC-GEST-024).
+ *
+ * **0.5.0 재정의 — "끝점이 달라지는 최소 비율"이 아니다.** 이 함수는
+ * `isDegenerateSwipe`에 위임하므로, `isDegenerateSwipe`의 판정 기준이
+ * "거리 0"에서 "거리 < `MIN_EFFECTIVE_SWIPE_PX`"로 바뀌면 이 함수가 찾는
+ * 경계도 자동으로 같이 바뀐다 — 별도 코드 변경이 필요 없다. 0.4.0의 정의는
+ * 짝수 축에서 2px, 홀수 축에서 1px을 냈고 **3회 중 0회 이동**했다(실측,
+ * spec.md §C.1-⑫/⑬) — 오류 코드의 행동 가능 페이로드가 호출자를 같은
+ * 결함으로 되돌려보내는 것이었다. "유효한"의 정의는 이제
+ * `isDegenerateSwipe`가 정한다.
  *
  * 반올림된 좌표 차이는 비율이 커질수록 늘거나 그대로다(단조 비감소) —
  * `center ± half`가 각각 바깥으로만 움직이므로 독립 반올림 결과의 차이도

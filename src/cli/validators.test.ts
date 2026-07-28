@@ -67,6 +67,25 @@ describe("parseDurationMs (SPEC-GESTURE-001 M6 — AC-GEST-019)", () => {
     expect(parseCoordinate("0")).toBe(0);
     expect(parseDurationMs("0")).toBeUndefined();
   });
+
+  describe("0.5.0(M7) 상한 -- AC-GEST-025, C-4", () => {
+    it("60000(경계)은 거부되지 않는다", () => {
+      expect(parseDurationMs("60000")).toBe(60000);
+    });
+
+    it("60001(상한 초과)은 거부된다", () => {
+      expect(parseDurationMs("60001")).toBeUndefined();
+    });
+
+    it("1e24는 지수 표기라 어휘 검증부터 거부된다 (^\\d+$가 'e'를 포함한 문자열을 통과시키지 않는다)", () => {
+      expect(parseDurationMs("1e24")).toBeUndefined();
+    });
+
+    it("상한을 훨씬 넘는 순수 십진 문자열도 거부된다 (지수 표기가 아니어도 상한 자체가 막는다)", () => {
+      expect(parseDurationMs("99999999999999999999")).toBeUndefined();
+      expect(parseDurationMs("3600000")).toBeUndefined(); // 1시간 -- 상한 60000ms를 훨씬 초과
+    });
+  });
 });
 
 describe("parseRatio", () => {

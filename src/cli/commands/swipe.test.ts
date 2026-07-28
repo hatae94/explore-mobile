@@ -187,6 +187,51 @@ describe("swipe", () => {
     });
   });
 
+  describe("AC-GEST-025 — --duration 상한 (SPEC-GESTURE-001 M7/0.5.0 amendment, C-4)", () => {
+    it("rejects --duration 60001 (상한 초과) with INVALID_DURATION and sends zero gestures", async () => {
+      const backend = createMockBackend();
+
+      const result = await runCli(["swipe", "200", "700", "200", "300", "--duration", "60001"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("INVALID_DURATION");
+        expect(result.error.details?.["received"]).toBe("60001");
+      }
+      expect(backend.swipe).not.toHaveBeenCalled();
+    });
+
+    it("does not reject --duration 60000 (상한 경계)", async () => {
+      const backend = createMockBackend();
+
+      const result = await runCli(["swipe", "200", "700", "200", "300", "--duration", "60000"], backend);
+
+      expect(result.ok).toBe(true);
+      expect(backend.swipe).toHaveBeenCalledWith(
+        "R58N90ABCDE",
+        { x: 200, y: 700 },
+        { x: 200, y: 300 },
+        { durationMs: 60000 },
+      );
+    });
+
+    it("rejects --duration 1e24 with INVALID_DURATION, sends zero gestures, and returns promptly (no infinite hang, spec.md §C.1-⑮)", async () => {
+      const backend = createMockBackend();
+      const start = Date.now();
+
+      const result = await runCli(["swipe", "200", "700", "200", "300", "--duration", "1e24"], backend);
+
+      const elapsedMs = Date.now() - start;
+      expect(elapsedMs).toBeLessThan(1000); // finite-time return, not a hang
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("INVALID_DURATION");
+        expect(result.error.details?.["received"]).toBe("1e24");
+      }
+      expect(backend.swipe).not.toHaveBeenCalled();
+    });
+  });
+
   describe("AC-GEST-003 — invalid coordinates", () => {
     it("rejects a wrong coordinate count (3 instead of 4) with INVALID_COORDINATES and sends zero gestures", async () => {
       const backend = createMockBackend();

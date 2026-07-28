@@ -12,8 +12,10 @@ import {
   computeScrollSwipe,
   deriveScreenSize,
   isDegenerateSwipe,
+  MIN_EFFECTIVE_SWIPE_PX,
   minNonDegenerateRatio,
   roundPixel,
+  type ScrollDirection,
 } from "./scroll-geometry.js";
 
 function element(overrides: Partial<CommonElement> = {}): CommonElement {
@@ -195,11 +197,15 @@ describe("computeScrollSwipe", () => {
   });
 });
 
-describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6 — AC-GEST-018, F1)", () => {
+describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6/M7 — AC-GEST-018/022/024)", () => {
   // spec.md §C.1-⑫ 실측 화면 크기 — 402x874, witness 있음.
   const SCREEN_402X874 = { width: 402, height: 874 };
 
-  describe("실측 재현 — 402x874에서 --amount 0.001/0.0012는 퇴화, 0.002는 정상", () => {
+  it("MIN_EFFECTIVE_SWIPE_PX는 실측값 11이다 (spec.md §C.1-⑭)", () => {
+    expect(MIN_EFFECTIVE_SWIPE_PX).toBe(11);
+  });
+
+  describe("0.4.0(M6) 실측값은 M7 문턱(11pt) 아래라 이제도 퇴화다 — spec.md §C.1-⑫/⑭ 재해석", () => {
     it("0.001 -> from.y=to.y=437 (거리 0, 퇴화)", () => {
       const coords = computeScrollSwipe("down", 0.001, SCREEN_402X874);
       expect(coords.from.y).toBe(437);
@@ -212,11 +218,11 @@ describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6 — AC-
       expect(isDegenerateSwipe(coords)).toBe(true);
     });
 
-    it("0.002 -> from.y=438 to.y=436 (거리 2, 비퇴화)", () => {
+    it("0.002 -> from.y=438 to.y=436 (거리 2) -- 0.4.0 기준으로는 비퇴화였지만, 거리 2 < MIN_EFFECTIVE_SWIPE_PX(11)이라 M7 문턱으로는 여전히 퇴화다", () => {
       const coords = computeScrollSwipe("down", 0.002, SCREEN_402X874);
       expect(coords.from.y).toBe(438);
       expect(coords.to.y).toBe(436);
-      expect(isDegenerateSwipe(coords)).toBe(false);
+      expect(isDegenerateSwipe(coords)).toBe(true);
     });
   });
 
@@ -227,7 +233,7 @@ describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6 — AC-
 
         const boundary = minNonDegenerateRatio(direction, SCREEN_402X874);
         expect(boundary).toBeGreaterThan(0);
-        expect(boundary).toBeLessThan(0.01); // 실측 임계값(약 0.0013)과 같은 자릿수
+        expect(boundary).toBeLessThan(0.1); // 넉넉한 상한 -- 402x874 화면에서 문턱 11pt는 이 범위 안이다
         expect(isDegenerateSwipe(computeScrollSwipe(direction, boundary, SCREEN_402X874))).toBe(false);
       });
     }
@@ -242,6 +248,60 @@ describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6 — AC-
   it("--amount 1은 모든 방향에서 비퇴화다 (동작 경계)", () => {
     for (const direction of ["up", "down", "left", "right"] as const) {
       expect(isDegenerateSwipe(computeScrollSwipe(direction, 1, SCREEN_402X874))).toBe(false);
+    }
+  });
+
+  describe("AC-GEST-022 — 홀수 축 화면에서도 움직임 불가 스와이프를 거부한다 (0.5.0, M7)", () => {
+    // 0.4.0의 `from === to` 판정은 축 길이가 짝수일 때만 발동할 수 있었다 --
+    // `center = dimension/2`가 홀수 축에서는 반정수라 반올림이 항상 갈라져
+    // 1px을 방출했다(spec.md §C.1-⑬, 빌드 모듈로 재현된 정확한 회귀).
+    const SCREENS: Record<string, { width: number; height: number }> = {
+      "402x874(짝x짝)": { width: 402, height: 874 },
+      "393x852(폭 홀)": { width: 393, height: 852 },
+      "375x667(홀x홀)": { width: 375, height: 667 },
+    };
+
+    for (const [label, screen] of Object.entries(SCREENS)) {
+      for (const direction of ["up", "down", "left", "right"] as const) {
+        for (const ratio of [1e-12, 1e-8, 1e-4]) {
+          it(`${label} ${direction} ratio=${ratio}: 극소 비율은 거부된다 (from===to 판정이라면 홀수 축에서 실패했을 조합)`, () => {
+            const coords = computeScrollSwipe(direction, ratio, screen);
+            expect(isDegenerateSwipe(coords)).toBe(true);
+          });
+        }
+      }
+    }
+
+    it("393x852의 down은 짝수 축(높이 852)이라 from===to가 성립하지만, left는 폭(393, 홀수)이라 from===to가 결코 성립하지 않는다 -- 그런데도 새 술어는 둘 다 거부한다", () => {
+      const screen = { width: 393, height: 852 };
+      const downCoords = computeScrollSwipe("down", 1e-12, screen);
+      const leftCoords = computeScrollSwipe("left", 1e-12, screen);
+
+      // 0.4.0 술어(from===to)라면 down만 거부되고 left는 통과(1px 방출)했을
+      // 지점 -- 새 술어(거리 < MIN_EFFECTIVE_SWIPE_PX)는 둘 다 거부한다.
+      expect(downCoords.from.x === downCoords.to.x && downCoords.from.y === downCoords.to.y).toBe(true);
+      expect(leftCoords.from.x === leftCoords.to.x && leftCoords.from.y === leftCoords.to.y).toBe(false);
+
+      expect(isDegenerateSwipe(downCoords)).toBe(true);
+      expect(isDegenerateSwipe(leftCoords)).toBe(true);
+    });
+
+    it("375x667은 두 축 모두 홀수라 어느 방향도 from===to가 성립하지 않지만, 새 술어는 극소 비율을 여전히 거부한다", () => {
+      const screen = { width: 375, height: 667 };
+      for (const direction of ["up", "down", "left", "right"] as const) {
+        const coords = computeScrollSwipe(direction, 1e-12, screen);
+        expect(coords.from.x === coords.to.x && coords.from.y === coords.to.y).toBe(false);
+        expect(isDegenerateSwipe(coords)).toBe(true);
+      }
+    });
+
+    for (const [label, screen] of Object.entries(SCREENS)) {
+      it(`${label}: minNonDegenerateRatio()가 계산한 경계는 세 화면 모두에서 실제로 비퇴화다`, () => {
+        for (const direction of ["up", "down", "left", "right"] as const satisfies ScrollDirection[]) {
+          const boundary = minNonDegenerateRatio(direction, screen);
+          expect(isDegenerateSwipe(computeScrollSwipe(direction, boundary, screen))).toBe(false);
+        }
+      });
     }
   });
 });

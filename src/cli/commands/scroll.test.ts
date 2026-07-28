@@ -13,6 +13,35 @@ import type { DeviceBackend, DeviceInfo } from "../../schema/device-backend.js";
 import { runCli } from "../router.js";
 import { minNonDegenerateRatio } from "./scroll-geometry.js";
 
+/**
+ * 독립적으로 유도한(즉 `minNonDegenerateRatio()`를 호출하지 않은) 402x874
+ * 화면·방향별 경계 픽스처(SPEC-GESTURE-001 M7/0.5.0 amendment, C-5).
+ *
+ * `minNonDegenerateRatio()`가 계산한 값을 그대로 되먹여 "성공했다"고
+ * 단언하는 이전 테스트는 동어반복이었다 — `minNonDegenerateRatio`와
+ * `scroll.ts`의 거부 판정이 같은 `isDegenerateSwipe`를 공유하므로, 그
+ * 술어가 무엇이든(심지어 틀렸어도) 함수 자신의 출력을 다시 넣으면 항상
+ * "성공"으로 보인다(spec.md 0.5.0 §Amendments, B.7). 아래 값은
+ * `computeScrollSwipe`를 **직접** 호출해 반올림된 좌표를 관찰하고 손으로
+ * 거리(10 vs 12)를 계산해 얻었다 — MIN_EFFECTIVE_SWIPE_PX(11)를 넘는지
+ * 아닌지를 독립적으로 판정한다.
+ */
+const BOUNDARY_FIXTURES_402X874: Record<
+  "up" | "down" | "left" | "right",
+  {
+    rejectRatio: string;
+    rejectDistance: number;
+    acceptRatio: string;
+    acceptFrom: number;
+    acceptTo: number;
+  }
+> = {
+  up: { rejectRatio: "0.0135", rejectDistance: 10, acceptRatio: "0.014", acceptFrom: 431, acceptTo: 443 },
+  down: { rejectRatio: "0.0135", rejectDistance: 10, acceptRatio: "0.014", acceptFrom: 443, acceptTo: 431 },
+  left: { rejectRatio: "0.030", rejectDistance: 10, acceptRatio: "0.0305", acceptFrom: 195, acceptTo: 207 },
+  right: { rejectRatio: "0.030", rejectDistance: 10, acceptRatio: "0.0305", acceptFrom: 207, acceptTo: 195 },
+};
+
 function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
     serial: "R58N90ABCDE",
@@ -289,18 +318,19 @@ describe("scroll", () => {
       expect(backend.swipe).not.toHaveBeenCalled();
     });
 
-    it("down: --amount 0.002 -> 정상 성공, from.y=438 to.y=436 (거리 2, 동작 경계)", async () => {
+    it("down: --amount 0.002 -> AMOUNT_TOO_SMALL (거리 2 < MIN_EFFECTIVE_SWIPE_PX 11 -- M7이 좁힌 문턱, 0.4.0에서는 동작 경계였다)", async () => {
+      // 0.5.0(M7) 이전에는 이 비율(거리 2)이 "동작 경계"였다 -- 0.4.0의
+      // isDegenerateSwipe가 거리 0만 거부했기 때문이다. M7은 문턱을 실측값
+      // 11pt로 좁혔으므로(spec.md §C.1-⑭), 거리 2는 이제도 화면을 신뢰성
+      // 있게 움직이지 못해 거부된다. 실제 새 동작 경계는 아래
+      // "AC-GEST-024" 블록의 독립 유도 픽스처를 참조.
       const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
 
       const result = await runCli(["scroll", "down", "--amount", "0.002"], backend);
 
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        const data = result.data as { from: { y: number }; to: { y: number } };
-        expect(data.from.y).toBe(438);
-        expect(data.to.y).toBe(436);
-      }
-      expect(backend.swipe).toHaveBeenCalledTimes(1);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("AMOUNT_TOO_SMALL");
+      expect(backend.swipe).not.toHaveBeenCalled();
     });
 
     it("AMOUNT_TOO_SMALL은 INVALID_AMOUNT와 다른 코드다 -- 0.001은 계약 범위(0 초과 1 이하) 안에 있다", async () => {
@@ -324,7 +354,28 @@ describe("scroll", () => {
           });
         }
 
-        it("minNonDegenerateRatio()가 계산한 경계 비율은 정상 성공한다 (가로·세로 임계값이 다르므로 방향별로 확인)", async () => {
+        it("독립 유도 경계(C-5, minNonDegenerateRatio()를 호출하지 않은 손 계산 값) 바로 아래는 거부되고, 바로 위는 성공한다", async () => {
+          const fixture = BOUNDARY_FIXTURES_402X874[direction];
+
+          const rejectBackend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+          const rejectResult = await runCli(["scroll", direction, "--amount", fixture.rejectRatio], rejectBackend);
+          expect(rejectResult.ok).toBe(false);
+          if (!rejectResult.ok) expect(rejectResult.error.code).toBe("AMOUNT_TOO_SMALL");
+          expect(rejectBackend.swipe).not.toHaveBeenCalled();
+
+          const acceptBackend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+          const acceptResult = await runCli(["scroll", direction, "--amount", fixture.acceptRatio], acceptBackend);
+          expect(acceptResult.ok).toBe(true);
+          if (acceptResult.ok) {
+            const data = acceptResult.data as { from: { x: number; y: number }; to: { x: number; y: number } };
+            const isVertical = direction === "up" || direction === "down";
+            expect(isVertical ? data.from.y : data.from.x).toBe(fixture.acceptFrom);
+            expect(isVertical ? data.to.y : data.to.x).toBe(fixture.acceptTo);
+          }
+          expect(acceptBackend.swipe).toHaveBeenCalledTimes(1);
+        });
+
+        it("minNonDegenerateRatio()가 계산한 경계 비율을 되먹이면 성공한다 (AC-GEST-024 왕복 검증, 응답 배선 회귀 가드 -- 문턱 정확성 증명은 위 독립 유도 테스트와 실기기 확인이 맡는다)", async () => {
           const boundaryRatio = minNonDegenerateRatio(direction, { width: 402, height: 874 });
           const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
 
@@ -340,6 +391,31 @@ describe("scroll", () => {
           expect(result.ok).toBe(true);
         });
       });
+    }
+  });
+
+  describe("AC-GEST-022 — 홀수 축 화면에서도 움직임 불가 스와이프를 거부한다 (SPEC-GESTURE-001 M7/0.5.0 amendment, CLI 전 구간)", () => {
+    // 순수 함수 레벨(scroll-geometry.test.ts)과 별개로, `dump` -> deriveScreenSize
+    // -> computeScrollSwipe -> isDegenerateSwipe 전 구간을 CLI 디스패치로
+    // 확인한다. witness == 유일한 최상위 요소인 단일 항목 dump 픽스처를 쓴다.
+    const ODD_SCREENS: Record<string, CommonElement[]> = {
+      "402x874(짝x짝)": [element({ bounds: { x: 0, y: 0, w: 402, h: 874 } })],
+      "393x852(폭 홀)": [element({ bounds: { x: 0, y: 0, w: 393, h: 852 } })],
+      "375x667(홀x홀)": [element({ bounds: { x: 0, y: 0, w: 375, h: 667 } })],
+    };
+
+    for (const [label, elements] of Object.entries(ODD_SCREENS)) {
+      for (const direction of ["up", "down", "left", "right"] as const) {
+        it(`${label} ${direction}: 극소 비율(1e-8)은 AMOUNT_TOO_SMALL, 무동작`, async () => {
+          const backend = createMockBackend([device()], elements);
+
+          const result = await runCli(["scroll", direction, "--amount", "0.00000001"], backend);
+
+          expect(result.ok).toBe(false);
+          if (!result.ok) expect(result.error.code).toBe("AMOUNT_TOO_SMALL");
+          expect(backend.swipe).not.toHaveBeenCalled();
+        });
+      }
     }
   });
 

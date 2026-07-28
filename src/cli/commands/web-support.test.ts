@@ -6,6 +6,7 @@
  * injected, so these run with no proxy, no simulator, and no disk.
  */
 
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import type { CommonElement, DeviceBackend, DeviceInfo } from "../../schema/device-backend.js";
 import type { ProcessExecResult } from "../../backend/process-executor.js";
@@ -14,7 +15,7 @@ import { AmbiguousWebPageError, IwdpNotInstalledError } from "../../webview/webk
 import type { WebInspectorClient } from "../../webview/inspector-client.js";
 import type { WebProxySession } from "../../webview/proxy-service.js";
 import { parseCommandArgs } from "../args.js";
-import { runWebDump, runWebTap, runWebText, type WebRunDeps } from "./web-support.js";
+import { buildScrollIntoViewExpression, runWebDump, runWebTap, runWebText, type WebRunDeps } from "./web-support.js";
 
 const IOS_DEVICE: DeviceInfo = {
   serial: "UDID-1",
@@ -548,5 +549,78 @@ describe("runWebText", () => {
     expect(result.ok && (result.data as { method: string }).method).toBe("native-scrolled");
     expect(h.taps).toEqual([{ x: 50, y: 382 }]);
     expect(h.typed).toEqual(["안녕"]);
+  });
+});
+
+/**
+ * `buildScrollIntoViewExpression`'s generated JS, executed for real inside a
+ * `node:vm` sandbox (SPEC-GESTURE-001 M7/0.5.0 amendment — C-3, AC-GEST-023).
+ *
+ * The `harness()` above mocks `WebInspectorClient.evaluate` entirely, so it
+ * can never exercise this function's actual JS body — it only ever returns
+ * whatever `scrollResult` a test configured. That is fine for verifying
+ * `web-support.ts`'s handling of `{found, moved}`, but it cannot prove the
+ * new rect-based oracle itself is correct (the whole point of C-3). These
+ * tests run the REAL generated expression string against fake DOM stand-ins
+ * with a `vm` sandbox (Node built-in, no new dependency, no jsdom) so the
+ * oracle logic itself — not just the caller's branching on its output — is
+ * under test.
+ */
+describe("buildScrollIntoViewExpression — rect-based moved oracle (SPEC-GESTURE-001 M7, C-3, AC-GEST-023)", () => {
+  function fakeElement(rects: Array<{ top: number; left: number; bottom: number; right: number }>) {
+    let call = 0;
+    return {
+      getBoundingClientRect: () => rects[Math.min(call, rects.length - 1)],
+      scrollIntoView: () => {
+        call += 1;
+      },
+    };
+  }
+
+  it("credits movement when the element's rect changed even though this sandbox has no window.scrollY at all (container-scroll generalization)", () => {
+    // No `window` global is provided at all -- if the oracle still touched
+    // `window.scrollY` this would throw a ReferenceError instead of
+    // returning a result. The element's own rect is the only signal used,
+    // which is exactly what makes an overflow:auto container's scroll
+    // (spec.md §C.1-⑯: containerScrollTop 0->755, scrollY 1626->1626)
+    // detectable -- the 0.4.0 window.scrollY-only oracle could not see it.
+    const el = fakeElement([
+      { top: 900, left: 20, bottom: 948, right: 86 }, // off-viewport, before
+      { top: 300, left: 20, bottom: 348, right: 86 }, // in-viewport, after
+    ]);
+    const document = { querySelectorAll: () => [el] };
+
+    const outcome = runInNewContext(buildScrollIntoViewExpression("a.off", 0), { document });
+
+    expect(outcome).toEqual({ found: true, moved: true });
+  });
+
+  it("credits movement from a horizontal-only rect change (left/right, no top/bottom change)", () => {
+    const el = fakeElement([
+      { top: 300, left: 900, bottom: 340, right: 966 },
+      { top: 300, left: 20, bottom: 340, right: 86 },
+    ]);
+    const document = { querySelectorAll: () => [el] };
+
+    const outcome = runInNewContext(buildScrollIntoViewExpression("a.off", 0), { document });
+
+    expect(outcome).toEqual({ found: true, moved: true });
+  });
+
+  it("does not credit movement when the rect is unchanged (AC-GEST-021 regression guard — the off-canvas-drawer repro)", () => {
+    const el = fakeElement([{ top: 900, left: 20, bottom: 948, right: 86 }]);
+    const document = { querySelectorAll: () => [el] };
+
+    const outcome = runInNewContext(buildScrollIntoViewExpression("a.off", 0), { document });
+
+    expect(outcome).toEqual({ found: true, moved: false });
+  });
+
+  it("returns found:false without calling scrollIntoView when no node matches", () => {
+    const document = { querySelectorAll: () => [] };
+
+    const outcome = runInNewContext(buildScrollIntoViewExpression("a.off", 0), { document });
+
+    expect(outcome).toEqual({ found: false, moved: false });
   });
 });

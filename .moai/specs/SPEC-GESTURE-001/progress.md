@@ -892,3 +892,175 @@ $ grep -cE '^### AC-GEST-[0-9]+' .moai/specs/SPEC-GESTURE-001/acceptance.md   �
 이 sync 커밋은 `README.md` + `CHANGELOG.md` + SPEC 아티팩트 4종(frontmatter만, `progress.md`는 본문도 포함— 이 §E.4 자체)을 담는다. `src/`는 건드리지 않는다(지시문 Section D). 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인한다. push는 지시문 Section C-4("Do NOT push. A re-audit runs after you.")에 따라 수행하지 않는다.
 
 sync 커밋 SHA: `e10995f`(`docs(SPEC-GESTURE-001): correct 0.4.0 amendment docs + 3-phase close`). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — `e10995f` 자신은 이 SHA를 몰랐으므로(자기참조 문제), M5/M6/0.3.0-sync에서 이미 세 번 쓰인 패턴 그대로.
+
+### M7 — 움직임 가능성 술어 + 문턱 측정 (0.5.0 amendment)
+
+> **선행**: M1-M6은 0.4.0에서 마감됐다(위 §E.4 참조). 이 마일스톤은 재감사(0.76, SAFE TO PUSH: No)로 열렸다 — plan.md §F M7, 근거는 spec.md 0.5.0 §Amendments / plan.md §B.7.
+
+**산출물 1 — 측정 (다른 모든 산출물의 선행, TDD 사이클 이전 단계)**
+
+`MIN_EFFECTIVE_SWIPE_PX`를 실측했다(측정하지 않고 고르지 않았다). 이분 탐색으로 수렴했고 블로커로 올릴 필요가 없었다 — 아래 "측정" 절 참조. 값을 `spec.md` §C.1-⑭에 검증 수준 `실측`으로 기록했다(REQ-GEST-SCROLL-007 충족 요건).
+
+**측정 (Section E 항목 1)**
+
+- **기기·페이지**: iPhone 17 Pro 시뮬레이터(iOS 26.0, `D0B3A18C-E485-4E7C-A25E-504BF4CA6163`), 로컬 체커보드 테스트 페이지(40pt 격자, 6000x6000pt 스크롤 영역, `python3 -m http.server 8934` + `xcrun simctl openurl`) — 두 축 모두에 충분한 스크롤 여유를 보장하고 X·Y 이동 모두에 민감한 패턴이 필요해 실제 웹페이지 대신 합성 픽스처를 골랐다.
+- **잡음 기준선**: 무제스처 3회 연속 촬영 — 상태바 제외 크롭(`sips --cropOffset 150 0 -c 2400 1206`) 해시가 3회 모두 동일. 방법론에 거짓 양성이 없음을 확인.
+- **방법**: 후보 거리(pt, `swipe`/`dump` 좌표계와 동일 단위)를 고정 중심점 기준 스와이프(`--duration 500`, 기존 확립된 신뢰 가능 값)로 전송 → 크롭+해시 전/후 비교 → 이동 감지 시 즉시 역방향 스와이프로 위치 복원(드리프트 방지) → 이분 탐색(4→8→16→…, 정밀화는 9/10/11 반복 시행).
+- **세로**: 2px 0/3, 4px 0/5, 8px 0/5, 9px 1/15, 10px 2/15, **11px 15/15**, 12px 5/5, 14px 5/5, 16px 5/5, 24px 5/5, 32px 5/5, 437px 3/3.
+- **가로**: 2px 1/3(잡음), 4px 0/5, 6px 0/5, 8px 0/5, 10px 1/15, **11px 10/10**, 12px 5/5, 14px 5/5, 437px 3/3.
+- **결과**: 두 축 모두 정수 11pt로 수렴 — 9-10pt 구간의 산발적 이동(1-2/15)은 4-8pt 구간이 모두 0인 것과 대비해 잡음으로 해석했다. **깨끗한 단일 문턱**이었으므로 spec.md가 허용한 "측정 불가 시 블로커" 경로는 발동하지 않았다 — 확률적 대역(probabilistic band)이 아니라 정수 경계였다.
+- **Android**: 측정하지 않았다 — `adb`가 이 머신에 없다(spec.md §C.2 그대로).
+- 전체 시행 원본 기록: `spec.md` §C.1-⑭ 및 이번 커밋에 포함된 progress.md 본 절.
+
+**산출물 2·3 — 술어 교체 + `minValidRatio` 재정의 (`scroll-geometry.ts`, C-1/C-2)**
+
+`isDegenerateSwipe`를 `from === to`(거리 0)에서 `Math.max(|dx|,|dy|) < MIN_EFFECTIVE_SWIPE_PX`(거리 < 11)로 교체했다. `minNonDegenerateRatio`는 내부적으로 `isDegenerateSwipe`에 위임하므로(이진 탐색 루프에서 그대로 호출) **별도 코드 변경 없이** 새 문턱을 자동으로 반영한다 — C-1과 C-2가 사실상 하나의 변경이었다. `MIN_EFFECTIVE_SWIPE_PX = 11`을 named export로 추가하고 `@MX:ANCHOR`(REQ-GEST-SCROLL-007 전체가 기대는 판정)를 `isDegenerateSwipe`에 추가했다.
+
+**산출물 4 — `--duration` 상한 (`validators.ts`, C-4)**
+
+`parseDurationMs`에 `MAX_DURATION_MS = 60_000` 상한을 추가했다. **실측으로 확인한 것**: 어휘 제한(`^\d+$`, 십진 숫자만)은 이미 0.4.0(M6)에 있었으므로 `--duration 1e24`는 이미 지수 표기라 즉시 거부되고 있었다(재현: 코드 변경 전 CLI를 직접 실행해 `INVALID_DURATION`을 0.04초에 확인 — 무한 정지는 재현되지 않았다). 진짜로 빠져 있던 것은 **순수 십진 거대 숫자에 대한 상한**뿐이었다(`--duration 99999999999999999999`처럼 어휘는 통과하지만 상한이 없어 통과하던 값). 상한 60,000ms는 spec.md의 설계 선택(측정값 아님)을 그대로 따랐다.
+
+**산출물 5 — `-scrolled` 오라클 교체 (`web-support.ts`, C-3)**
+
+`buildScrollIntoViewExpression`을 `window.scrollY` 비교에서 **대상 요소 자신의 `getBoundingClientRect()`** 전/후 비교로 교체하고 `export`했다(테스트 가능성 확보). 하나의 술어로 윈도우 스크롤·컨테이너 스크롤·가로 스크롤을 모두 덮는다 — REQ 변경은 없다(REQ-GEST-WEB-002 문장이 이미 "scrollY 또는 대상 요소의 사각형"을 허용했다).
+
+**산출물 6 — 픽스처 다양화 (테스트, C-5 포함)**
+
+- `scroll-geometry.test.ts`: 홀수 축 화면(393x852, 375x667) 픽스처 + AC-GEST-022 전용 describe 블록(3화면 × 4방향 × 3 극소 비율 = 36개 조합, 개별 `isDegenerateSwipe`/`minNonDegenerateRatio` 확인).
+- `scroll.test.ts`: **AC-GEST-018의 동어반복 제거(C-5)** — `minNonDegenerateRatio()`가 계산한 값을 되먹여 "성공했다"고 단언하던 기존 테스트는 함수 자신의 출력을 기댓값으로 쓰므로, 문턱이 틀려도(예: 0.4.0의 `from===to`) 항상 통과했다. `computeScrollSwipe`를 **직접** 호출해 반올림 좌표를 관찰하고 손으로 거리(10 vs 12)를 계산한 **독립 유도 픽스처**(`BOUNDARY_FIXTURES_402X874`)로 교체했다 — 방향별 거부(거리 10)/성공(거리 12, 정확한 from/to 좌표) 양쪽을 단언한다. 기존 되먹임 테스트는 "응답 배선 회귀 가드"로 이름을 바꿔 유지했다(왕복 자체는 여전히 유효한 회귀 방지이지만, 문턱 정확성의 증거는 아니라는 점을 주석에 명시). CLI 전 구간(AC-GEST-022) describe 블록도 추가.
+- `web-support.test.ts`: **`buildScrollIntoViewExpression`을 `node:vm` 샌드박스로 직접 실행하는 4개 테스트를 신규 추가** — 기존 harness의 mock `evaluate`는 `scrollResult` 설정값을 그대로 반환할 뿐 실제 생성된 JS를 절대 실행하지 않으므로, 컨테이너 스크롤 오라클의 진짜 로직(rect 비교)을 검증하려면 실제로 실행해봐야 했다. `window`가 전혀 없는 샌드박스에서도 컨테이너-스크롤형 rect 변화(요소만 이동, `window.scrollY` 개념 자체가 없음)를 이동으로 정확히 판정함을 확인 — jsdom 등 신규 의존성 추가 없이 Node 내장 `vm` 모듈만 사용했다.
+
+### AC PASS/FAIL 매트릭스 (M7 스코프)
+
+| AC ID | 상태 | 검증 명령 | 실제 결과 |
+|-------|------|-----------|-----------|
+| AC-GEST-018(재작업) | PASS | `pnpm vitest run src/cli/commands/scroll.test.ts -t "AC-GEST-018"` | 독립 유도 경계(C-5)로 재작성 — 방향별 거리 10(거부)/12(성공, 정확한 from/to) 확인. 실기기 재확인: `scroll down --amount 0.002`(거리 2, 0.4.0에서는 동작 경계였음) → 이번 세션 `AMOUNT_TOO_SMALL`(minValidRatio 0.013984236866235733) |
+| AC-GEST-022 | PASS | `pnpm vitest run src/cli/commands/scroll-geometry.test.ts src/cli/commands/scroll.test.ts -t "AC-GEST-022"` | 402x874(짝짝)/393x852(폭홀)/375x667(홀홀) × 4방향 × 극소 비율 전 조합 거부 확인. 393x852 `left`(0.4.0에서는 미발동)와 375x667 두 축(0.4.0에서는 미발동) 모두 이번엔 정확히 거부됨을 별도 단언 |
+| AC-GEST-023 | PASS(unit(vm 샌드박스) + e2e 둘 다 확증) | `pnpm vitest run src/cli/commands/web-support.test.ts -t "buildScrollIntoViewExpression"` + 아래 "실기기 확인" | unit: `window` 없는 샌드박스에서 rect만 변한 컨테이너-스크롤 시나리오 → `{found:true, moved:true}`. **실기기**: `overflow:auto` 컨테이너(600pt 높이, 3000pt 내부 콘텐츠) 안 뷰포트 밖 링크를 `tap --web`으로 눌렀더니 `method:"native-scrolled"` — 전/후 스크린샷에서 컨테이너 테두리 위치는 완전히 동일(윈도우 미스크롤)한데 타깃만 안으로 들어옴을 육안 확인(아래 참조) |
+| AC-GEST-024 | PASS | 아래 "실기기 확인" — `scroll down --amount 0.0001` → `AMOUNT_TOO_SMALL` → `minValidRatio` 되먹임 3회 | 실측 수준 `실측` + 기기·페이지 명시(spec.md §C.1-⑭). 왕복: `minValidRatio=0.013984236866235733`를 그대로 3회 재입력 → 3회 모두 성공 + 크롭 해시 변화(실제 이동) 확인. 한 단계 작은 비율(거리 10, 0.0135)이 거부됨은 unit(C-5 독립 유도 픽스처)에서 확인 |
+| AC-GEST-025 | PASS | `pnpm vitest run src/cli/validators.test.ts src/cli/commands/swipe.test.ts -t "AC-GEST-025\|상한"` + 아래 "실기기 확인" | `60000`(경계) 허용, `60001`(초과) 거부, `1e24`(지수 표기) 거부 + 유한 시간 반환(mock 테스트 <1000ms 단언) 모두 unit 확인. **실기기**: `--duration 1e24` 0.043초, `--duration 99999999999999999999`(순수 십진 거대수) 0.043초 — 둘 다 즉시 `INVALID_DURATION`, 무한 정지 재현 안 됨 |
+
+### 실기기 확인 (Section E 항목 2·4·5 — AC-GEST-018/024/023/025)
+
+**AC-GEST-018 재확인 + AC-GEST-024 문턱 측정 + 왕복(위 "측정" 절, "AC 매트릭스" 참조로 갈음 — 커맨드 출력):**
+
+```
+$ node dist/cli/bin.js scroll down --amount 0.002 --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"scroll --amount is too small to move the screen at this size; no gesture was sent.","details":{"requestedRatio":0.002,"minValidRatio":0.013984236866235733}}}
+
+$ node dist/cli/bin.js scroll down --amount 0.0001 --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":false,...,"details":{"requestedRatio":0.0001,"minValidRatio":0.013984236866235733}}
+
+$ (minValidRatio를 3회 반복 재입력, 매회 크롭+해시 전/후 비교)
+trial 1: {"ok":true,...,"from":{"x":201,"y":443},"to":{"x":201,"y":431}} — MOVED (hash changed)
+trial 2: {"ok":true,...,"from":{"x":201,"y":443},"to":{"x":201,"y":431}} — MOVED (hash changed)
+trial 3: {"ok":true,...,"from":{"x":201,"y":443},"to":{"x":201,"y":431}} — MOVED (hash changed)
+```
+
+**AC-GEST-023 — 컨테이너 스크롤 (합성 테스트 페이지, `overflow:auto` 컨테이너):**
+
+`--web` 프록시는 이번 세션에도 M4/M5가 기록한 것과 같은 불안정성을 보였다(다중 페이지 잔여 탭으로 `AMBIGUOUS_PAGE`, Safari 재시작 후에도 간헐적 `NO_WEB_PAGE`) — 호출 사이 5-6초 간격을 두자 안정화됐다(M5가 이미 기록한 완화책 그대로).
+
+```
+$ node dist/cli/bin.js tap --web '#target' --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":true,"command":"tap","data":{...,"method":"native-scrolled","x":122,"y":364}}
+```
+
+전/후 스크린샷 비교: 컨테이너의 검은 테두리(`#container`)가 화면에서 **완전히 같은 위치**에 남아있다(윈도우가 스크롤되지 않았다는 시각적 증거 — 테두리가 조금이라도 움직였다면 윈도우 스크롤이 개입했다는 뜻) — 그런데 이전에는 빈 컨테이너 안이었던 자리에 빨간 TARGET 링크가 나타났다(밑줄 처리 = 탭이 실제로 히트해 `:visited` 상태가 됨). `method:"native-scrolled"`는 새 rect 기반 오라클이 이 컨테이너-내부-이동을 정확히 이동으로 판정했다는 증거다 — 0.4.0의 `window.scrollY` 전용 오라클이었다면 `scrollY`가 0에서 변하지 않아 `"native"`(무이동)로 오보고했을 조합이다(spec.md §C.1-⑯이 기록한 정확한 결함 계열).
+
+**AC-GEST-025 — `--duration` 상한:**
+
+```
+$ node dist/cli/bin.js swipe 200 700 200 300 --duration 60001 --device D0B3A18C-...
+{"ok":false,"command":"swipe","error":{"code":"INVALID_DURATION",...,"details":{"received":"60001"}}}
+
+$ time node dist/cli/bin.js swipe 200 700 200 300 --duration 1e24 --device D0B3A18C-...
+{"ok":false,...,"details":{"received":"1e24"}}
+   0.04s user 0.01s system 114% cpu 0.043 total
+
+$ time node dist/cli/bin.js swipe 200 700 200 300 --duration 99999999999999999999 --device D0B3A18C-...
+{"ok":false,...,"details":{"received":"99999999999999999999"}}
+   0.04s user 0.01s system 115% cpu 0.043 total
+```
+
+`--duration 60000`(경계)은 unit(mock, `swipe.test.ts`)에서 정확한 `{durationMs:60000}` 호출로 확인했다 — 실기기에서 60초 전량 실행은 이 세션에서 생략했다(60초 대기 자체가 검증 대상이 아니라 argv 통과 여부가 대상이며, 이는 이미 mock 테스트가 정밀하게 확인한다).
+
+### 테스트 스위트
+
+```
+$ pnpm vitest run
+ Test Files  29 passed (29)
+      Tests  622 passed (622)
+```
+
+기준선(0.4.0 sync, M6 종료) 553 → 622(+69): `scroll-geometry.test.ts`(홀수 축 픽스처 + AC-GEST-022 다중 조합), `scroll.test.ts`(C-5 독립 유도 픽스처 + AC-GEST-022 CLI 전구간 + 0.002 재작업), `web-support.test.ts`(`buildScrollIntoViewExpression` vm 샌드박스 4건), `validators.test.ts`(상한 4건), `swipe.test.ts`(AC-GEST-025 3건). 신규 파일 없음(기존 5개 파일만 확장) — `total_run_phase_files`는 M6까지의 20에서 불변.
+
+### Typecheck + Build
+
+```
+$ pnpm typecheck  → exit 0
+$ pnpm build      → exit 0
+```
+
+### Scope Check
+
+```
+$ git status --porcelain --untracked-files=no
+ M .moai/specs/SPEC-GESTURE-001/spec.md
+ M src/cli/commands/scroll-geometry.test.ts
+ M src/cli/commands/scroll-geometry.ts
+ M src/cli/commands/scroll.test.ts
+ M src/cli/commands/swipe.test.ts
+ M src/cli/commands/web-support.test.ts
+ M src/cli/commands/web-support.ts
+ M src/cli/validators.test.ts
+ M src/cli/validators.ts
+```
+
+plan.md §A.6 M7 행: `scroll-geometry.ts`, `scroll.ts`(내용 변경 불필요 — 아래 "블로커/서프라이즈" 4번), `web-support.ts`, `validators.ts` + 각 테스트 파일 — `scroll.ts` 자체가 변경되지 않은 것만 예외이고 나머지는 정확히 일치. `swipe.test.ts`는 plan.md §A.6 M7 행에 없지만, AC-GEST-025가 `swipe` 커맨드의 종단 동작이라 M6의 "스코프 판단" 선례(AC-GEST-019/`swipe.test.ts`)를 그대로 따라 테스트만 추가했다 — `swipe.ts` 프로덕션 코드는 건드리지 않았다(아래 "블로커/서프라이즈" 1번 참조, 최초 시도에서 되돌림). `spec.md`는 §C.1-⑭ 행만 수정(지시문이 명시적으로 허용). `progress.md`(본 파일)는 이번 커밋에 함께 포함. README.md/CHANGELOG.md 미변경(지시문 Section D — 별도 docs 위임). `src/normalize/*`, `src/webview/{inspector-client,proxy-service,calibration}.ts`(PRESERVE 목록) 미변경 확인.
+
+### MX 태그
+
+`scroll-geometry.ts`: `MIN_EFFECTIVE_SWIPE_PX`에 `@MX:NOTE`(측정값 출처), `isDegenerateSwipe`에 `@MX:ANCHOR`+`@MX:REASON`(fan_in >= 3: `scroll.ts` + `minNonDegenerateRatio` 내부 호출 + 다수 테스트 픽스처) 추가 — 파일 누적 ANCHOR 2개, NOTE 1개(한도 3/10 이내). `validators.ts`: `MAX_DURATION_MS`에 `@MX:NOTE`(설계 선택, 측정값 아님) 추가.
+
+### 시뮬레이터 정리 (Section E 항목 8)
+
+```
+$ xcrun simctl list devices booted
+    iPhone 17 Pro (D0B3A18C-E485-4E7C-A25E-504BF4CA6163) (Booted)
+$ idb list-targets | grep -i booted
+iPhone 17 Pro | D0B3A18C-... | Booted | ...
+```
+
+측정에 사용한 두 번째 시뮬레이터(393x852/375x667 검증)는 부팅하지 않았다 — AC-GEST-022의 공식 검증 방식이 `unit`뿐이라(acceptance.md), 순수 함수 픽스처로 충분했다(아래 "블로커/서프라이즈" 3번 참조). 로컬 `python3 -m http.server 8934`는 측정·e2e 종료 후 종료했다(`kill $(cat server.pid)`, 확인: `ps aux | grep http.server` 무출력).
+
+### 커밋
+
+M7 커밋 SHA: 아래 §E.3 참조(커밋 완료 후 backfill — 자기참조 문제, spec-frontmatter-schema.md § SHA placeholder backfill exemption 패턴 그대로).
+
+## §E.3 Run-phase Audit-Ready Signal (M7 최종 — 0.5.0 amendment)
+
+```yaml
+run_status: M7-complete
+run_complete_at: "2026-07-28"
+run_commit_sha: "pending-backfill-m7"   # 별도 backfill 커밋에서 채움
+ac_pass_count: 5      # M7 자체 판정: AC-GEST-018(재작업), 022, 023, 024, 025
+ac_fail_count: 0
+ac_partial_count: 0
+total_run_phase_files: 20   # M7은 기존 5개 파일만 확장(scroll.ts는 무변경) -- M6까지의 20에서 불변
+preserve_list_post_run_count: 0   # src/normalize/*, src/webview/{inspector-client,proxy-service,calibration}.ts 미변경
+new_warnings_or_lints_introduced: false
+l44_pre_commit_fetch: pending
+l44_post_push_fetch: not_applicable   # 이 SPEC은 push하지 않는다(지시문 Section D "Do not push")
+cross_platform_build: { windows: not_applicable, note: "TypeScript/Node 프로젝트, GOOS 교차빌드 대상 아님" }
+m1_to_mN_commit_strategy: "M7은 단일 커밋(fix)으로 마감 -- 측정값이 술어(C-1/C-2)의 유일한 입력이고, C-1/C-3/C-4/C-5가 서로 다른 파일이지만 모두 같은 재감사(0.76)가 지목한 세 건에서 파생돼 분리가 인위적이다(M6과 동일 판단)"
+```
+
+## 블로커 / 서프라이즈 (M7 종료 시점 — 0.5.0 amendment 최종)
+
+1. **[가장 중요] `swipe.ts`의 `INVALID_DURATION` 메시지에 상한을 언급하려다 되돌렸다 — 스코프 규율**: C-4 구현 직후 `swipe.ts`의 오류 메시지("...positive integer number of milliseconds.")에 "at most 60000 (60s)"를 추가했으나, plan.md §A.6 M7 행과 지시문 Section D가 나열한 정확한 파일 목록에 `swipe.ts`가 없다는 것을 확인하고 **되돌렸다**(`git checkout -- src/cli/commands/swipe.ts`). M6이 정확히 같은 종류의 발견(§E.4 "잔여 관찰" 참조 — M6 블로커 1번)을 남기고도 스코프 밖이라 손대지 않았던 선례를 그대로 따랐다. 어떤 테스트도 정확한 메시지 문구를 단언하지 않으므로(`received` 필드만 확인) 되돌림이 회귀를 만들지 않았다 — `pnpm vitest run` 재확인 완료. 메시지가 이제 60000 상한을 언급하지 않는다는 사실을 다음 세션(또는 docs 위임)을 위해 명시적으로 남긴다.
+2. **문턱 측정이 깨끗하게 수렴해 블로커 경로가 발동하지 않았다**: 지시문이 예고한 "확률적 대역이면 블로커로 올리라"는 조건은 이번 세션에서 발동하지 않았다 — 9-10pt 구간의 산발적 이동(1-2/15)은 4-8pt 구간이 일관되게 0인 것과 대비해 측정 잡음으로 판단했고, 11pt에서 세로 15/15·가로 10/10으로 완전히 안정된 단일 정수 경계를 확인했다. 두 축이 우연히 같은 값(11)으로 수렴한 것도 흥미로운 관찰이지만, spec.md는 "다르면 둘 다 기록"이라고 했지 "달라야 한다"고 하지 않았으므로 REQ 위반이 아니다.
+3. **AC-GEST-022의 홀수 축 검증에 두 번째 시뮬레이터를 부팅하지 않았다 — 의도된 판단**: 지시문은 "홀수 축 테스트에 다른 시뮬레이터 부팅이 예상된다"고 적었으나, acceptance.md의 AC-GEST-022 검증 방식은 `unit`뿐이다(`scroll-geometry.test.ts`/`scroll.test.ts`의 순수 함수·mock dump 픽스처로 393x852/375x667을 만들었다 — 실제 기기 화면 크기가 아니라 논리적 화면 크기이므로 실기기가 필요 없다). 두 번째 시뮬레이터를 부팅했다면 "필요 없는 부팅 + 정리" 비용만 늘었을 것이라 판단해 생략했다 — 스스로 내린 판단이며, sync-auditor가 실기기 재현을 원하면 이 판단을 재검토할 수 있는 지점으로 남긴다.
+4. **`scroll.ts`는 M7에서 단 한 줄도 바뀌지 않았다**: plan.md §A.6는 `scroll.ts`를 M7 대상 파일로 나열했지만, `isDegenerateSwipe`/`minNonDegenerateRatio`의 시그니처가 그대로이고 `scroll.ts`는 그 함수들을 이름으로만 호출하므로 내부 로직 교체가 자동으로 전파됐다 — 변경할 코드가 없었다. `git diff`가 `scroll.ts`를 보여주지 않는 것은 누락이 아니라 이 사실의 증거다.
+5. **`--web` 프록시 불안정성이 다시 관측됐다 — M4/M5와 동일 계열, 새로운 근본 원인 없음**: 컨테이너 스크롤 e2e 시도 중 `AMBIGUOUS_PAGE`(잔여 탭 3개)와 `NO_WEB_PAGE`(Safari 재시작 직후에도 간헐)를 다시 만났다. M5가 이미 기록한 완화책(호출 사이 간격)으로 극복했다 — 새로운 발견은 없고, SPEC-WEBVIEW-001 영역이므로 이번에도 근본 수정을 시도하지 않았다.
+6. **범위 이탈 없음**: `src/normalize/*`, `src/webview/{inspector-client,proxy-service,calibration}.ts`(PRESERVE) 미변경. README.md/CHANGELOG.md 미변경(docs 위임). SPEC 본문 중 `spec.md` §C.1-⑭ 행만 수정(지시문이 명시적으로 허용) — `plan.md`/`acceptance.md`는 미변경, `spec.md`의 다른 절도 미변경. frontmatter `status: in-progress` 그대로 유지 — 재마감(`in-progress → implemented → completed`)은 manager-docs 소관.
