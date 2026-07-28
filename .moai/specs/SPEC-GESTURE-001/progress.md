@@ -1489,7 +1489,7 @@ src/cli/commands/web-support.ts:1 # NOTE 1 (M8 이전부터 존재, 이번 변�
 ```yaml
 run_status: M9-complete
 run_complete_at: "2026-07-28"
-run_commit_sha: pending-backfill-m9   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3). 후속 backfill 커밋에서 채운다(0.3.0~0.6.0 sync에서 이미 여러 번 쓰인 패턴 그대로).
+run_commit_sha: "e23940f"   # backfill 완료(자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 여러 번 쓰인 패턴 그대로). 이 값을 담은 별도 backfill 커밋 참조.
 ac_pass_count: 2      # M9 자체 판정: AC-GEST-030, AC-GEST-031
 ac_fail_count: 0
 ac_partial_count: 0
