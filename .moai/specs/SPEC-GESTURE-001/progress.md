@@ -2,7 +2,7 @@
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 진행 기록"
 version: "0.5.0"
-status: in-progress
+status: completed
 created: 2026-07-27
 updated: 2026-07-28
 author: hatae
@@ -1064,3 +1064,52 @@ m1_to_mN_commit_strategy: "M7은 단일 커밋(fix)으로 마감 -- 측정값이
 4. **`scroll.ts`는 M7에서 단 한 줄도 바뀌지 않았다**: plan.md §A.6는 `scroll.ts`를 M7 대상 파일로 나열했지만, `isDegenerateSwipe`/`minNonDegenerateRatio`의 시그니처가 그대로이고 `scroll.ts`는 그 함수들을 이름으로만 호출하므로 내부 로직 교체가 자동으로 전파됐다 — 변경할 코드가 없었다. `git diff`가 `scroll.ts`를 보여주지 않는 것은 누락이 아니라 이 사실의 증거다.
 5. **`--web` 프록시 불안정성이 다시 관측됐다 — M4/M5와 동일 계열, 새로운 근본 원인 없음**: 컨테이너 스크롤 e2e 시도 중 `AMBIGUOUS_PAGE`(잔여 탭 3개)와 `NO_WEB_PAGE`(Safari 재시작 직후에도 간헐)를 다시 만났다. M5가 이미 기록한 완화책(호출 사이 간격)으로 극복했다 — 새로운 발견은 없고, SPEC-WEBVIEW-001 영역이므로 이번에도 근본 수정을 시도하지 않았다.
 6. **범위 이탈 없음**: `src/normalize/*`, `src/webview/{inspector-client,proxy-service,calibration}.ts`(PRESERVE) 미변경. README.md/CHANGELOG.md 미변경(docs 위임). SPEC 본문 중 `spec.md` §C.1-⑭ 행만 수정(지시문이 명시적으로 허용) — `plan.md`/`acceptance.md`는 미변경, `spec.md`의 다른 절도 미변경. frontmatter `status: in-progress` 그대로 유지 — 재마감(`in-progress → implemented → completed`)은 manager-docs 소관.
+
+## §E.4 Sync-phase Audit-Ready Signal (0.5.0 amendment)
+
+> 0.4.0 마감 시점의 §E.4(위, "sync_commit_sha: e10995f")는 그대로 보존한다 — 이 절은 M7(0.5.0 amendment) 코드 수정 이후의 README/CHANGELOG 정정 + 재마감 sync를 담는 **별도의 새 sync 레코드**다.
+
+```yaml
+sync_status: audit-ready
+sync_complete_at: "2026-07-28"
+sync_commit_sha: "pending-backfill-0.5.0-sync"   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 세 번 쓰인 패턴 그대로. 별도 후속 backfill 커밋에서 실제 SHA로 정정한다.
+b12_self_test_a: "grep -c 'SPEC-GESTURE-001' CHANGELOG.md (편집 전) -> 6 -- 기존 [Unreleased] 블록(Added/Fixed/Notes)을 제자리에서 수정 + Fixed에 0.5.0 서브블록 1개 신규 추가(편집 후 7). 새 최상위 [Unreleased] 항목을 추가한 것이 아니라 기존 블록 내부를 갱신했으므로 중복 방출 아님"
+b12_self_test_b: "grep -cE '^### AC-GEST-[0-9]+' acceptance.md -> 25 -- CHANGELOG Notes/README Status의 '25 acceptance criteria' 표기와 일치"
+b12_self_test_c: "CHANGELOG/README가 인용한 모든 파일 경로를 커밋 전 Read로 실재 확인: src/cli/commands/scroll-geometry.ts(MIN_EFFECTIVE_SWIPE_PX/isDegenerateSwipe/minNonDegenerateRatio), scroll.ts, swipe.ts, web-support.ts(buildScrollIntoViewExpression), validators.ts(MAX_DURATION_MS/parseDurationMs). 인용한 모든 수치는 빌드된 dist/cli/bin.js를 부팅된 iPhone 17 Pro 시뮬레이터(D0B3A18C-E485-4E7C-A25E-504BF4CA6163)에 대해 직접 재실행해 확인(scroll down --amount 0.001/0.002/0.013/0.014, swipe --duration 0/60001/abc)"
+changelog_entry_position: "[Unreleased] -> Added(swipe/scroll/tap --web 세 불릿을 제자리 수정 -- 측정된 11pt 문턱·60000ms 상한·요소 사각형 오라클 반영) + Fixed(0.5.0 amendment 신규 서브블록 1개, C-1~C-5 전부 포함) + Notes(AC 집계 19/2/21 -> 23/2/25 갱신)"
+frontmatter_status_transitions:
+  spec_md: "in-progress -> completed"
+  plan_md: "in-progress -> completed"
+  acceptance_md: "in-progress -> completed"
+  progress_md: "in-progress -> completed"
+  updated_date: "2026-07-28 -> 2026-07-28 (당일 amendment 재마감, 4개 아티팩트 전부 -- M7이 이미 같은 날짜로 갱신해둔 상태)"
+canary_compliance_check: not_applicable   # 본 SPEC은 자기 자신의 sync를 테스트하는 전향적 정책을 정의하지 않음
+```
+
+### 문서 반영 (0.5.0 amendment)
+
+| 문서 | 반영 내용 |
+|------|-----------|
+| `README.md` | B-1(`scroll --amount` 예시를 실측 CLI 출력으로 교체 — 낡은 `minValidRatio`/`0.002` 성공 예시 정정, 문턱이 10px→12px로 점프하며 11px을 건너뛰는 이유 설명 추가) · B-2(`AMOUNT_TOO_SMALL`이 터치 슬롭 문턱에서 비롯됨을 설명 + 측정 범위를 시뮬레이터 1대·iOS 26.0으로 한정하는 고지 신설) · B-3(`-scrolled` 판정 근거를 `window.scrollY`에서 요소 자신의 `getBoundingClientRect()` 비교로 정정, 0.4.0→0.5.0 두 라운드 결함을 모두 서술) · B-4(`--duration` 60000ms 상한 고지 + `--duration 60001` 예시, 설계 선택임을 명시) · Status 절 테스트/AC 집계 갱신(553→622 테스트, 19/2/21→23/2/25 AC) + 0.5.0 amendment 요약 신설 |
+| `CHANGELOG.md` | `[Unreleased]` 기존 SPEC-GESTURE-001 블록을 **제자리에서** 수정 — Added의 `swipe`/`scroll`/`tap --web` 세 불릿에 0.5.0 반영, `### Fixed`에 0.5.0 amendment 요약 신규 서브블록(C-1~C-5 전부 포함), `### Notes`의 AC 집계 갱신 |
+
+### 잔여 관찰 (다음 세션 참고)
+
+- 이 sync는 문서 정정 + 재마감만 위임받았다(지시문 Section D) — `src/`는 건드리지 않았다. `pnpm vitest run`/`pnpm typecheck`/`pnpm build`는 이 sync 커밋 직전 재확인했다(아래 최종 검증).
+- 세 번째 재감사가 이 sync 이후 실행된다(지시문 Section C-4) — push하지 않는다.
+
+### 최종 검증 (실제 명령 출력)
+
+```
+$ pnpm vitest run   → exit 0 — Test Files 29 passed, Tests 622 passed
+$ pnpm typecheck    → exit 0
+$ pnpm build        → exit 0
+$ grep -c "SPEC-GESTURE-001" CHANGELOG.md   → 7
+$ grep -cE '^### AC-GEST-[0-9]+' .moai/specs/SPEC-GESTURE-001/acceptance.md   → 25
+```
+
+### 커밋
+
+이 sync 커밋은 `README.md` + `CHANGELOG.md` + SPEC 아티팩트 4종(frontmatter만, `progress.md`는 본문도 포함 — 이 §E.4 자체)을 담는다. `src/`는 건드리지 않는다(지시문 Section D). 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인한다. push는 지시문 Section C-4("Do NOT push. A third re-audit runs after you.")에 따라 수행하지 않는다.
+
+sync 커밋 SHA: pending-backfill(위 참조). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — 0.3.0/0.4.0 sync에서 이미 두 번 쓰인 패턴 그대로.

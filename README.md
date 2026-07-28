@@ -8,7 +8,7 @@ including multi-device interaction testing.
 
 > **Status**: core Android/adb primitives + environment bootstrap, the
 > iOS Simulator/idb backend, gesture primitives (`swipe`/`scroll`), and
-> the iOS **web content** path are implemented and unit/mock-tested (553
+> the iOS **web content** path are implemented and unit/mock-tested (622
 > tests, all green). The **iOS backend has been verified end-to-end
 > against a booted simulator** (2026-07-26, iPhone 17 Pro / iOS 26.0):
 > launch Safari, dump the element tree, tap by selector, type, send
@@ -268,14 +268,24 @@ injects a hidden default (design decision D1,
 zero-duration gesture cannot move anything — the same as an unparseable
 or empty value, both returning `INVALID_DURATION`. A value that *looks*
 negative (`--duration -100`) is instead caught earlier by the argument
-parser as `INVALID_ARGS`. Every rejection sends zero gestures.
-Coordinates follow a *separate* rule and keep `0` as valid (e.g.
-`swipe 0 0 0 100` is legitimate) — only `--duration`'s own parser treats
-`0` as invalid:
+parser as `INVALID_ARGS`. `--duration` also has an **upper bound of
+60,000 ms (60s)**. Unlike the touch-slop floor `scroll` measures (see
+below), this ceiling is a **design choice, not a measurement**: beyond
+a minute a gesture stops being a swipe and becomes a long-press-drag,
+which is already out of scope for this command, and the ceiling's only
+job is to rule out an unbounded hang — before it existed,
+`--duration 1e24` was measured to hang the command indefinitely,
+requiring a forced kill. Every rejection — zero, too large, unparseable,
+or empty — sends zero gestures. Coordinates follow a *separate* rule and
+keep `0` as valid (e.g. `swipe 0 0 0 100` is legitimate) — only
+`--duration`'s own parser treats `0` as invalid:
 
 ```bash
 $ npx explore-mobile swipe 200 700 200 300 --duration 0
-{"ok":false,"command":"swipe","error":{"code":"INVALID_DURATION","message":"swipe --duration requires a positive integer number of milliseconds.","details":{"received":"0"}}}
+{"ok":false,"command":"swipe","error":{"code":"INVALID_DURATION","message":"swipe --duration requires a positive integer number of milliseconds, at most 60000.","details":{"received":"0"}}}
+
+$ npx explore-mobile swipe 200 700 200 300 --duration 60001
+{"ok":false,"command":"swipe","error":{"code":"INVALID_DURATION","message":"swipe --duration requires a positive integer number of milliseconds, at most 60000.","details":{"received":"60001"}}}
 ```
 
 The four coordinates follow the same non-negative-integer rule as `tap`,
@@ -322,26 +332,46 @@ value is `INVALID_AMOUNT`; a value that looks negative
 (`--amount -0.5`) is instead caught by the argument parser as
 `INVALID_ARGS`. Both send zero gestures.
 
-A ratio *inside* that valid range can still be rejected: on a small
-enough screen, a very small ratio rounds to the same start and end pixel
-after coordinate rounding, producing a swipe that would move nothing.
-That case returns `AMOUNT_TOO_SMALL` — a **different** code from
-`INVALID_AMOUNT`, because the ratio itself is not out of contract (a
-larger screen would accept the same ratio without complaint; the
-rejection depends on this screen's size, which only the geometry step
-knows). The response's `details.minValidRatio` reports the smallest
-ratio that *would* move this specific screen, so a caller knows what to
-retry with instead of guessing:
+A ratio *inside* that valid range can still be rejected: the platform
+has a **touch slop** — a minimum drag distance below which the OS
+treats a gesture as a tap rather than a scroll, not something this CLI
+invents. Below that many device pixels nothing happens, even though
+the coordinates genuinely differ. `scroll` measures this floor once
+(`MIN_EFFECTIVE_SWIPE_PX`, see the provenance note below) and rejects
+any ratio whose resulting distance falls under it, before sending
+anything. That case returns `AMOUNT_TOO_SMALL` — a **different** code
+from `INVALID_AMOUNT`, because the ratio itself is not out of contract
+(a larger screen would accept the same ratio without complaint; the
+rejection depends on this screen's size converting the ratio to fewer
+pixels than the floor, which only the geometry step knows). The
+response's `details.minValidRatio` reports the smallest ratio that
+*would* clear the floor on this specific screen, so a caller knows what
+to retry with instead of guessing. The distance is centre-symmetric, so
+it grows in steps of two device pixels — the boundary jumps straight
+from a rejected 10px distance to an accepted 12px one, with no ratio
+landing on exactly the measured floor itself:
 
 ```bash
 $ npx explore-mobile scroll down --amount 0.001
-{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"scroll --amount is too small to move the screen at this size; no gesture was sent.","details":{"requestedRatio":0.001,"minValidRatio":0.001271294429898262}}}
+{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"scroll --amount is too small to move the screen at this size; no gesture was sent.","details":{"requestedRatio":0.001,"minValidRatio":0.013984236866235733}}}
 
 $ npx explore-mobile scroll down --amount 0.002
-{"ok":true,"command":"scroll","data":{"serial":"D0B3A18C-…","direction":"down","from":{"x":201,"y":438},"to":{"x":201,"y":436}}}
+{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"scroll --amount is too small to move the screen at this size; no gesture was sent.","details":{"requestedRatio":0.002,"minValidRatio":0.013984236866235733}}}
+
+$ npx explore-mobile scroll down --amount 0.014
+{"ok":true,"command":"scroll","data":{"serial":"D0B3A18C-…","direction":"down","from":{"x":201,"y":443},"to":{"x":201,"y":431}}}
 ```
 
 No gesture is sent when `AMOUNT_TOO_SMALL` is returned.
+
+**The floor itself is a measured value, not a chosen one.** It comes
+from one iPhone 17 Pro simulator running iOS 26.0 — binary search
+across repeated trials, judged by comparing before/after screenshots
+with the status bar cropped out (11pt on both axes; see
+[`spec.md` §C.1-⑭](.moai/specs/SPEC-GESTURE-001/spec.md) for the full
+trial record). It is **not** established for real iOS hardware, other
+iOS device models, or Android — this project has no `adb` available, so
+Android's own touch slop cannot be measured here at all.
 
 `scroll` cannot confirm the screen actually moved — like `swipe`, it
 sends the gesture and returns; re-run [`dump`](#dump) to check. It also
@@ -469,18 +499,29 @@ scroll nor the fallback is ever silent:
 | `js-click` | JS fallback, no scroll needed. |
 | `js-click-scrolled` | Scrolled, still unconvertible, JS fallback. |
 
-The `-scrolled` suffix is set only when the page's scroll position is
-**measured to have actually changed** — a `window.scrollY` comparison
-taken immediately before and after the `scrollIntoView` call, inside the
-same JS expression. `scrollIntoView` running without error only confirms
-the target node existed; it says nothing about whether the page moved
-(an already-visible element, or one inside a non-scrolling off-canvas
-container, leaves `scrollY` unchanged). An earlier version of this
-feature set `-scrolled` from that weaker existence signal alone, so a
-tap on such an element could be reported as `native-scrolled` or
-`js-click-scrolled` even though nothing moved — fixed in the
-SPEC-GESTURE-001 0.4.0 amendment after an independent review reproduced
-it live; see [CHANGELOG](CHANGELOG.md) for the exact defect.
+The `-scrolled` suffix is set only when the target element is
+**measured to have actually moved** — its own `getBoundingClientRect()`
+compared immediately before and after the `scrollIntoView` call, inside
+the same JS expression. `scrollIntoView` running without error only
+confirms the target node existed; it says nothing about whether
+anything moved (an already-visible element, or one inside a
+non-scrolling off-canvas container, leaves its rect unchanged). An
+earlier version of this feature set `-scrolled` from that weaker
+existence signal alone, so a tap on such an element could be reported
+as `native-scrolled` or `js-click-scrolled` even though nothing moved —
+fixed in the SPEC-GESTURE-001 0.4.0 amendment after an independent
+review reproduced it live.
+
+That 0.4.0 fix itself compared `window.scrollY`, which has its own
+blind spot: an element scrolling inside an `overflow:auto`
+**container** moves on screen without the window itself ever scrolling,
+so `scrollY` stays unchanged and the response wrongly reported no
+movement (`native` instead of `native-scrolled`) — a regression the
+0.4.0 fix introduced while closing the first gap. A 0.5.0 amendment
+replaced the `scrollY` comparison with the element's own bounding-rect
+comparison shown above, which covers window scroll, container scroll,
+and horizontal scroll with a single predicate; see
+[CHANGELOG](CHANGELOG.md) for the exact defects in both rounds.
 
 ```bash
 $ npx explore-mobile tap --web 'a[href*="Netscape"]' --page 1
@@ -624,8 +665,8 @@ contaminate either device's input-method state.
 
 Android (SPEC-ANDROID-001, all 8 milestones), the iOS Simulator backend
 (SPEC-IOS-001), the iOS web content path (SPEC-WEBVIEW-001), and gesture
-primitives (SPEC-GESTURE-001, including its 0.4.0 amendment) are
-implemented, with 553 unit/mock tests green.
+primitives (SPEC-GESTURE-001, including its 0.4.0 and 0.5.0 amendments)
+are implemented, with 622 unit/mock tests green.
 
 **iOS: verified against a real simulator** (2026-07-26, iPhone 17 Pro /
 iOS 26.0, fb-idb 1.1.7). A full Safari journey — `doctor` → `devices` →
@@ -698,20 +739,36 @@ close: a near-zero `--amount` that rounded to no movement (now
 `AMOUNT_TOO_SMALL`, above), a `--duration 0` that was silently accepted
 (now `INVALID_DURATION`, above), and a `tap --web` response that could
 report `-scrolled` when the page had not actually moved (now gated on a
-`scrollY` comparison, above) — see [CHANGELOG](CHANGELOG.md) for the
-full account. The fourth defect was a documentation gap rather than a
-code defect: `swipe --duration` omission being unreliable, not a settled
-default, is now disclosed directly under
-[`swipe`](#swipe-x1-y1-x2-y2-duration-ms) instead of only here. Final
-tally: **19 PASS / 2 PARTIAL / 0 FAIL across 21 acceptance criteria** in
+movement comparison, refined further below). The fourth defect was a
+documentation gap rather than a code defect: `swipe --duration` omission
+being unreliable, not a settled default, is now disclosed directly under
+[`swipe`](#swipe-x1-y1-x2-y2-duration-ms) instead of only here.
+
+**A second independent review found the 0.4.0 fixes themselves
+incomplete**, and a 0.5.0 amendment closed three more defects in the
+same failure family: the 0.4.0 degenerate-swipe guard tested
+`from === to`, a predicate that can only fire when a screen dimension
+is **even** — an odd-length axis has a half-integer centre, so rounding
+always splits the two endpoints apart and the guard never triggered,
+letting through exactly the 1px swipes 0.4.0 had just declared refused.
+`minValidRatio` inherited the same defect, reporting the smallest ratio
+whose endpoints merely *differ* rather than one that actually moves the
+screen. And the 0.4.0 `-scrolled` fix's own `window.scrollY` comparison
+missed a `overflow:auto` **container** scrolling into view, wrongly
+reporting no movement. All three are closed by the measured touch-slop
+floor and the element-rect comparison described above — see
+[CHANGELOG](CHANGELOG.md) for the full account of both rounds.
+
+Final tally across both amendments: **23 PASS / 2 PARTIAL / 0 FAIL
+across 25 acceptance criteria** in
 `.moai/specs/SPEC-GESTURE-001/progress.md`. The two PARTIALs are
 AC-GEST-006 (Android, above) and AC-GEST-020 (the `--duration` omission
 reliability measurement — it is intermittent by nature, so a fixed
-pass/fail verdict would misstate it). One further item, AC-GEST-021 (the
-`-scrolled` evidence fix), is confirmed by unit tests that reproduce the
-exact defect condition, but its real-device reproduction was not
-completed in this amendment — recorded as an open gap, not claimed as
-verified.
+pass/fail verdict would misstate it). One further item, AC-GEST-021
+(the `-scrolled` evidence fix from the 0.4.0 amendment), is confirmed
+by unit tests that reproduce the exact defect condition, but its
+real-device reproduction was never completed — recorded as an open gap,
+not claimed as verified.
 
 The `--web` proxy session (SPEC-WEBVIEW-001, unrelated to
 SPEC-GESTURE-001's own changes) was found to still be unstable across

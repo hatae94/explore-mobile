@@ -223,8 +223,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     amendment below), same as an unparseable or empty value; a
     negative-looking literal (`--duration -100`) is instead caught
     earlier by the argument parser as `INVALID_ARGS` — every branch
-    sends zero gestures. Coordinates keep a separate, unaffected rule:
-    `0` remains a valid coordinate. Omitting `--duration` entirely is
+    sends zero gestures. `--duration` is also bounded above at
+    **60,000 ms (60s)** since the 0.5.0 amendment below — a design
+    ceiling, not a measurement, that exists solely to rule out an
+    unbounded hang (`--duration 1e24` was measured to hang the command
+    indefinitely before this bound existed). Coordinates keep a
+    separate, unaffected rule: `0` remains a valid coordinate.
+    Omitting `--duration` entirely is
     accepted (the platform default is used) but was measured to be
     **unreliable** on a real device — 3/5 and 5/5 movement across two
     separate sessions — so this is now disclosed directly in the
@@ -246,14 +251,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `--amount` (0 excluded, 1 included) is `INVALID_AMOUNT`; a
     negative-looking literal is `INVALID_ARGS`, same as `--duration`. A
     ratio *inside* that valid range can still be rejected as
-    `AMOUNT_TOO_SMALL` (see the 0.4.0 amendment below) — a **different**
-    code from `INVALID_AMOUNT`, because it depends on this specific
-    screen's size rather than the contract range: coordinate rounding
-    can collapse a small enough ratio to a zero-pixel swipe (e.g. `0.001`
-    on a 402×874 screen), and only the geometry step — not a static
-    validator — can tell. The response's `details.minValidRatio` reports
-    the smallest ratio that would move this specific screen. No gesture
-    is sent in either rejection case.
+    `AMOUNT_TOO_SMALL` (see the 0.4.0 and 0.5.0 amendments below) — a
+    **different** code from `INVALID_AMOUNT`, because it depends on
+    this specific screen's size rather than the contract range: the
+    platform's touch-slop floor, measured at 11pt on both axes (one
+    iPhone 17 Pro simulator, iOS 26.0 — not established for real
+    hardware, other iOS models, or Android), rejects any ratio whose
+    resulting distance falls under it, and only the geometry step — not
+    a static validator — can tell. The response's `details.minValidRatio`
+    reports the smallest ratio that would clear the floor on this
+    specific screen. No gesture is sent in either rejection case.
   - **`tap --web` now reaches below-the-fold elements with a real
     touch.** An off-viewport web element previously fell back straight
     to the JS `click()` path. It is now scrolled into view, re-measured,
@@ -261,12 +268,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     *still* unconvertible after that. The response's `method` field
     grows from two values to four — `native`, `native-scrolled`,
     `js-click`, `js-click-scrolled`. The `-scrolled` suffix is set only
-    when the page's scroll position is **measured to have actually
-    changed** — a `window.scrollY` comparison taken immediately before
-    and after the `scrollIntoView` call, inside the same JS expression —
+    when the target element is **measured to have actually moved** —
+    its own `getBoundingClientRect()` compared immediately before and
+    after the `scrollIntoView` call, inside the same JS expression —
     not merely because `scrollIntoView` ran without error, which only
-    confirms the target node existed (see the 0.4.0 amendment below for
-    the defect this closes).
+    confirms the target node existed (see the 0.4.0 and 0.5.0
+    amendments below for the two rounds of defects this closes).
 - Android gesture support is **argv-verified only**: `adb` itself is not
   installed on the machine this SPEC was built on, so not even
   `adb shell input swipe --help` could be checked. `swipe`/`scroll`
@@ -317,9 +324,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `idb screenshot` requires a `dest_path` positional; `-` is now passed
     to keep the no-disk-residue stdout contract.
 - **Four `ok:true`-with-no-observable-effect defects, found by an
-  independent post-close review and fixed before this entry's final
-  close** (SPEC-GESTURE-001 amendment 0.4.0). The SPEC closed once
-  (0.3.0); a subsequent sync-auditor pass reproduced four cases where
+  independent post-close review** (SPEC-GESTURE-001 amendment 0.4.0).
+  The SPEC closed once (0.3.0); a subsequent sync-auditor pass
+  reproduced four cases where
   the CLI reported success while nothing observably changed on the
   device — worse than an error for an AI-agent caller, which has no way
   to detect a no-op success and proceeds on a false premise. The SPEC
@@ -340,7 +347,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     that the page moved. An off-viewport element inside an
     already-scrolled or non-scrolling container could report
     `js-click-scrolled` while `window.scrollY` never changed. Now gated
-    on an explicit before/after `scrollY` comparison (details above).
+    on an explicit before/after movement comparison (details above; the
+    oracle itself was refined again in the 0.5.0 amendment below).
   - `swipe --duration` omitted entirely is intermittently a no-op on a
     real device (measured 3/5 and 5/5 movement across two separate
     sessions — session-variable, not a fixed rate). This one is not a
@@ -349,6 +357,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     is a documentation obligation — the unreliability is now disclosed
     directly in the [`swipe`](README.md#swipe-x1-y1-x2-y2-duration-ms)
     command reference, not only in a separate limitations section.
+- **Three more `ok:true`-with-no-observable-effect defects, found by a
+  second independent review of the 0.4.0 fixes above** (SPEC-GESTURE-001
+  amendment 0.5.0). The 0.4.0 fixes closed four defects but left three
+  more open in the same failure family — the guard rested on a
+  coordinate-equality accident rather than a measured value:
+  - The 0.4.0 degenerate-swipe guard tested `from === to` (the rounded
+    start and end pixel are literally the same point). That predicate
+    can only fire when a screen dimension is **even**: the geometric
+    centre of an odd-length axis is a half-integer, so rounding the two
+    endpoints apart never lands them back on the same pixel — the guard
+    silently never triggered on an odd axis and let through exactly the
+    1px swipes 0.4.0 had just declared it refuses (`402x874` triggers
+    the guard on both axes; `393x852` triggers only on its even axis;
+    `375x667`, both axes odd, never triggers at all). The predicate is
+    now "distance below a measured floor" rather than "coordinates
+    equal" (details above).
+  - `minValidRatio` inherited the same defect: it reported the smallest
+    ratio whose *endpoints differ* (2px on an even axis, 1px on an odd
+    one), not the smallest ratio that actually moves the screen — a
+    value that itself measured **0 out of 3** for moving anything.
+    `minValidRatio` now reports the smallest ratio clearing the measured
+    floor, so re-submitting the value it returns actually succeeds.
+  - The 0.4.0 `-scrolled` fix compared `window.scrollY` before and after
+    `scrollIntoView`, which missed an element scrolling inside an
+    `overflow:auto` **container**: the container visibly moved but
+    `window.scrollY` never changed, so the response wrongly reported
+    `native` (no movement) — a regression against the pre-0.4.0 build,
+    introduced while fixing the original over-reporting defect. The
+    oracle now compares the target element's own
+    `getBoundingClientRect()` (details above).
+  - Separately, an adjacent defect surfaced during the 0.5.0 audit:
+    `--duration` had no upper bound, so `--duration 1e24` hung the
+    command indefinitely (a forced kill was required). A 60,000 ms
+    (60s) ceiling — a design choice, not a measurement — now rejects it
+    as `INVALID_DURATION` (details above).
 
 ### Changed
 
@@ -454,15 +497,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run; the root cause (proxy attach/detach timing, not only page-count
   ambiguity) is out of that SPEC's scope and is recorded here so it is
   not rediscovered as new.
-- Recorded as **19 PASS / 2 PARTIAL / 0 FAIL across 21 acceptance
-  criteria** in `.moai/specs/SPEC-GESTURE-001/progress.md` (21 = the
-  original 17 plus 4 added by the 0.4.0 amendment above, AC-GEST-018
-  through 021). The two PARTIALs are AC-GEST-006 (Android real-device
-  swipe, which cannot be promoted to PASS on this machine because `adb`
-  itself is not installed, not only because no device is connected) and
+- Recorded as **23 PASS / 2 PARTIAL / 0 FAIL across 25 acceptance
+  criteria** in `.moai/specs/SPEC-GESTURE-001/progress.md` (25 = the
+  original 17, plus 4 added by the 0.4.0 amendment (AC-GEST-018 through
+  021), plus 4 more added by the 0.5.0 amendment (AC-GEST-022 through
+  025)). The two PARTIALs are AC-GEST-006 (Android real-device swipe,
+  which cannot be promoted to PASS on this machine because `adb` itself
+  is not installed, not only because no device is connected) and
   AC-GEST-020 (the `--duration` omission reliability measurement, which
   is intermittent by nature and so is recorded as a measured rate rather
-  than a pass/fail verdict). AC-GEST-021 (the `-scrolled` evidence fix)
-  is confirmed by unit tests reproducing the exact defect condition, but
-  its real-device reproduction was not completed in this amendment —
-  recorded as an open gap rather than claimed as verified.
+  than a pass/fail verdict). AC-GEST-021 (the `-scrolled` evidence fix
+  from the 0.4.0 amendment) is confirmed by unit tests reproducing the
+  exact defect condition, but its real-device reproduction was never
+  completed — recorded as an open gap rather than claimed as verified.
