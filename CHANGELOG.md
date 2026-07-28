@@ -263,7 +263,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     hardware or other iOS models), while Android derives
     `floor(8dp × density) + 2px` from a live `wm density` query (verified
     on one Samsung SM-S938N, 600 dpi — not established for other
-    densities or manufacturers). The response's `details.minValidRatio`
+    densities or manufacturers), reading whichever density line actually
+    governs the device's own touch behavior — the `Override density:`
+    line when the device reports one, falling back to
+    `Physical density:` otherwise (see the 0.7.0 amendment below for why
+    this distinction matters). The response's `details.minValidRatio`
     reports the smallest ratio that would clear the floor on this
     specific screen, and the new `details.minValidRatioBasis` field
     (`"device-query"` | `"measured-constant"`) names which of the two
@@ -465,6 +469,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     for this CLI to find it) is unchanged, but the "not installed"
     wording itself was inaccurate and is corrected everywhere it
     appeared.
+- **Android's derived touch-slop floor read the wrong `wm density` line
+  once a device's Display size was changed — the third time this SPEC
+  has found and closed a defect in the same "reports success with no
+  effect, or with an unintended effect" family** (SPEC-GESTURE-001
+  amendment 0.7.0). The first two times were an independent post-close
+  audit (0.4.0/0.5.0 above) and a real Android device (0.6.0 above);
+  this time it was a follow-up measurement of a question the SPEC had
+  knowingly left open. The 0.6.0 amendment above derived Android's floor
+  from `wm density`'s `Physical density:` line. `wm density` also
+  reports a second `Override density:` line whenever a device's Display
+  size setting has been changed, and it is that value — not
+  `Physical density:` — that actually governs the OS's own touch-slop
+  behavior. Reading only `Physical` derives a floor that can sit
+  *below* the real slop when the display is set to an enlarged size,
+  and a `scroll` inside that gap is not a no-op: it is accepted, sent,
+  and Android interprets it as a **tap** on whatever sits under the
+  starting point (see the tap warning under the `swipe` entry above).
+  With the user's consent, the same device's Display size was
+  temporarily changed and measured, then restored: `Physical 600` alone
+  still derives 32px (unchanged); `Physical 600` with a shrunk
+  `Override 480` moved the screen at 25px 4 out of 6 times, which would
+  have been impossible if a Physical-only 30px slop actually governed.
+  The derivation now reads whichever line actually governs, falling
+  back to `Physical density:` when no `Override` line is present. This
+  closes the SPEC's own open question, but only partway: the measurement
+  pins the shrunk-display slop down to a range (`[22, 25)` px, from
+  three tried distances) rather than to a single pixel, and it did not
+  measure the *enlarged*-display direction at all — the direction that
+  actually matters, since that is the direction that can push the
+  derived floor below the real slop. The enlarged-display floor this
+  CLI ships today is derived from Android's own documented touch-slop
+  rule, not from a direct measurement of an enlarged-display device.
+- **`tap --web`'s scroll-into-view oracle sampled the page before an
+  animated scroll had actually finished**, silently degrading a native
+  touch into the JS `click()` fallback and failing to report `-scrolled`
+  for a scroll that genuinely happened (SPEC-GESTURE-001 amendment
+  0.7.0, found by an independent review). On a page or container
+  declaring CSS `scroll-behavior: smooth`, `scrollIntoView` returns
+  before its scroll animation completes; the element-rect comparison
+  the 0.5.0 amendment introduced re-measured the rect immediately,
+  reading the pre-scroll position even though the container
+  demonstrably scrolled moments later (measured: `containerScrollTop`
+  unchanged immediately after the call, then changed roughly 11 seconds
+  afterward). The call now forces
+  `scrollIntoView({block: "center", behavior: "instant"})`, ignoring the
+  page's own `scroll-behavior` deliberately — the point of this scroll
+  is a trustworthy coordinate, not animation fidelity — so the
+  rectangle sampled right after the call always reflects the true
+  post-scroll position.
 
 ### Changed
 
@@ -574,11 +627,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run; the root cause (proxy attach/detach timing, not only page-count
   ambiguity) is out of that SPEC's scope and is recorded here so it is
   not rediscovered as new.
-- Recorded as **28 PASS / 1 PARTIAL / 0 FAIL across 29 acceptance
-  criteria** in `.moai/specs/SPEC-GESTURE-001/progress.md` (29 = the
+- Recorded as **31 PASS / 1 PARTIAL / 0 FAIL across 32 acceptance
+  criteria** in `.moai/specs/SPEC-GESTURE-001/progress.md` (32 = the
   original 17, plus 4 added by the 0.4.0 amendment (AC-GEST-018 through
   021), plus 4 added by the 0.5.0 amendment (AC-GEST-022 through 025),
-  plus 4 added by the 0.6.0 amendment (AC-GEST-026 through 029)).
+  plus 4 added by the 0.6.0 amendment (AC-GEST-026 through 029), plus 3
+  added by the 0.7.0 amendment (AC-GEST-030 through 032)).
   AC-GEST-006 (Android real-device swipe) is now **PASS**, promoted by
   the 0.6.0 amendment above — a real Android device connected and `adb`
   turned out to be installed (see above), so the condition this project
@@ -589,3 +643,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the 0.4.0 amendment) is confirmed by unit tests reproducing the
   exact defect condition, but its real-device reproduction was never
   completed — recorded as an open gap rather than claimed as verified.
+  AC-GEST-032 (the last of the 0.7.0 amendment's three) checks whether
+  this file's and the README's own wording overstates what was
+  measured — the corrections made in this same documentation pass are
+  what satisfy it.

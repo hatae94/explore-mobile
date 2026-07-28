@@ -2,7 +2,7 @@
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 진행 기록"
 version: "0.7.0"
-status: in-progress
+status: completed
 created: 2026-07-27
 updated: 2026-07-28
 author: hatae
@@ -1502,3 +1502,73 @@ cross_platform_build: { windows: not_applicable, note: "TypeScript/Node 프로�
 total_run_phase_files: 20   # M9는 기존 2개 파일(+테스트)만 확장 -- 신규 파일 없음, M8까지의 20에서 불변
 m1_to_mN_commit_strategy: "M9는 단일 커밋(fix)으로 마감 -- 유효 밀도 파서(산출물 1)와 오라클 표본 시점(산출물 2)은 plan.md §G가 명시한 대로 서로 독립이지만 같은 amendment의 두 결함을 함께 닫으므로 분리가 인위적이다(M6/M7/M8과 동일 판단)"
 ```
+
+## §E.4 Sync-phase Audit-Ready Signal (0.7.0 amendment)
+
+> 0.6.0 마감 시점의 §E.4(위, "sync_commit_sha: ad06692")는 그대로 보존한다 — 이 절은 M9(0.7.0 amendment) 코드 수정 이후의 README/CHANGELOG 정정 + 재마감 sync를 담는 **별도의 새 sync 레코드**다.
+
+```yaml
+sync_status: audit-ready
+sync_complete_at: "2026-07-28"
+sync_commit_sha: "pending-backfill"   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 네 번(0.3.0/0.4.0/0.5.0/0.6.0) 쓰인 패턴 그대로. 별도 chore backfill 커밋에서 채운다(다섯 번째)
+b12_self_test_a: "grep -c 'SPEC-GESTURE-001' CHANGELOG.md (편집 전, HEAD c89cf78 시점) -> 11 -- 기존 [Unreleased] 블록(Added/Fixed/Notes)을 제자리에서 수정 + Fixed에 0.7.0 서브블록 2개 신규 추가(편집 후 13). 새 최상위 [Unreleased] 항목을 추가한 것이 아니라 기존 블록 내부를 갱신했으므로 중복 방출 아님"
+b12_self_test_b: "grep -cE '^### AC-GEST-[0-9]+' acceptance.md -> 32 -- CHANGELOG Notes/README Status의 '32 acceptance criteria' 표기와 일치(29 + 0.7.0 신규 3건)"
+b12_self_test_c: "CHANGELOG/README가 인용한 모든 파일 경로를 커밋 전 ls로 실재 확인: src/backend/adb-backend.ts, src/cli/commands/{web-support,scroll-geometry}.ts. 인용한 모든 수치는 이 sync 세션에서 직접 재실행해 확인 -- pnpm vitest run(29 files/644 tests, exit 0) + pnpm typecheck(exit 0) + pnpm build(exit 0) + 연결된 Android 실기기(adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp)에서 `wm density`(Physical density: 600, Override 없음 -- 변경/복원 아님, 애초에 그대로) 재확인 + `scroll down --amount 0.0001` 거부 경로로 minValidRatio 0.011039886623620987/basis device-query 재확인(기기에 어떤 제스처도 전송되지 않음, exit 1) + 부팅된 iPhone 17 Pro 시뮬레이터(D0B3A18C-E485-4E7C-A25E-504BF4CA6163)에서 같은 거부 경로로 minValidRatio 0.013984236866235733/basis measured-constant 재확인. spec.md §C.1-⑳/⑰의 22/25/26/30/31/32px 수치, §C.1-㉑의 11초 지연 수치는 M9 run-phase 실측 기록(위 §E.2)을 그대로 인용하고 별도 재측정하지 않음(디스플레이 밀도 재변경 금지, 지시문 Section D) -- 인용원인 progress.md 자체가 이미 이 세션의 검증 대상이므로 이중 재측정은 불필요"
+changelog_entry_position: "[Unreleased] -> Added(scroll 불릿에 유효 밀도 읽기 서술 추가, 0.7.0 참조) + Fixed(0.7.0 amendment 신규 서브블록 2개 -- 밀도 Override 결함 + 비동기 스크롤 오라클 결함) + Notes(AC 집계 28/1/29 -> 31/1/32 갱신, AC-GEST-032가 이 문서 정정 자체로 충족됨을 명시)"
+frontmatter_status_transitions:
+  spec_md: "in-progress -> completed"
+  plan_md: "in-progress -> completed"
+  acceptance_md: "in-progress -> completed"
+  progress_md: "in-progress -> completed"
+  updated_date: "2026-07-28 -> 2026-07-28 (당일 amendment 재마감, 4개 아티팩트 전부 -- M9가 이미 같은 날짜로 갱신해둔 상태)"
+canary_compliance_check: not_applicable   # 본 SPEC은 자기 자신의 sync를 테스트하는 전향적 정책을 정의하지 않음
+```
+
+### AC-GEST-032 판정 (docs 패스에서 확정)
+
+M9(run-phase)는 AC-GEST-032를 "미충족"으로 정직하게 남겼다(§E.3 위 참조, `ac_deferred_count: 1`) — README·CHANGELOG 정정은 docs 패스 소관이었기 때문이다. 이 sync가 그 docs 패스다. 아래 두 요건을 이번 편집으로 충족했으므로 **PASS로 승격**한다.
+
+| 요건(acceptance.md AC-GEST-032) | 충족 증거 |
+|---|---|
+| "왕복 성공(3/3, 네 방향)을 적는 자리에 측정의 가로 32px 5/6도 적혀 있다" | README.md `scroll` 절 — "though the underlying boundary measurement itself found the horizontal axis less settled... vertically, 32px measured a clean 8 out of 8, but horizontally it measured only 5 out of 6" 신규 삽입(NN8) |
+| "거리 증가 폭의 서술이 화면 축 길이의 홀짝으로 범위가 좁혀져 있다(문턱의 홀짝이 아니다)" | README.md `scroll` 절의 centre-symmetric 단락을 "screen axis' own length" 기준으로 전면 재작성(NN4) — `393×852`의 홀수 폭·`375×667`의 두 홀수 축이 iOS 11px 문턱에 정확히 얹힌다는 사실을 명시 |
+
+두 요건 모두 이 sync 커밋 자체가 충족시키므로, PASS 판정의 근거는 "이 문서 자신"이다 — 관측 대상과 관측 행위가 같은 커밋에 있다는 점은 이례적이지만, acceptance.md 원문이 "docs 패스에서 집행"이라고 명시적으로 예정해 둔 경로이므로 순서상 이상이 없다(M8이 AC-GEST-006을 자신의 run-phase 안에서 판정한 것과 같은 성격 — SPEC 문서가 자기 검증 결과를 미리 적어 두지 않는다는 규율은 유지된다, 이 판정은 사후에 §E.4에 기록될 뿐 acceptance.md 본문에 미리 적히지 않는다).
+
+### 문서 반영 (0.7.0 amendment)
+
+| 문서 | 반영 내용 |
+|------|-----------|
+| `README.md` | 상단 Status 블록(639→644 테스트, 0.7.0 amendment 언급 추가) · `scroll` 절(NN4 — centre-symmetric 단락을 화면 축 길이 홀짝 기준으로 재작성, `"device-query"` 불릿에 유효 밀도 설명 추가, NN8 — 가로 32px 5/6 반대 증거 삽입, Override 밀도 발견·수정·측정 한계를 다루는 신규 단락 2개 삽입) · `tap --web` 절(비동기 스크롤 오라클 결함 + `behavior:"instant"` 수정을 다루는 신규 단락 삽입) · Status 절(0.7.0 amendment 서술 단락 신규 삽입, 최종 집계 28/1/29 → 31/1/32 갱신, "0.4.0/0.5.0/0.6.0" 열거에 0.7.0 추가) |
+| `CHANGELOG.md` | `[Unreleased]` 기존 SPEC-GESTURE-001 블록을 **제자리에서** 수정 — Added의 `scroll` 불릿에 유효 밀도 읽기 서술 추가, `### Fixed`에 0.7.0 amendment 신규 서브블록 2개(밀도 Override 결함 — 3번째 같은 계열 결함이라는 서술 포함 · 비동기 스크롤 오라클 결함), `### Notes`의 AC 집계 갱신 + AC-GEST-032가 이 sync 자체로 충족됨을 명시 |
+
+### 잔여 관찰 (다음 세션 참고)
+
+- 이 sync는 문서 정정 + 재마감만 담당한다(지시문 Section D) — `src/`는 건드리지 않았다. `pnpm vitest run`/`pnpm typecheck`/`pnpm build`는 이 sync 커밋 직전 재확인했다(아래 최종 검증).
+- M8/M9 블로커에서 이월된 두 항목은 이 sync 범위 밖이다 — body 콘텐츠 정정은 manager-spec 소관이며, 이 sync는 frontmatter 전이 + README/CHANGELOG + progress.md §E.4만 위임받았다: (a) acceptance.md AC-GEST-027 "4개 파일 7개 지점" 문구가 실제로는 "6개 파일 9개 지점"인 불일치, (b) Android 스크롤 안정화 1초 지연이 spec.md/plan.md 본문에 미기록. 다음 세션의 재확인 우선순위로 그대로 남긴다.
+- push는 지시문 Section C-4("Do NOT push. I hold that decision.")에 따라 수행하지 않는다.
+
+### 최종 검증 (실제 명령 출력)
+
+```
+$ pnpm vitest run   → exit 0 — Test Files 29 passed, Tests 644 passed
+$ pnpm typecheck    → exit 0
+$ pnpm build        → exit 0
+$ grep -c "SPEC-GESTURE-001" CHANGELOG.md   → 13
+$ grep -cE '^### AC-GEST-[0-9]+' .moai/specs/SPEC-GESTURE-001/acceptance.md   → 32
+$ export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
+$ adb -s adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp shell wm density
+Physical density: 600
+$ node dist/cli/bin.js scroll down --amount 0.0001 --device adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp
+{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"...","details":{"requestedRatio":0.0001,"minValidRatio":0.011039886623620987,"minValidRatioBasis":"device-query"}}}
+$ node dist/cli/bin.js scroll down --amount 0.0001 --device D0B3A18C-E485-4E7C-A25E-504BF4CA6163
+{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"...","details":{"requestedRatio":0.0001,"minValidRatio":0.013984236866235733,"minValidRatioBasis":"measured-constant"}}}
+```
+
+두 거부 경로 모두 `ok:false`/exit 1 — 기기에 어떤 제스처도 전송되지 않았다. Android 디스플레이 밀도는 이 sync 세션 내내 변경하지 않았다(지시문 Section D "Do not change the device's display density" 준수 — 애초에 `Physical density: 600` 단일 행이었고 그대로다).
+
+### 커밋
+
+이 sync 커밋은 `README.md` + `CHANGELOG.md` + SPEC 아티팩트 4종(frontmatter만, `progress.md`는 본문도 포함 — 이 §E.4 자체)을 담는다. `src/`는 건드리지 않는다(지시문 Section D). 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인한다. push는 지시문 Section C-4("Do NOT push. I hold that decision.")에 따라 수행하지 않는다.
+
+sync 커밋 SHA: `pending-backfill`(`docs(SPEC-GESTURE-001): correct 0.7.0 amendment docs + 3-phase close`). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — 0.3.0/0.4.0/0.5.0/0.6.0 sync에서 이미 네 번 쓰인 패턴 그대로(다섯 번째).

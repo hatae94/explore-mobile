@@ -8,7 +8,7 @@ including multi-device interaction testing.
 
 > **Status**: core Android/adb primitives + environment bootstrap, the
 > iOS Simulator/idb backend, gesture primitives (`swipe`/`scroll`), and
-> the iOS **web content** path are implemented and unit/mock-tested (639
+> the iOS **web content** path are implemented and unit/mock-tested (644
 > tests, all green). The **iOS backend has been verified end-to-end
 > against a booted simulator** (2026-07-26, iPhone 17 Pro / iOS 26.0):
 > launch Safari, dump the element tree, tap by selector, type, send
@@ -20,9 +20,12 @@ including multi-device interaction testing.
 > touch. **`swipe`/`scroll` were also verified against a real Android
 > device** (2026-07-28, Samsung SM-S938N, Android 16, 600 dpi) — the
 > gesture-movement threshold below which the OS treats a swipe as a tap
-> is now derived per platform instead of a single constant; see
-> [Status](#status) below for exactly what "verified" covers here (one
-> device, one density) before relying on this in production. Real-device
+> is now derived per platform instead of a single constant, and (as of a
+> follow-up 0.7.0 measurement) reads whichever `wm density` line
+> actually governs the device's touch behavior rather than always its
+> physical one; see [Status](#status) below for exactly what "verified"
+> covers here (one device, one density) before relying on this in
+> production. Real-device
 > verification of every other Android command (`tap`/`text`/`key`/
 > `stop`/`doctor`/`reset`) is still pending. The Unicode-IME APK
 > (ADBKeyBoard, GPL-2.0) is never bundled — `doctor` downloads it from
@@ -362,12 +365,26 @@ screen's size converting the ratio to fewer pixels than the floor,
 which only the geometry step knows). The response's
 `details.minValidRatio` reports the smallest ratio that *would* clear
 the floor on this specific screen, so a caller knows what to retry with
-instead of guessing. The distance is centre-symmetric, so it grows in
-steps of two device pixels — on iOS, where the floor itself is an odd
-number of pixels, the boundary jumps straight from a rejected 10px
-distance to an accepted 12px one, with no ratio landing on exactly the
-measured floor itself; on Android, where the floor is even (see below),
-the accepted distance lands exactly on the floor.
+instead of guessing. The distance is centre-symmetric, so it always
+grows in steps of two device pixels around the screen's own centre —
+and the parity of those steps (odd or even) tracks the **screen axis'
+own length**, not the floor's. An even-length axis (e.g. 402×874) can
+only produce even distances; an odd-length axis (e.g. 393×852's own
+width, or 375×667 on both axes) can only produce odd ones. Whether the
+accepted distance lands exactly on the floor is therefore a question of
+whether that parity happens to match the floor's own parity, not of
+which platform is involved: against iOS's 11px floor (itself odd), an
+even axis jumps straight from a rejected 10px distance to an accepted
+12px one — never landing on 11 itself — but an odd axis lands on it
+exactly, since 11 is itself one of that axis' achievable odd distances
+(confirmed by direct recomputation against the built module: on
+393×852's odd width and on 375×667's two odd axes, achievable distances
+step 1, 3, 5, …, 11, 13, … and the accepted one is 11px exactly; see
+[`spec.md` REQ-GEST-SCROLL-007](.moai/specs/SPEC-GESTURE-001/spec.md)).
+The same rule holds for Android's derived floor in reverse — even on
+this device (32px), it lands exactly on an even axis and would instead
+clear it one pixel later on an odd one — though only even Android
+screen axes have actually been checked so far.
 
 **The floor is not one value shared by every device — it is asked of
 the connected device's own backend, and the answer says how it was
@@ -385,7 +402,12 @@ response's `details.minValidRatioBasis` now names the source directly:
   touch-slop constant; the +2px margin sits above the raw slop boundary,
   since the pixel or two right at that boundary was measured to be
   probabilistic, not a clean cutoff — a design choice, not a further
-  measurement).
+  measurement). The density used is whichever line `wm density` reports
+  as actually governing the device's own touch behavior — the
+  `Override density:` line when the device has one (set by a user
+  changing the Display size setting), falling back to
+  `Physical density:` otherwise (see below for why this distinction
+  matters).
 - `"measured-constant"` — iOS. A fixed 11pt, measured once on one
   simulator (see the provenance note below) and returned unchanged, with
   no query against whichever device is actually connected.
@@ -415,7 +437,13 @@ confirmed on one real device — a Samsung SM-S938N at 600 dpi, where the
 measured touch-slop boundary (30px) matched `8dp × 3.75` exactly and
 the resulting floor (32px) moved the screen 3 out of 3 times on every
 retry, in all four directions (2026-07-28; see
-[`spec.md` §C.1-⑰](.moai/specs/SPEC-GESTURE-001/spec.md)). `8dp` is
+[`spec.md` §C.1-⑰](.moai/specs/SPEC-GESTURE-001/spec.md)) — though the
+underlying boundary measurement itself found the horizontal axis less
+settled than that round-trip alone suggests: vertically, 32px measured
+a clean 8 out of 8, but horizontally it measured only 5 out of 6, so the
+floor is **not** established as fully reliable on that axis, and the
+residual band is recorded as unresolved rather than papered over (see
+[`spec.md` §C.3](.moai/specs/SPEC-GESTURE-001/spec.md)). `8dp` is
 Android's own documented default, so the rule is expected to generalize
 across densities, but only this one device's density, at one
 manufacturer, has actually been measured — a device that ships a
@@ -423,6 +451,37 @@ different slop default is unconfirmed. **Neither platform's value is
 evidence for the other's**: the iOS constant (11pt) never once moved
 this Android device (0 out of 5 vertical trials, 0 out of 6 horizontal)
 — exactly the failure this basis-tagged design exists to prevent.
+
+**Android's floor reads the *effective* density — not always the
+physical one.** A follow-up measurement (2026-07-28, with the user's
+consent, on the same device, its Display size setting temporarily
+changed and then restored) found that `wm density` reports a second
+`Override density:` line whenever that setting has been changed, and it
+is that value — not `Physical density:` — that actually governs the
+device's own touch-slop behavior. The distinction is not academic:
+reading only `Physical density:` derives a floor that can sit *below*
+the real slop when the display is set to an enlarged size, and a
+`scroll` inside that gap is not a no-op — it is accepted, sent, and
+Android interprets it as a **tap** on whatever sits under the starting
+point (see the tap warning under
+[`swipe`](#swipe-x1-y1-x2-y2-duration-ms) above). The measurement:
+`Physical 600` alone still derives 32px, unchanged; `Physical 600` with
+a shrunk `Override 480` moved the screen at 25px 4 out of 6 times,
+which would have been impossible if a Physical-only 30px slop actually
+governed. The derivation now reads whichever line actually governs,
+falling back to `Physical density:` when no `Override` line is present.
+This closes a question the 0.6.0 amendment above had left explicitly
+open, but only partway: it pins the shrunk-display slop down to a
+range — `[22, 25)` px, from three tried distances — not to a single
+pixel the way the 30px/31px physical-density boundary above was pinned
+down, and it did not measure the *enlarged*-display direction at all —
+the direction that actually matters, since that is the direction that
+can push the derived floor below the real slop. The one direction that
+was tried predicts the same floor under either "Override governs" or
+"the smaller of the two governs", so it rules out only "Physical
+governs"; the enlarged-display floor this CLI ships today is derived
+from Android's own documented touch-slop rule, not from a direct
+measurement of an enlarged-display device.
 
 `scroll` cannot confirm the screen actually moved — like `swipe`, it
 sends the gesture and returns; re-run [`dump`](#dump) to check. It also
@@ -575,6 +634,30 @@ comparison shown above, which covers window scroll, container scroll,
 and horizontal scroll with a single predicate; see
 [CHANGELOG](CHANGELOG.md) for the exact defects in both rounds.
 
+A third defect sat one step earlier than either round above: **the
+sample was taken before the scroll had actually finished.** On a page
+(or container) declaring CSS `scroll-behavior: smooth`,
+`scrollIntoView` completes asynchronously — the call returns
+immediately, but the animation itself finishes moments later.
+Re-measuring the element's rect *immediately* after the call therefore
+reads the pre-scroll position even while a real scroll is under way:
+measured, `moved` read `false` (`containerScrollTop` unchanged)
+immediately after the call, with the scroll only completing roughly 11
+seconds afterward. Two things followed from that stale sample: a scroll
+that genuinely happened went unreported (no `-scrolled` suffix), and —
+worse — the same stale rectangle was reused to convert the tap
+coordinate, silently degrading a native touch into the JS `click()`
+fallback. A 0.7.0 amendment fixes this by calling
+`scrollIntoView({block: "center", behavior: "instant"})`, forcing a
+synchronous scroll regardless of the page's own CSS, so the rectangle
+sampled right after the call always reflects the true post-scroll
+position. This deliberately ignores the page's own animation — the
+point of this scroll is a trustworthy coordinate, not visual fidelity —
+and waiting for the animation to finish instead was rejected because
+there is no standard completion signal to poll for, which would reopen
+the same unbounded-wait hazard the `--duration` ceiling above already
+closed.
+
 ```bash
 $ npx explore-mobile tap --web 'a[href*="Netscape"]' --page 1
 {"ok":true,"command":"tap","data":{...,"method":"native-scrolled","x":243,"y":419}}
@@ -717,8 +800,8 @@ contaminate either device's input-method state.
 
 Android (SPEC-ANDROID-001, all 8 milestones), the iOS Simulator backend
 (SPEC-IOS-001), the iOS web content path (SPEC-WEBVIEW-001), and gesture
-primitives (SPEC-GESTURE-001, including its 0.4.0, 0.5.0, and 0.6.0
-amendments) are implemented, with 639 unit/mock tests green.
+primitives (SPEC-GESTURE-001, including its 0.4.0, 0.5.0, 0.6.0, and
+0.7.0 amendments) are implemented, with 644 unit/mock tests green.
 
 **iOS: verified against a real simulator** (2026-07-26, iPhone 17 Pro /
 iOS 26.0, fb-idb 1.1.7). A full Safari journey — `doctor` → `devices` →
@@ -846,8 +929,28 @@ reporting no movement. All three are closed by the measured touch-slop
 floor and the element-rect comparison described above — see
 [CHANGELOG](CHANGELOG.md) for the full account of both rounds.
 
-Final tally across all three amendments: **28 PASS / 1 PARTIAL / 0 FAIL
-across 29 acceptance criteria** in
+**A 0.7.0 amendment closed two more issues — the third time this SPEC
+has found and closed a defect in the same "reports success with no
+effect, or with an unintended effect" family.** The first two times were
+an independent post-close audit (0.4.0/0.5.0 above) and a real Android
+device (0.6.0 above); this time it was a follow-up measurement of a
+question the SPEC had knowingly left open. One issue was found by
+further independent review: the element-rect comparison the 0.5.0
+amendment introduced was still sampled *before* an animated scroll had
+actually finished on a page declaring CSS `scroll-behavior: smooth` —
+see [`tap --web`](#how-an-element-is-reached-and-why-the-response-says-so)
+above for the fix and the measured timing that motivated it. The other
+was found by measurement, not review: the SPEC's own text had recorded,
+honestly and explicitly, that it did not yet know whether Android's
+touch-slop floor should be derived from `wm density`'s `Physical` or
+`Override` density line when a device reports both — see
+[`scroll`](#scroll-updownleftright-amount-ratio) above for what a
+follow-up measurement found, what changed, and exactly how far that
+measurement does (and does not) reach. Both fixes made the guard this
+SPEC is built around stricter rather than looser.
+
+Final tally across all four amendments: **31 PASS / 1 PARTIAL / 0 FAIL
+across 32 acceptance criteria** in
 `.moai/specs/SPEC-GESTURE-001/progress.md`. AC-GEST-006 (Android
 real-device swipe) is now PASS, promoted by the 0.6.0 amendment above.
 The one remaining PARTIAL is AC-GEST-020 (the `--duration` omission

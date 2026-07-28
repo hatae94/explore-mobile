@@ -2,7 +2,7 @@
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — swipe · scroll, 그리고 화면 밖 웹 요소 도달"
 version: "0.7.0"
-status: in-progress
+status: completed
 created: 2026-07-27
 updated: 2026-07-28
 author: hatae
