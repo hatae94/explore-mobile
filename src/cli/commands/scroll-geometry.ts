@@ -180,9 +180,10 @@ export function isDegenerateSwipe(coords: SwipeCoordinates, thresholdPx: number)
 /**
  * 이 화면·방향·문턱에서 `thresholdPx`를 **넘는** 최소 `--amount` 비율을
  * 찾는다(REQ-GEST-SCROLL-007/008, SPEC-GESTURE-001 M7/0.5.0 amendment로
- * 의미 재정의, M8/0.6.0 amendment로 문턱 인자화) — 거부 응답의
- * `minValidRatio`에 실어 호출자가 다시 시도할 값을 알 수 있게 한다
- * (AC-GEST-018, AC-GEST-024, AC-GEST-028).
+ * 의미 재정의, M8/0.6.0 amendment로 문턱 인자화, **M10/0.8.0 amendment로
+ * 부재 처분 신설**) — 거부 응답의 `minValidRatio`에 실어 호출자가 다시
+ * 시도할 값을 알 수 있게 한다(AC-GEST-018, AC-GEST-024, AC-GEST-028,
+ * AC-GEST-034).
  *
  * **0.5.0 재정의 — "끝점이 달라지는 최소 비율"이 아니다.** 이 함수는
  * `isDegenerateSwipe`에 위임하므로, `isDegenerateSwipe`의 판정 기준이
@@ -204,11 +205,33 @@ export function isDegenerateSwipe(coords: SwipeCoordinates, thresholdPx: number)
  * 화면의 정확한 중심 정렬(정수/반정수)에 따라 임계 비율이 달라지므로
  * 닫힌 형태 공식 대신 실제 `computeScrollSwipe` 출력으로 직접 탐색한다.
  *
- * `ratio=1`은 비퇴화라고 가정한다 — 실제 기기 화면 크기(수백 px 이상)에서는
- * 항상 참이다. 화면이 지나치게 작아 `ratio=1`도 퇴화라면(비현실적인 입력),
- * 그 경우는 이미 REQ-GEST-SCROLL-004의 화면 크기 거부 대상이다.
+ * **M10/0.8.0 amendment — `ratio=1`조차 퇴화라면 `undefined`를 반환한다
+ * (AC-GEST-034, NN5).** 0.7.0까지 이 자리의 주석은 "화면이 지나치게 작아
+ * `ratio=1`도 퇴화라면, 그 경우는 이미 REQ-GEST-SCROLL-004의 화면 크기
+ * 거부 대상이다"라고 적었는데 **거짓이었다** —
+ * `deriveScreenSize([{x:0,y:0,w:12,h:12}])`는 원점 witness를 갖춘 정상
+ * 파생이라 `{width:12,height:12}`를 반환한다(거부되지 않는다). 즉 문턱을
+ * 넘는 비율이 아예 없는 화면이 이 함수에 실제로 도달할 수 있다 — 이진
+ * 탐색은 그런 화면에서 `lo`가 한 번도 갱신되지 않아 `hi=1`을 그대로
+ * 돌려주고, `1`은 그 자신이 `isDegenerateSwipe`에 걸리는 값이다(자기거부
+ * 권고, REQ-GEST-SCROLL-008 계열이 다섯 라운드째 반복한 형태의 세 번째
+ * 입구). 그래서 이진 탐색 전에 `ratio=1` 자체가 퇴화인지 먼저 확인하고,
+ * 퇴화라면 없는 값을 지어내지 않고 `undefined`를 돌려준다 — 거부
+ * (`AMOUNT_TOO_SMALL`) 자체와 무제스처 보장은 호출자(`scroll.ts`) 쪽에서
+ * 그대로 유지된다; 사라지는 것은 권고뿐이다. 이 경로가 실기기 화면에서
+ * 도달 가능한지는 이 주석이 주장하지 않는다 — 실제 기기는 수백 px
+ * 이상이라는 것은 별개의 사실(실기기 화면 크기 가정)이지, 이 함수가
+ * 강제하는 불변식이 아니다.
  */
-export function minNonDegenerateRatio(direction: ScrollDirection, screen: ScreenSize, thresholdPx: number): number {
+export function minNonDegenerateRatio(
+  direction: ScrollDirection,
+  screen: ScreenSize,
+  thresholdPx: number,
+): number | undefined {
+  if (isDegenerateSwipe(computeScrollSwipe(direction, 1, screen), thresholdPx)) {
+    return undefined;
+  }
+
   let lo = 0;
   let hi = 1;
   for (let i = 0; i < 30; i++) {

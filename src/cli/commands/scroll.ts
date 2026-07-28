@@ -141,14 +141,21 @@ export const scrollCommand: CommandHandler = async (args, backend: DeviceBackend
   // 싣는다(REQ-GEST-SCROLL-008, AC-GEST-027) — 호출자가 이 값이 자기
   // 기기에서 나온 것인지 판단할 수 있어야 한다.
   if (isDegenerateSwipe({ from, to }, threshold.minEffectiveSwipePx)) {
+    // M10/0.8.0 amendment (AC-GEST-034, NN5): 문턱을 넘는 비율이 이
+    // 화면·문턱 조합에 아예 존재하지 않으면 `minNonDegenerateRatio`는
+    // `undefined`를 반환한다 — 그 경우 필드 자체를 응답에서 생략한다.
+    // 없는 값을 지어내지 않는다: 자기 자신이 다시 거부당할 값을 권고로
+    // 싣는 것(3회 라운드째 반복된 계열)보다, 권고를 아예 안 싣는 편이
+    // 정직하다. 거부(`AMOUNT_TOO_SMALL`) 자체와 무제스처 보장은 그대로다
+    // — 사라지는 것은 권고뿐이다.
+    const minValidRatio = minNonDegenerateRatio(directionRaw, screen, threshold.minEffectiveSwipePx);
     return failure(
       "scroll",
       "AMOUNT_TOO_SMALL",
       "scroll --amount is too small to move the screen at this size; no gesture was sent.",
       {
         requestedRatio: ratio,
-        minValidRatio: minNonDegenerateRatio(directionRaw, screen, threshold.minEffectiveSwipePx),
-        minValidRatioBasis: threshold.basis,
+        ...(minValidRatio !== undefined ? { minValidRatio, minValidRatioBasis: threshold.basis } : {}),
       },
     );
   }

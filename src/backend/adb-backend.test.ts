@@ -417,6 +417,71 @@ describe("AdbBackend", () => {
     });
   });
 
+  describe("getMinEffectiveSwipeThreshold — per-serial cache with TTL invalidation (SPEC-GESTURE-001 M10/0.8.0 amendment, NN10)", () => {
+    it("a second call for the same serial within the TTL window does not re-query 'wm density'", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValue(ok("Physical density: 600\n"));
+      const backend = new AdbBackend(exec);
+
+      const first = await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+      const second = await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+
+      expect(exec).toHaveBeenCalledTimes(1);
+      expect(second).toEqual(first);
+    });
+
+    it("caches independently per serial -- two different serials each trigger their own query", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValue(ok("Physical density: 600\n"));
+      const backend = new AdbBackend(exec);
+
+      await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+      await backend.getMinEffectiveSwipeThreshold("R58N90ABCDE");
+      await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+      await backend.getMinEffectiveSwipeThreshold("R58N90ABCDE");
+
+      expect(exec).toHaveBeenCalledTimes(2);
+    });
+
+    it("after the TTL expires, a subsequent call re-queries and returns the UPDATED value -- the effective density can change mid-session (spec.md §C.1-⑳)", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("Physical density: 600\n")) // 32px
+        .mockResolvedValueOnce(ok("Physical density: 480\n")); // 26px -- simulates a display-size change mid-session
+
+      let currentTimeMs = 0;
+      const backend = new AdbBackend(exec, undefined, undefined, () => currentTimeMs);
+
+      const first = await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+      expect(first).toEqual({ minEffectiveSwipePx: 32, basis: "device-query" });
+
+      // Advance well past the TTL -- the cache must not serve the stale
+      // (now-wrong) 32px value forever, especially not in the ENLARGING
+      // direction, where a stale-low threshold would be accepted and
+      // interpreted by the device as a tap (spec.md §C.1-⑱).
+      currentTimeMs += 60_000;
+
+      const second = await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+      expect(second).toEqual({ minEffectiveSwipePx: 26, basis: "device-query" });
+      expect(exec).toHaveBeenCalledTimes(2);
+    });
+
+    it("within the TTL window, a stale-but-not-yet-expired cache entry is still served (amortizes a burst of rapid calls)", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("Physical density: 600\n"))
+        .mockResolvedValueOnce(ok("Physical density: 480\n"));
+
+      let currentTimeMs = 0;
+      const backend = new AdbBackend(exec, undefined, undefined, () => currentTimeMs);
+
+      await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+      currentTimeMs += 1; // well within any reasonable TTL
+      const second = await backend.getMinEffectiveSwipeThreshold("R3CY106LKVX");
+
+      expect(second).toEqual({ minEffectiveSwipePx: 32, basis: "device-query" });
+      expect(exec).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("sendKeyEvent", () => {
     it("maps a supported alias to its Android KEYCODE (REQ-INPUT-005)", async () => {
       const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok(""));

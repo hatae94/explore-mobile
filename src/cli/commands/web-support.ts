@@ -241,6 +241,38 @@ function buildClickExpression(cssSelector: string, sourceIndex: number): string 
  * for the animation to finish was rejected because there is no standard
  * completion signal, which would reopen the unbounded-wait hazard the
  * `--duration` ceiling already closed (spec.md §C.1-⑮).
+ *
+ * The call is wrapped in a `try`/`catch` (SPEC-GESTURE-001 M10/0.8.0
+ * amendment, NF3): WebKit validates `ScrollBehavior` as an IDL enum, so a
+ * WebKit build that predates `"instant"` (Safari < 17.4) throws a
+ * `TypeError` for it (confirmed live on-simulator by the 5th-round audit;
+ * NOT independently re-verified in this milestone — the live web proxy in
+ * this environment is flaky, plan.md §C.1). Left uncaught, that throw would
+ * propagate out of this whole evaluated expression: per
+ * `webview/inspector-client.ts`'s `wasThrown` handling, `evaluate()` would
+ * REJECT rather than resolve with a value, which `runInWebSession`'s catch
+ * turns into an outright `WEB_SESSION_FAILED` for the command — NOT
+ * necessarily the "quietly resolves to `{found:false,moved:false}` and
+ * degrades to `js-click`" shape the cliff is sometimes described as
+ * (that shape requires `evaluate()` to resolve rather than reject; this
+ * codebase's transport rejects on a thrown page value). Either way — an
+ * outright failure or a silent js-click degrade, depending on transport
+ * behavior this milestone did not re-verify live — the fix is the same:
+ * catching the throw INSIDE the page-side script, before it ever reaches
+ * the transport boundary, closes the cliff regardless of which shape it
+ * would otherwise take (this codebase's SPEC deliberately declares no
+ * WebKit/iOS version floor — spec.md §D — so this fallback, not a version
+ * check, is the mitigation). On a throw, the fallback re-issues the call
+ * with NO `behavior` argument at all, letting the page's own CSS
+ * `scroll-behavior` govern. **This is NOT an equivalent substitute for the
+ * primary call** — without an explicit `behavior`, a page/container
+ * declaring `scroll-behavior: smooth` makes the fallback scroll
+ * ASYNCHRONOUS again, so the "after" rect below can be sampled before the
+ * animation finishes, reopening the exact async-sampling defect M9 closed
+ * (spec.md §C.1-㉑) on this narrower path. The fallback is an IMPROVEMENT
+ * over throwing (it narrows the degraded surface from "every off-viewport
+ * tap" to "old WebKit + a smooth-scrolling page/container"), not a fix of
+ * equal strength — do not read the two branches as behaviorally identical.
  */
 export function buildScrollIntoViewExpression(cssSelector: string, sourceIndex: number): string {
   return `(function(){
@@ -248,7 +280,11 @@ export function buildScrollIntoViewExpression(cssSelector: string, sourceIndex: 
   var el = nodes[${JSON.stringify(sourceIndex)}];
   if (!el) return { found: false, moved: false };
   var before = el.getBoundingClientRect();
-  el.scrollIntoView({block: "center", behavior: "instant"});
+  try {
+    el.scrollIntoView({block: "center", behavior: "instant"});
+  } catch (e) {
+    el.scrollIntoView({block: "center"});
+  }
   var after = el.getBoundingClientRect();
   var moved = before.top !== after.top || before.left !== after.left ||
     before.bottom !== after.bottom || before.right !== after.right;

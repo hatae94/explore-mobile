@@ -14,6 +14,18 @@ import { runCli } from "../router.js";
 import { minNonDegenerateRatio } from "./scroll-geometry.js";
 
 /**
+ * `minNonDegenerateRatio()`가 M10/0.8.0 amendment로 `number | undefined`를
+ * 반환하게 되면서(AC-GEST-034), 이미 비퇴화 경계가 존재함을 아는(402x874
+ * 화면, 독립 유도 문턱) 아래 왕복 테스트의 호출부 타입을 좁힌다.
+ */
+function assertDefined(value: number | undefined): number {
+  if (value === undefined) {
+    throw new Error("expected minNonDegenerateRatio() to return a number, got undefined");
+  }
+  return value;
+}
+
+/**
  * 독립적으로 유도한(즉 `minNonDegenerateRatio()`를 호출하지 않은) 402x874
  * 화면·방향별 경계 픽스처(SPEC-GESTURE-001 M7/0.5.0 amendment, C-5).
  *
@@ -86,6 +98,13 @@ const CHROME_ONLY_NO_WITNESS: CommonElement[] = [
 
 /** AC-GEST-018 — spec.md §C.1-⑫ 실측 화면 크기(witness == 유일한 최상위 요소). */
 const KNOWN_SCREEN_402X874: CommonElement[] = [element({ bounds: { x: 0, y: 0, w: 402, h: 874 } })];
+
+/**
+ * AC-GEST-034 — 문턱을 넘는 비율이 아예 없는 화면(acceptance.md가 든
+ * 실행 가능한 반례 그대로: 문턱 32px에 12x12 화면, witness == 유일한
+ * 최상위 요소이므로 SCREEN_SIZE_UNKNOWN으로 걸러지지 않는다).
+ */
+const KNOWN_SCREEN_12X12: CommonElement[] = [element({ bounds: { x: 0, y: 0, w: 12, h: 12 } })];
 
 function createMockBackend(
   devices: DeviceInfo[] = [device()],
@@ -386,7 +405,7 @@ describe("scroll", () => {
         });
 
         it("minNonDegenerateRatio()가 계산한 경계 비율을 되먹이면 성공한다 (AC-GEST-024 왕복 검증, 응답 배선 회귀 가드 -- 문턱 정확성 증명은 위 독립 유도 테스트와 실기기 확인이 맡는다)", async () => {
-          const boundaryRatio = minNonDegenerateRatio(direction, { width: 402, height: 874 }, 11);
+          const boundaryRatio = assertDefined(minNonDegenerateRatio(direction, { width: 402, height: 874 }, 11));
           const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
 
           const result = await runCli(["scroll", direction, "--amount", String(boundaryRatio)], backend);
@@ -402,6 +421,59 @@ describe("scroll", () => {
         });
       });
     }
+  });
+
+  describe("AC-GEST-034 — minValidRatio는 자기 자신이 거부할 값을 권하지 않는다 (SPEC-GESTURE-001 M10/0.8.0 amendment)", () => {
+    it("문턱을 넘는 비율이 없는 화면(12x12, 문턱 32px) -- AMOUNT_TOO_SMALL은 그대로 나가지만 minValidRatio/minValidRatioBasis는 응답에 실리지 않는다", async () => {
+      const backend = createMockBackend([device()], KNOWN_SCREEN_12X12);
+      (backend.getMinEffectiveSwipeThreshold as ReturnType<typeof vi.fn>).mockResolvedValue({
+        minEffectiveSwipePx: 32,
+        basis: "device-query",
+      });
+
+      const result = await runCli(["scroll", "down", "--amount", "1"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("AMOUNT_TOO_SMALL");
+        // 거부 자체는 불변이다 -- 사라지는 것은 권고뿐이다.
+        expect(Object.hasOwn(result.error.details ?? {}, "minValidRatio")).toBe(false);
+        expect(Object.hasOwn(result.error.details ?? {}, "minValidRatioBasis")).toBe(false);
+      }
+      // 무제스처 보장은 이 경로에서도 그대로다.
+      expect(backend.swipe).not.toHaveBeenCalled();
+    });
+
+    it("같은 화면·문턱 조합은 네 방향 전부에서 권고 없이 거부된다", async () => {
+      for (const direction of ["up", "down", "left", "right"] as const) {
+        const backend = createMockBackend([device()], KNOWN_SCREEN_12X12);
+        (backend.getMinEffectiveSwipeThreshold as ReturnType<typeof vi.fn>).mockResolvedValue({
+          minEffectiveSwipePx: 32,
+          basis: "device-query",
+        });
+
+        const result = await runCli(["scroll", direction, "--amount", "1"], backend);
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error.code).toBe("AMOUNT_TOO_SMALL");
+          expect(Object.hasOwn(result.error.details ?? {}, "minValidRatio")).toBe(false);
+        }
+        expect(backend.swipe).not.toHaveBeenCalled();
+      }
+    });
+
+    it("권고가 존재하는 일반 화면에서는 여전히 minValidRatio/minValidRatioBasis가 응답에 실린다 (회귀 아님)", async () => {
+      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+
+      const result = await runCli(["scroll", "down", "--amount", "0.001"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(Object.hasOwn(result.error.details ?? {}, "minValidRatio")).toBe(true);
+        expect(Object.hasOwn(result.error.details ?? {}, "minValidRatioBasis")).toBe(true);
+      }
+    });
   });
 
   describe("AC-GEST-026/027 — 문턱 조회 배선 (SPEC-GESTURE-001 M8/0.6.0 amendment, REQ-GEST-SCROLL-007/008)", () => {

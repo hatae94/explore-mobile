@@ -675,3 +675,90 @@ describe("buildScrollIntoViewExpression — post-completion sampling under async
     expect(outcome).toEqual({ found: true, moved: true });
   });
 });
+
+/**
+ * Defensive `behavior:"instant"` fallback under an enum-rejecting WebKit
+ * (SPEC-GESTURE-001 M10/0.8.0 amendment, NF3).
+ *
+ * WebKit validates `ScrollBehavior` as an IDL enum -- a WebKit build that
+ * predates `"instant"` (Safari < 17.4) throws a `TypeError` for it (per the
+ * 5th-round audit's confirmed finding; not independently re-verified in
+ * this milestone -- the live proxy in this environment is flaky, see
+ * plan.md §C.1). Without a fallback, that throw would make EVERY
+ * off-viewport tap silently degrade to the JS `click()` fallback --
+ * strictly broader than the M9 defect and indistinguishable in the
+ * response from an ordinary `js-click`. These stubs simulate an
+ * enum-rejecting WebKit: `scrollIntoView({behavior:"instant"})` throws;
+ * the no-argument fallback call does not.
+ */
+describe("buildScrollIntoViewExpression — defensive behavior:\"instant\" fallback on enum-rejecting WebKit (SPEC-GESTURE-001 M10, NF3)", () => {
+  function fakeEnumRejectingElement(rects: Array<{ top: number; left: number; bottom: number; right: number }>) {
+    let committed = false;
+    return {
+      getBoundingClientRect: () => rects[committed ? 1 : 0],
+      scrollIntoView: (opts?: { behavior?: string }) => {
+        if (opts?.behavior === "instant") {
+          throw new TypeError(
+            "Failed to execute 'scrollIntoView' on 'Element': The provided value 'instant' is not a valid enum value of type ScrollBehavior.",
+          );
+        }
+        // Fallback call (no `behavior` argument) -- this stub's default
+        // scroll behaviour commits synchronously, same as the primary
+        // path would on a page with no declared `scroll-behavior: smooth`.
+        committed = true;
+      },
+    };
+  }
+
+  it("falls back to a no-argument call and still finds+credits movement when behavior:\"instant\" throws (the cliff is closed, not merely swallowed)", () => {
+    const el = fakeEnumRejectingElement([
+      { top: 900, left: 20, bottom: 948, right: 86 },
+      { top: 300, left: 20, bottom: 348, right: 86 },
+    ]);
+    const document = { querySelectorAll: () => [el] };
+
+    const outcome = runInNewContext(buildScrollIntoViewExpression("a.off", 0), { document });
+
+    // Without the fallback, the uncaught TypeError would abort the whole
+    // evaluate() call and this selector would report {found:false,
+    // moved:false} -- indistinguishable from "no node matched" and
+    // silently degrading the caller to js-click.
+    expect(outcome).toEqual({ found: true, moved: true });
+  });
+
+  /**
+   * The fallback is NOT an equivalent substitute (documented trade-off,
+   * NF3): on a page/container declaring `scroll-behavior: smooth`, the
+   * no-argument fallback call is asynchronous too, so this reopens the
+   * exact async-sampling defect M9 closed (spec.md §C.1-㉑) -- narrowed to
+   * "old WebKit + a smooth-scrolling page/container" instead of "every
+   * off-viewport tap".
+   */
+  function fakeEnumRejectingSmoothElement(rects: Array<{ top: number; left: number; bottom: number; right: number }>) {
+    return {
+      getBoundingClientRect: () => rects[0],
+      scrollIntoView: (opts?: { behavior?: string }) => {
+        if (opts?.behavior === "instant") {
+          throw new TypeError(
+            "Failed to execute 'scrollIntoView' on 'Element': The provided value 'instant' is not a valid enum value of type ScrollBehavior.",
+          );
+        }
+        // Fallback call runs but the page's own `scroll-behavior: smooth`
+        // makes it asynchronous -- the commit never lands within this
+        // synchronous script, exactly like the M9 stub's deferred branch.
+      },
+    };
+  }
+
+  it("on a smooth-scrolling page/container, the fallback reads moved:false for a scroll that genuinely happens moments later -- the M9 defect reopened on this narrower path (NOT parity with the primary instant path)", () => {
+    const el = fakeEnumRejectingSmoothElement([
+      { top: 900, left: 20, bottom: 948, right: 86 }, // never observed to change within this script
+      { top: 300, left: 20, bottom: 348, right: 86 },
+    ]);
+    const document = { querySelectorAll: () => [el] };
+
+    const outcome = runInNewContext(buildScrollIntoViewExpression("a.off", 0), { document });
+
+    expect(outcome).toEqual({ found: true, moved: false });
+  });
+});

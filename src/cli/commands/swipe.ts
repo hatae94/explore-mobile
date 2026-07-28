@@ -55,6 +55,8 @@ export const swipeCommand: CommandHandler = async (args, backend: DeviceBackend)
 
   // REQ-GEST-SWIPE-005: validated BEFORE any backend call — never let an
   // unparsable value reach `IdbBackend`'s ms/1000 conversion as NaN.
+  //
+  // @MX:NOTE: [AUTO] --duration 검증은 반드시 backend.swipe 호출보다 앞서야 한다 -- 순서를 뒤집으면 파싱 실패값이 그대로 IdbBackend의 ms/1000 환산에 들어가 NaN이 argv에 실릴 수 있다(spec.md §B.1 REQ-GEST-SWIPE-005)
   let durationMs: number | undefined;
   if (args.duration !== undefined) {
     durationMs = parseDurationMs(args.duration);

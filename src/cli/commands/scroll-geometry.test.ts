@@ -17,6 +17,20 @@ import {
   type ScrollDirection,
 } from "./scroll-geometry.js";
 
+/**
+ * `minNonDegenerateRatio()`가 M10/0.8.0 amendment로 `number | undefined`를
+ * 반환하게 되면서(AC-GEST-034 -- 문턱을 넘는 비율이 없는 화면은 undefined),
+ * 그 값이 존재함을 이미 아는(독립적으로 유도한 화면·문턱 조합) 테스트
+ * 호출부의 타입을 좁힌다. undefined라면 그 자체가 테스트 가정이 깨진
+ * 것이므로 즉시 던진다.
+ */
+function assertDefined(value: number | undefined): number {
+  if (value === undefined) {
+    throw new Error("expected minNonDegenerateRatio() to return a number, got undefined");
+  }
+  return value;
+}
+
 function element(overrides: Partial<CommonElement> = {}): CommonElement {
   return {
     role: "Other",
@@ -234,7 +248,7 @@ describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6/M7/M8 �
       it(`${direction}: --amount 0.0001은 퇴화하고, minNonDegenerateRatio()가 계산한 경계 비율은 퇴화하지 않는다`, () => {
         expect(isDegenerateSwipe(computeScrollSwipe(direction, 0.0001, SCREEN_402X874), IOS_THRESHOLD_PX)).toBe(true);
 
-        const boundary = minNonDegenerateRatio(direction, SCREEN_402X874, IOS_THRESHOLD_PX);
+        const boundary = assertDefined(minNonDegenerateRatio(direction, SCREEN_402X874, IOS_THRESHOLD_PX));
         expect(boundary).toBeGreaterThan(0);
         expect(boundary).toBeLessThan(0.1); // 넉넉한 상한 -- 402x874 화면에서 문턱 11pt는 이 범위 안이다
         expect(isDegenerateSwipe(computeScrollSwipe(direction, boundary, SCREEN_402X874), IOS_THRESHOLD_PX)).toBe(
@@ -244,8 +258,8 @@ describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6/M7/M8 �
     }
 
     it("가로(width=402)와 세로(height=874)의 임계 비율이 서로 다르다 -- 한 축만 맞춘 구현은 이 테스트에서 걸린다", () => {
-      const verticalBoundary = minNonDegenerateRatio("down", SCREEN_402X874, IOS_THRESHOLD_PX);
-      const horizontalBoundary = minNonDegenerateRatio("right", SCREEN_402X874, IOS_THRESHOLD_PX);
+      const verticalBoundary = assertDefined(minNonDegenerateRatio("down", SCREEN_402X874, IOS_THRESHOLD_PX));
+      const horizontalBoundary = assertDefined(minNonDegenerateRatio("right", SCREEN_402X874, IOS_THRESHOLD_PX));
       expect(verticalBoundary).not.toBeCloseTo(horizontalBoundary, 5);
     });
   });
@@ -303,7 +317,7 @@ describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6/M7/M8 �
     for (const [label, screen] of Object.entries(SCREENS)) {
       it(`${label}: minNonDegenerateRatio()가 계산한 경계는 세 화면 모두에서 실제로 비퇴화다`, () => {
         for (const direction of ["up", "down", "left", "right"] as const satisfies ScrollDirection[]) {
-          const boundary = minNonDegenerateRatio(direction, screen, IOS_THRESHOLD_PX);
+          const boundary = assertDefined(minNonDegenerateRatio(direction, screen, IOS_THRESHOLD_PX));
           expect(isDegenerateSwipe(computeScrollSwipe(direction, boundary, screen), IOS_THRESHOLD_PX)).toBe(false);
         }
       });
@@ -328,8 +342,8 @@ describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6/M7/M8 �
     });
 
     it("minNonDegenerateRatio()가 계산하는 경계 비율은 문턱이 클수록 커진다 (Android 문턱 > iOS 문턱 -> Android 경계 비율 > iOS 경계 비율)", () => {
-      const iosBoundary = minNonDegenerateRatio("down", SCREEN_402X874, IOS_THRESHOLD_PX);
-      const androidBoundary = minNonDegenerateRatio("down", SCREEN_402X874, ANDROID_THRESHOLD_PX);
+      const iosBoundary = assertDefined(minNonDegenerateRatio("down", SCREEN_402X874, IOS_THRESHOLD_PX));
+      const androidBoundary = assertDefined(minNonDegenerateRatio("down", SCREEN_402X874, ANDROID_THRESHOLD_PX));
       expect(androidBoundary).toBeGreaterThan(iosBoundary);
     });
 
@@ -339,6 +353,39 @@ describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6/M7/M8 �
       const coords = { from: { x: 0, y: 31 }, to: { x: 0, y: 0 } };
       expect(isDegenerateSwipe(coords, 31)).toBe(false); // distance(31) >= threshold(31)
       expect(isDegenerateSwipe(coords, 32)).toBe(true); // distance(31) < threshold(32)
+    });
+  });
+
+  describe("AC-GEST-034 — minValidRatio는 자기 자신이 거부할 값을 권하지 않는다 (SPEC-GESTURE-001 M10/0.8.0 amendment)", () => {
+    // 문턱을 넘는 비율이 아예 없는 화면 -- acceptance.md가 든 실행 가능한
+    // 반례 그대로(문턱 32px에 12x12 화면). ratio=1조차 이 조합에서는
+    // 퇴화다: usable = 12 - 12*0.05*2 = 10.8, distance round(11)-round(1) = 10 < 32.
+    const TINY_SCREEN = { width: 12, height: 12 };
+    const THRESHOLD_PX = 32;
+
+    it("deriveScreenSize는 12x12 화면을 거부하지 않는다 -- '그런 화면은 이미 REQ-GEST-SCROLL-004가 거부한다'는 전제가 거짓이라는 실행 가능한 반례(NN5)", () => {
+      const elements = [element({ bounds: { x: 0, y: 0, w: 12, h: 12 } })];
+      expect(deriveScreenSize(elements)).toEqual({ width: 12, height: 12 });
+    });
+
+    it("ratio=1조차 이 화면·문턱에서는 퇴화다 -- 문턱을 넘는 비율이 아예 존재하지 않는다", () => {
+      for (const direction of ["up", "down", "left", "right"] as const) {
+        expect(isDegenerateSwipe(computeScrollSwipe(direction, 1, TINY_SCREEN), THRESHOLD_PX)).toBe(true);
+      }
+    });
+
+    it("minNonDegenerateRatio는 이런 화면·문턱 조합에서 undefined를 반환한다 -- 이분 탐색의 hi=1을 그대로 돌려주면 자기 자신이 거부할 값을 권하게 된다(세 번째 입구)", () => {
+      for (const direction of ["up", "down", "left", "right"] as const) {
+        expect(minNonDegenerateRatio(direction, TINY_SCREEN, THRESHOLD_PX)).toBeUndefined();
+      }
+    });
+
+    it("문턱을 넘는 비율이 존재하는 화면에서는 여전히 숫자를 반환하고, 그 값을 되먹이면 퇴화 판정을 통과한다 (왕복 불변 -- 회귀 아님)", () => {
+      const boundary = minNonDegenerateRatio("down", { width: 402, height: 874 }, 11);
+      expect(boundary).not.toBeUndefined();
+      if (boundary !== undefined) {
+        expect(isDegenerateSwipe(computeScrollSwipe("down", boundary, { width: 402, height: 874 }), 11)).toBe(false);
+      }
     });
   });
 });

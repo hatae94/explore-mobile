@@ -1572,3 +1572,200 @@ $ node dist/cli/bin.js scroll down --amount 0.0001 --device D0B3A18C-E485-4E7C-A
 이 sync 커밋은 `README.md` + `CHANGELOG.md` + SPEC 아티팩트 4종(frontmatter만, `progress.md`는 본문도 포함 — 이 §E.4 자체)을 담는다. `src/`는 건드리지 않는다(지시문 Section D). 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인한다. push는 지시문 Section C-4("Do NOT push. I hold that decision.")에 따라 수행하지 않는다.
 
 sync 커밋 SHA: `392c9b2`(`docs(SPEC-GESTURE-001): correct 0.7.0 amendment docs + 3-phase close`). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — 0.3.0/0.4.0/0.5.0/0.6.0 sync에서 이미 네 번 쓰인 패턴 그대로(다섯 번째).
+
+### M10 — 이월된 감사 부채 일괄 정리 (0.8.0 amendment)
+
+> **선행**: M1-M9는 0.7.0에서 마감·푸시됐다(직전 completed `392c9b2`). 이 마일스톤은 **새 능력이 아니라 부채 정리**로 열렸다 — 5차 감사가 MUST-FIX 0건·PASS-WITH-DEBT 0.89/SAFE TO PUSH: Yes를 내면서 지목한 이월 패턴(1~3줄 편집 5건이 docs 패스가 열려 있어도 쓸리지 않음)을 닫는다. 신규 REQ 없음, 신규 AC 2건(AC-GEST-033/034)뿐 — plan.md §F M10 서문.
+
+**산출물 (plan.md §F M10 산출물 1-4 전부 완료, RED-GREEN 사이클로 진행)**
+
+1. **권고 부재 경로(`scroll-geometry.ts`/`scroll.ts`) — NN5 규범 절반, AC-GEST-034.** `minNonDegenerateRatio`가 이제 `number | undefined`를 반환한다 — 이분 탐색 전에 `ratio=1` 자체가 퇴화인지 먼저 확인하고, 퇴화면(문턱을 넘는 비율이 아예 없는 화면) `undefined`를 반환한다. `scroll.ts`는 `undefined`일 때 `minValidRatio`/`minValidRatioBasis` 필드 자체를 응답에서 생략한다(조건부 스프레드). 거부(`AMOUNT_TOO_SMALL`) 자체와 무제스처 보장은 불변.
+2. **`behavior:"instant"` 방어적 폴백(`web-support.ts`) — NF3, 채택.** `buildScrollIntoViewExpression`의 `el.scrollIntoView({block:"center", behavior:"instant"})` 호출을 `try`/`catch`로 감싸, WebKit이 `ScrollBehavior` 열거값을 검증해 던지면(구버전 WebKit) `el.scrollIntoView({block:"center"})`(인자 없음)로 폴백한다. 폴백 경로가 smooth 페이지에서 M9가 닫은 비동기 표본 결함을 좁은 범위로 재현한다는 점을 주석에 명시(동등이 아니라 개선이라는 서술).
+3. **문턱 캐싱(`adb-backend.ts`) — NN10, 채택(선택 항목).** `getMinEffectiveSwipeThreshold`에 직렬(serial)별 in-memory 캐시(`thresholdCache`) + TTL(`THRESHOLD_CACHE_TTL_MS = 5_000`) 무효화를 추가했다. 유효 밀도가 세션 중 바뀔 수 있다는 사실(§C.1-⑳)이 무효화를 규범으로 만든다 — TTL 만료 후 재조회하도록 해 확대 방향에서 캐시가 슬롭보다 낮은 문턱을 영구히 공급하는 것을 막는다. 생성자에 테스트용 `now: () => number` 주입점 추가(기본값 `Date.now`).
+4. **사실 오류·주석 정리 — NN5 주석 절반 + NN6, 동작 변화 없음.** `scroll-geometry.ts`의 `minNonDegenerateRatio` 주석에서 "그런 화면은 이미 REQ-GEST-SCROLL-004가 거부한다"는 거짓 전제를 정정(실행 가능한 반례: `deriveScreenSize([{0,0,12,12}])`는 `{12,12}`를 정상 반환한다). `swipe.ts`에 `@MX:NOTE` 1개 신설(`--duration` 검증이 반드시 백엔드 호출보다 앞서야 하는 순서 불변식) — 종전 0개였다.
+5. **회귀** — 아래 "테스트 스위트"/"회귀 확인" 절 참조.
+
+### AC PASS/FAIL 매트릭스 (M10 스코프)
+
+| AC ID | 상태 | 검증 명령 | 실제 결과 |
+|-------|------|-----------|-----------|
+| AC-GEST-033 | PASS (문서 오라클 — 이미 충족돼 있었다) | spec.md §C.1-㉒ + acceptance.md AC-GEST-033 대조 | M8 산출물 5(AC-GEST-028 왕복 검증)이 이미 "1초 지연 후" 촬영 방법론을 기록해 뒀다(progress.md M8 §E.2, spec.md §C.1-㉒/REQ-GEST-SCROLL-007 0.8.0 주석). 재측정하지 않았다 — 지시문 Section C-1이 명시한 대로 기존 기록을 대조 확인만 했다. "1초"를 규칙으로 서술하지 않는다는 조건도 spec.md 서술이 준수 |
+| AC-GEST-034 | PASS | `pnpm vitest run src/cli/commands/scroll-geometry.test.ts src/cli/commands/scroll.test.ts -t "AC-GEST-034"` | scroll-geometry.test.ts 4건 + scroll.test.ts 3건 전부 PASS. 12x12 화면(문턱 32px)에서 `deriveScreenSize`가 정상 파생(반례 확인) + `ratio=1`조차 네 방향 전부 퇴화 확인 + `minNonDegenerateRatio`가 네 방향 전부 `undefined` 반환 + CLI 전 구간(`scroll` 명령)에서 `AMOUNT_TOO_SMALL`은 그대로 나가되 `minValidRatio`/`minValidRatioBasis` 필드가 응답에서 생략됨(`Object.hasOwn` 확인) + 무제스처 보장(`backend.swipe` 미호출) + 일반 화면(402x874)에서는 필드가 여전히 실림(회귀 아님) 확인 |
+| AC-GEST-027 | 대상 아님(0.8.0에서 이미 정정됨) | — | 지시문·plan.md §F M10 AC 절이 명시한 대로, 이 AC는 0.8.0 amendment에서 이미 정정을 마쳐 M10의 대상이 아니다 |
+
+**B-1(NF3)·B-2(NN10)·B-4(NN6)는 신규 REQ/AC가 없는 순수 구현 판단 항목**이라 위 매트릭스에 없다 — 검증은 아래 RED-GREEN 사이클 + 회귀 확인으로 갈음한다(plan.md §F M10 "다만 무효화 의무는 규범" 및 "채택 여부는 구현 판단" 서술 참조).
+
+### RED-GREEN 사이클 증거 (B-3 — AC-GEST-034, `minNonDegenerateRatio`)
+
+```
+$ pnpm vitest run src/cli/commands/scroll-geometry.test.ts   # 수정 전 (undefined 처분 신설 전)
+ FAIL  ... minNonDegenerateRatio는 이런 화면·문턱 조합에서 undefined를 반환한다 ...
+ AssertionError: expected 1 to be undefined   -- 자기거부 값(1)을 그대로 반환하고 있었음을 실측 확인
+ Tests  1 failed | 73 passed (74)
+$ pnpm vitest run src/cli/commands/scroll.test.ts   # scroll.ts 수정 전
+ FAIL  ... 문턱을 넘는 비율이 없는 화면(12x12, 문턱 32px) ...
+ AssertionError: expected true to be false   -- minValidRatio 필드가 undefined 값으로나마 여전히 실려 있었음(hasOwn true)
+ Tests  2 failed | 66 passed (68)
+# 수정 후
+$ pnpm vitest run src/cli/commands/scroll-geometry.test.ts src/cli/commands/scroll.test.ts
+ Test Files  2 passed (2)
+      Tests  142 passed (142)
+```
+
+### RED-GREEN 사이클 증거 (B-1 — NF3, `buildScrollIntoViewExpression` 방어적 폴백)
+
+```
+$ # try/catch를 일시 제거한 사본으로 재실행 (수정 전 재현)
+$ pnpm vitest run src/cli/commands/web-support.test.ts
+ FAIL  ... falls back to a no-argument call and still finds+credits movement when behavior:"instant" throws ...
+ TypeError: Failed to execute 'scrollIntoView' on 'Element': The provided value 'instant' is not a valid enum value of type ScrollBehavior.
+ FAIL  ... on a smooth-scrolling page/container, the fallback reads moved:false ...
+ (same TypeError, uncaught)
+ Tests  2 failed | 42 passed (44)
+# try/catch 복원 후
+$ pnpm vitest run src/cli/commands/web-support.test.ts
+ Test Files  1 passed (1)
+      Tests  44 passed (44)
+```
+
+**B-1 evidence — 열거값 throw 주장의 출처.** `behavior:'bogus-value'`가 시뮬레이터에서 TypeError를 던진다는 사실은 **5차 감사의 확인을 인용**했다 — 이번 세션에서 직접 재검증하지 않았다. 이유: 지시문 C-4가 경고한 대로 이 환경의 웹 프록시가 간헐적(`NO_WEB_PAGE`, 5초 간격 필요, 이전 감사도 4회 시도)이고, `try`/`catch`로 감싸는 수정은 **어느 예외 형태든** 동일하게 닫으므로 재검증 없이도 방어적 가치가 있다. 코드를 직접 읽어 확인한 사실: `webview/inspector-client.ts`가 `wasThrown === true`를 **reject**로 처리하므로(:199-202), 폴백이 없었다면 이 throw는 "조용히 `{found:false,moved:false}`로 저하"가 아니라 `runInWebSession`의 catch를 거쳐 `WEB_SESSION_FAILED`로 명령 전체가 실패했을 가능성이 높다 — 지시문이 서술한 정확한 증상(js-click과 구분 불가능한 조용한 저하)과는 다른 실패 모양이다. 두 가지 실패 모양(전체 실패 vs 조용한 저하) 중 이 환경에서 실제로 어느 쪽이 발생하는지는 라이브 재검증 없이 확정할 수 없으나, **이 수정(페이지 스크립트 안에서 예외를 잡는 것)은 둘 중 어느 쪽이 발생하더라도 절벽 자체를 닫는다** — 위치를 transport 경계가 아니라 페이지 스크립트 안으로 정한 이유다.
+
+### RED-GREEN 사이클 증거 (B-2 — NN10, `AdbBackend` 문턱 캐싱)
+
+```
+$ pnpm vitest run src/backend/adb-backend.test.ts   # 캐싱 구현 전
+ FAIL  ... a second call for the same serial within the TTL window does not re-query 'wm density' ...
+ AssertionError: expected "vi.fn()" to be called 1 times, but got 2 times
+ FAIL  ... caches independently per serial ...
+ AssertionError: expected "vi.fn()" to be called 2 times, but got 4 times
+ FAIL  ... within the TTL window, a stale-but-not-yet-expired cache entry is still served ...
+ AssertionError: expected 26px but got 32px cached-vs-fresh mismatch (캐시가 없어 매번 최신 mock을 반영해버림)
+ Tests  3 failed | 55 passed (58)
+# 캐싱 + TTL 구현 후
+$ pnpm vitest run src/backend/adb-backend.test.ts
+ Test Files  1 passed (1)
+      Tests  58 passed (58)
+```
+
+캐시가 **실제로 사용됨**(두 번째 `getMinEffectiveSwipeThreshold` 호출이 `exec`를 재호출하지 않음, 직렬별 독립) + **실제로 무효화됨**(TTL 경과 후 재조회해 갱신된 값 반환, 확대 방향 시나리오 포함)을 각각 별도 테스트로 확인.
+
+### 회귀 확인
+
+**iOS `minValidRatio` 불변** — 402x874, down, 문턱 11 재계산:
+
+```
+$ node --input-type=module -e 'import("./dist/cli/commands/scroll-geometry.js").then(m => console.log(m.minNonDegenerateRatio("down", {width:402,height:874}, 11)))'
+0.013984236866235733
+```
+
+M7/M8/M9 시점 기록값과 바이트 동일.
+
+**연결된 Android 실기기 문턱 불변(32px)** — `wm density` 재조회 없이 캐시 배선까지 포함해 확인:
+
+```
+$ export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
+$ adb -s adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp shell wm density
+Physical density: 600
+$ node --input-type=module -e 'import("./dist/backend/adb-backend.js").then(async m => {
+    const b = new m.AdbBackend();
+    console.log(JSON.stringify(await b.getMinEffectiveSwipeThreshold("adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp")));
+    console.log(JSON.stringify(await b.getMinEffectiveSwipeThreshold("adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp")));
+  })'
+{"minEffectiveSwipePx":32,"basis":"device-query"}
+{"minEffectiveSwipePx":32,"basis":"device-query"}
+```
+
+**Android `minValidRatio` 불변(실기기 화면 1440x3120)**:
+
+```
+$ node --input-type=module -e 'import("./dist/cli/commands/scroll-geometry.js").then(m => {
+    console.log(m.minNonDegenerateRatio("down", {width:1440,height:3120}, 32));
+    console.log(m.minNonDegenerateRatio("left", {width:1440,height:3120}, 32));
+  })'
+0.011039886623620987
+0.02391975373029709
+```
+
+M8/M9 progress.md 기록값(세로 `0.011039886623620987`, 가로 `0.02391975373029709`)과 바이트 동일.
+
+**`DeviceBackend` 인터페이스 멤버 수 불변(10)**:
+
+```
+$ grep -cE '^  [a-zA-Z]+\(' src/schema/device-backend.ts
+10
+```
+
+### 테스트 스위트
+
+```
+$ pnpm vitest run
+ Test Files  29 passed (29)
+      Tests  657 passed (657)
+```
+
+기준선 644 → 657(+13): `scroll-geometry.test.ts` 신규 4건(AC-GEST-034 — deriveScreenSize 반례, ratio=1 퇴화 확인, undefined 확인 네 방향, 왕복 회귀 아님 확인) · `scroll.test.ts` 신규 3건(AC-GEST-034 — 12x12/32px 필드 생략, 네 방향 동일, 일반 화면 회귀 아님) · `web-support.test.ts` 신규 2건(NF3 — 폴백 성공 경로, 폴백의 smooth-페이지 비대칭 트레이드오프) · `adb-backend.test.ts` 신규 4건(NN10 — 재조회 안 함, 직렬별 독립, TTL 경과 후 갱신, TTL 이내 유지). 신규 파일 없음(기존 4개 테스트 파일만 확장) — `total_run_phase_files`는 M9까지의 20에서 불변.
+
+### Typecheck + Build
+
+```
+$ pnpm typecheck  → exit 0
+$ pnpm build      → exit 0
+```
+
+### Scope Check
+
+```
+$ git status --porcelain --untracked-files=no
+ M src/backend/adb-backend.test.ts
+ M src/backend/adb-backend.ts
+ M src/cli/commands/scroll-geometry.test.ts
+ M src/cli/commands/scroll-geometry.ts
+ M src/cli/commands/scroll.test.ts
+ M src/cli/commands/scroll.ts
+ M src/cli/commands/swipe.ts
+ M src/cli/commands/web-support.test.ts
+ M src/cli/commands/web-support.ts
+```
+
+plan.md §A.6 M10 행(9개 파일: `adb-backend.ts`/`.test.ts`, `scroll-geometry.ts`/`.test.ts`, `scroll.ts`/`.test.ts`, `web-support.ts`/`.test.ts`, `swipe.ts`) — 전부 위 목록에 포함, 그 외 파일 없음. `src/backend/idb-backend.ts`(iOS 경로, M10 비대상) 미변경. `src/normalize/*`, `src/webview/{inspector-client,proxy-service,calibration}.ts`(PRESERVE) 미변경. SPEC 본문 3종(spec.md/plan.md/acceptance.md) 미변경, frontmatter도 미변경(`status: in-progress` 그대로). README.md/CHANGELOG.md 미변경(지시문 Section D — 별도 docs 패스가 NN3·`--web` 프록시 고지·NN9 후속을 처리).
+
+### MX 태그 확인
+
+```
+$ grep -c "@MX:ANCHOR\|@MX:WARN\|@MX:NOTE" src/backend/adb-backend.ts src/cli/commands/web-support.ts src/cli/commands/scroll-geometry.ts src/cli/commands/scroll.ts src/cli/commands/swipe.ts
+src/backend/adb-backend.ts:5        # ANCHOR 1 · WARN 1 · NOTE 3 (신규 NOTE 1개 -- THRESHOLD_CACHE_TTL_MS 설계 선택 근거)
+src/cli/commands/web-support.ts:1   # NOTE 1 (M8 이전부터 존재, 이번 변경으로 늘지 않음 -- NF3 서술은 기존 함수 docblock의 산문으로만 추가)
+src/cli/commands/scroll-geometry.ts:2   # ANCHOR 2 (M7/M8부터 존재, 이번 변경으로 늘지 않음 -- AC-GEST-034/NN5 서술은 기존 ANCHOR 함수 docblock의 산문으로만 추가)
+src/cli/commands/scroll.ts:1         # NOTE 1 (M3부터 존재, 이번 변경으로 늘지 않음)
+src/cli/commands/swipe.ts:1          # NOTE 1 (신규 -- 종전 0개, NN6이 지목한 "0개 태그" 상태 해소)
+```
+
+파일당 누적 한도(ANCHOR 3/WARN 5/NOTE 10/TODO 5) 전부 준수. `swipe.ts`의 신규 NOTE는 "종류·위치는 구현 판단"(plan.md §F M10 산출물 4) 재량으로, 이미 태그를 보유한 형제 단일-명령 파일(`doctor.ts`/`dump.ts`/`reset.ts`/`tap.ts`/`text.ts` 각 1개)과 같은 밀도로 맞췄다 — 전면적(blanket) 태깅이 아니라 파일 전체에서 가장 비자명한 불변식(`--duration` 검증 순서) 하나만 태그했다.
+
+## 블로커 / 서프라이즈 (M10 종료 시점)
+
+1. **NF3의 열거값 throw 주장은 라이브 재검증하지 않았다 — 이 세션의 유일한 미관측 항목.** 지시문이 명시적으로 허용한 대로(auditor 인용 vs 자체 재검증 양자택일) 5차 감사의 확인을 인용했다. 코드를 읽어 확인한 사실 하나는 감사의 서술과 정확히 일치하지 않을 수 있다는 것이다 — `webview/inspector-client.ts`는 `wasThrown`을 reject로 처리하므로, 미수정 상태에서 이 throw는 (지시문이 서술한) "조용한 js-click 저하"가 아니라 (내가 코드에서 읽은) "명령 전체의 `WEB_SESSION_FAILED` 실패"로 나타났을 가능성이 있다. **다음 감사가 살펴봐야 할 항목 1순위**: 실제 iOS 시뮬레이터에서 구버전 WebKit을 흉내낼 방법(예: `behavior:'bogus-value'`를 직접 평가)으로 어느 실패 모양이 맞는지 확정하는 것. 어느 쪽이든 이번 수정(페이지 스크립트 내부에서 예외를 잡음)은 두 실패 모양 모두를 닫으므로 수정 자체의 정당성에는 영향이 없다.
+2. **B-2(NN10)의 캐시는 in-memory이며 프로세스 경계를 넘지 않는다 — 의도된 설계다.** 이 CLI는 `node dist/cli/bin.js <cmd>` 호출마다 별도 OS 프로세스이므로(`ime-session-store.ts`의 선례가 이미 문서화한 사실), 실사용에서 `scroll`을 반복 호출하는 일반적인 경로는 각 호출이 새 프로세스이고 캐시가 매번 비어 있어 체감 이득이 없다. 이 캐시가 실제로 amortize하는 것은 **같은 프로세스 안에서 같은 백엔드 인스턴스를 재사용하는 호출자**(테스트, 또는 향후 배치/REPL 형태의 실행 경로)뿐이다. plan.md §F M10이 명시적으로 "캐시 유무·자료구조·키·무효화 계기는 전적으로 구현 판단"이라 위임했으므로 SPEC 위반은 아니지만, 이 설계가 실사용 CLI에서 체감 latency를 줄이지 못한다는 것은 다음 세션이 알아야 할 사실이다. TTL 무효화를 `reset.ts`(세션 재설정)에 배선하는 것은 plan.md §A.6 M10 파일 스코프 밖(`reset.ts`는 M10 대상이 아니다)이라 이번 세션에서 하지 않았다.
+3. **AC-GEST-033은 재측정이 아니라 기존 기록 대조였다** — 지시문 C-1이 정확히 지적한 대로, M8의 AC-GEST-028 왕복 검증이 이미 1초 지연 방법론을 실측·기록해 뒀다. 이번 세션은 그 기록이 acceptance.md의 세 조건(지연 존재/기록됨/"1초"를 규칙으로 서술하지 않음/iOS로 확장하지 않음)을 충족하는지 대조만 했다 — 새 실기기 시행 없음.
+4. **네 항목(B-1~B-4) 중 하나도 "사실은 문제가 아니었다"로 판명되지 않았다** — NF3(방어적 폴백 채택, 트레이드오프 명시) · NN10(캐싱 채택, TTL 무효화) · NN5(자기거부 권고 수정 + 주석 정정, 둘 다 실제 결함/사실 오류였음) · NN6(0개 태그, 실제로 비어 있었음) 넷 모두 지시문이 서술한 그대로의 조치가 필요했다.
+5. **범위 이탈 없음.** `src/backend/idb-backend.ts`(iOS 경로, M10 비대상), `src/normalize/*`·`src/webview/{inspector-client,proxy-service,calibration}.ts`(PRESERVE), README.md/CHANGELOG.md(docs 패스 위임) 전부 미변경 확인. SPEC 본문 3종·frontmatter 미변경.
+6. **환경 정리 확인.** `adb reverse --list` 빈 출력(이 세션은 `adb reverse` 매핑을 전혀 사용하지 않았다 — C-2의 슬롭 픽스처를 열지 않았다, 모든 검증이 unit 레벨이거나 read-only `wm density`/`getMinEffectiveSwipeThreshold` 호출뿐이었다). `wm density`는 `Physical density: 600` 단일 행, Override 없음(변경 없음). `xcrun simctl list devices booted` → iPhone 17 Pro(D0B3A18C-...) 하나만. 포트 8935/8937 리스너 없음(`lsof` 무출력) — 이 세션은 웹 프록시나 로컬 서버를 전혀 띄우지 않았다.
+
+## §E.3 Run-phase Audit-Ready Signal (M10 최종 — 0.8.0 amendment)
+
+```yaml
+run_status: M10-complete
+run_complete_at: "2026-07-28"
+run_commit_sha: "pending-backfill-M10"   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3). 커밋 후 별도 backfill 커밋에서 채운다(0.3.0~0.7.0 sync에서 이미 여러 번 쓰인 패턴 그대로).
+ac_pass_count: 2      # M10 자체 판정: AC-GEST-033(문서 오라클, 기존 기록 대조), AC-GEST-034
+ac_fail_count: 0
+ac_partial_count: 0
+ac_deferred_count: 0   # AC-GEST-027은 0.8.0에서 이미 정정되어 M10 대상이 아님(대상 제외이지 미충족이 아니다)
+preserve_list_post_run_count: 0   # src/normalize/*, src/webview/{inspector-client,proxy-service,calibration}.ts, src/backend/idb-backend.ts 미변경
+l44_pre_commit_fetch: "git fetch origin master && git rev-list --count --left-right origin/master...HEAD -> 확인 예정(커밋 직전 재실행)"
+l44_post_push_fetch: not_applicable   # 이 SPEC은 push하지 않는다(지시문 Section D "Do not push")
+new_warnings_or_lints_introduced: false
+cross_platform_build: { windows: not_applicable, note: "TypeScript/Node 프로젝트, GOOS 교차빌드 대상 아님" }
+total_run_phase_files: 20   # M10은 기존 9개 파일(plan.md §A.6 M10 행)만 확장 -- 신규 파일 없음, M9까지의 20에서 불변
+m1_to_mN_commit_strategy: "M10은 단일 커밋(fix)으로 마감 -- B-1/B-2/B-3/B-4 네 산출물은 plan.md §G가 명시한 대로 서로 완전히 독립(부채 목록이지 선행 관계 아님)이지만, 같은 5차 감사가 지목한 이월 패턴을 한 번에 닫는 단일 amendment이므로 분리가 인위적이다(M6/M7/M8/M9와 동일 판단)"
+```
