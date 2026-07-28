@@ -1,8 +1,8 @@
 ---
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 인수 기준"
-version: "0.4.0"
-status: completed
+version: "0.5.0"
+status: in-progress
 created: 2026-07-27
 updated: 2026-07-28
 author: hatae
@@ -40,6 +40,10 @@ amendment_of: SPEC-GESTURE-001
 | AC-GEST-019 | `--duration 0` → `INVALID_DURATION`, 무동작 | REQ-GEST-SWIPE-005 | unit |
 | AC-GEST-020 | `--duration` 생략 경로의 동작·고지 | REQ-GEST-SWIPE-002, REQ-GEST-SWIPE-006 | unit + e2e·manual |
 | AC-GEST-021 | `scrollIntoView`가 돌았지만 안 움직임 → 스크롤 표기 안 함 | REQ-GEST-WEB-002 | unit(mock) + e2e |
+| AC-GEST-022 | 홀수 축 화면에서도 움직임 불가 스와이프를 거부 | REQ-GEST-SCROLL-007 | unit |
+| AC-GEST-023 | 컨테이너 스크롤도 이동으로 판정 | REQ-GEST-WEB-002 | unit(mock) + e2e |
+| AC-GEST-024 | `MIN_EFFECTIVE_SWIPE_PX` 실측 출처 + `minValidRatio` 왕복 | REQ-GEST-SCROLL-007 | e2e·측정 + unit |
+| AC-GEST-025 | `--duration` 상한 → `INVALID_DURATION`, 무한 정지 없음 | REQ-GEST-SWIPE-005 | unit + e2e |
 
 ---
 
@@ -228,7 +232,9 @@ amendment_of: SPEC-GESTURE-001
 - **When** `scroll down --amount <값>`을 **퇴화 대역**의 값으로 실행하면 — `0.0001`, `0.001`, `0.0012`,
 - **Then** 각각 `AMOUNT_TOO_SMALL`이 반환되고 **어떤 제스처도 전송되지 않는다**(mock 실행기 호출 0회).
 - **And** 응답에 거부된 비율과 **그 화면에서 유효한 최소 비율**이 함께 실린다 — 호출자가 다시 시도할 값을 알 수 있어야 한다.
-- **And** **When** **동작 경계**의 값으로 실행하면 — `0.002`, `1` — 정상 성공하고 `from ≠ to`다. `0.002`는 `from.y=438 to.y=436`(거리 2)이다.
+- **And** **When** **동작 경계**의 값으로 실행하면 — `0.002`, `1` — 정상 성공한다. 기댓값은 **손으로 유도한 상수**로 적는다: `0.002`는 `from.y=438 to.y=436`(거리 2).
+
+> **0.5.0 동어반복 제거.** 이 경계 단언은 `minNonDegenerateRatio()`의 **자기 출력**을 기댓값으로 쓰고 있었다 — 함수가 틀려도 "출력이 출력과 같다"로 통과하며, 실제로 홀수 축에서 1px을 내면서도 초록이었다. 기댓값은 **함수를 호출하지 않고 독립적으로 유도한 값**이어야 한다. 문턱 도입 후의 경계값은 AC-GEST-024가 맡는다.
 - **And** 위 두 대역을 **네 방향 전부**(`up`/`down`/`left`/`right`)에 대해 확인한다. 가로 방향은 화면 폭(402)이 기준이므로 임계 비율이 세로와 다르다 — 방향별로 따로 확인하지 않으면 한 축만 맞은 구현이 통과한다.
 - **And** `AMOUNT_TOO_SMALL`은 `INVALID_AMOUNT`과 **다른 코드**다. `--amount 0.001`은 계약 범위(0 초과 1 이하) **안에** 있으므로 정적 검증기가 거부해서는 안 되고, 10000px 화면에서는 약 9px을 움직여 정상이다. 화면 크기에 의존하는 판정이라 기하 계산 단계에서만 내려질 수 있다.
 
@@ -269,3 +275,56 @@ amendment_of: SPEC-GESTURE-001
 > 실측 근거(spec.md §C.1-⑪): 화면 밖 드로어 링크에서 `scrollIntoView` → `true`, `scrollY 1485 → 1485`, 재측정 사각형 불변인데 응답은 `js-click-scrolled`였다. `buildScrollIntoViewExpression`(`web-support.ts:209-217`)은 `if (!el) return false` 외에는 무조건 `true`를 돌려주므로 그 값은 **"노드가 존재했다"**는 뜻일 뿐이다.
 >
 > REQ-GEST-WEB-002는 0.3.0에서도 "스크롤이 **일어났을 때**"라고 쓰여 있었다 — 따라서 이것은 **REQ 공백이 아니라 REQ 위반**이며, AC-GEST-013이 "구분 가능하게 표기"만 검사하고 표기의 **진실성**을 검사하지 않아 통과했다.
+
+---
+
+## 0.5.0 amendment 신규 AC (AC-GEST-022 ~ 025)
+
+> 네 AC는 재감사(0.76, SAFE TO PUSH: No)가 지목한 세 건을 막는다(plan.md §B.7). 기존 번호는 건드리지 않는다.
+
+### AC-GEST-022 — 홀수 축에서도 움직임 불가 스와이프를 거부한다
+
+- **Given** 화면 크기 픽스처 **세 벌**: `402x874`(짝·짝), `393x852`(폭 홀), `375x667`(홀·홀),
+- **When** 각 화면에서 **네 방향 전부**에 대해 극소 비율(`1e-12`, `1e-8`, `1e-4`)로 `scroll`하면,
+- **Then** **모든 조합에서** `AMOUNT_TOO_SMALL`이 반환되고 제스처가 전송되지 않는다.
+- **And** 특히 `375x667`의 `down`·`left`와 `393x852`의 `left`에서 통과한다 — **0.4.0 구현은 이 세 조합에서 1px 스와이프를 방출하며 실패한다.** 이것이 이 AC의 존재 이유다.
+- **And** 판정 근거는 `from === to`가 **아니라** 스크롤 축 거리가 `MIN_EFFECTIVE_SWIPE_PX` 미만인지다. `from === to`로 구현하면 홀수 축에서 반드시 실패한다.
+
+> 근거(spec.md §C.1-⑬, 빌드 모듈 재현): 홀수 축은 `center`가 반정수라 `round(center ± ε)`가 항상 갈라진다. `1e-12`까지 내려도 `from === to`는 **한 번도** 성립하지 않는다. 화면이 아니라 **축 길이의 홀짝**이 가르는 변수다 — `393x852`가 `down`은 발동하고 `left`는 미발동하는 것이 그 증거다.
+
+### AC-GEST-023 — 컨테이너 스크롤도 이동으로 판정한다
+
+- **Given** `overflow:auto` 컨테이너 안에 있는, 뷰포트 밖 요소,
+- **When** `tap --web "<CSS>"`를 실행하면,
+- **Then** 컨테이너가 스크롤되어 요소가 들어온 경우 응답이 **`-scrolled` 표기를 갖는다**.
+- **And** 이때 `window.scrollY`는 **변하지 않는다** — 그런데도 이동으로 판정되어야 한다. `scrollY` 단독 오라클 구현은 여기서 실패한다.
+- **And** 가로 스크롤 컨테이너에서도 같은 판정이 나온다.
+- **And** AC-GEST-021(이동 없음 → 표기 없음)은 계속 통과한다 — 이 AC는 판정을 **넓히는** 것이지 느슨하게 하는 것이 아니다. 두 AC가 함께 오라클을 양쪽에서 조인다.
+
+> 근거(spec.md §C.1-⑯): 주입한 컨테이너에서 `containerScrollTop 0→755`, `scrollY 1626→1626`, 보고는 `native`. 0.4.0이 과다표기를 고치면서 과소표기를 만든 **행동 회귀**다(`737b9fb` 대비).
+
+### AC-GEST-024 — 문턱은 측정된 값이고, `minValidRatio`는 실제로 동작한다
+
+- **Given** M7 산출물 1의 측정이 완료된 상태,
+- **When** spec.md §C.1-⑭을 확인하면,
+- **Then** `MIN_EFFECTIVE_SWIPE_PX` 값이 **검증 수준 `실측`**으로 기록돼 있고, **측정한 기기와 페이지**가 명시돼 있다.
+- **And** 측정 방법(이분 탐색 + 후보별 반복 시행 + 상태바 제외 본문 비교)이 기록돼 있다.
+- **And** 세로·가로를 각각 측정했고, 값이 다르면 둘 다 기록돼 있다.
+- **And** **왕복 검증**: 임의의 화면에서 `AMOUNT_TOO_SMALL` 응답이 준 `minValidRatio`를 **그대로 다시 넣으면 성공하고, 실기기에서 실제로 움직인다**(3회 중 3회). 되돌려준 값이 다시 거부되거나 무동작이면 이 AC는 실패다.
+- **And** `minValidRatio`보다 한 단계 작은 비율은 거부된다 — 경계가 실제로 그 지점에 있음을 확인한다.
+- **And** **Android는 이 AC의 범위 밖이다.** 측정은 iOS에서만 이뤄지며, iOS 값을 Android 근거로 쓰지 않는다(PARTIAL 규율).
+
+> **이 AC는 "수를 골랐는가"가 아니라 "측정했는가"를 검사한다.** 값을 적어 넣는 것만으로는 통과하지 못한다 — §C.1 행의 검증 수준과 출처가 함께 있어야 한다. 현재 알려진 것은 희소한 4점(2px → 0/3, 4px → 1/3, ~44px → 3/3, ~437px → 3/3)뿐이고 하한은 4px과 44px 사이 어딘가다.
+
+### AC-GEST-025 — `--duration` 상한
+
+- **Given** mock 실행기,
+- **When** `swipe 200 700 200 300 --duration 60001`(상한 초과)을 실행하면,
+- **Then** `INVALID_DURATION`이 반환되고 제스처가 전송되지 않는다.
+- **And** `--duration 60000`(상한 경계)은 거부되지 않는다.
+- **And** **When** `--duration 1e24`를 실행하면 **명령이 유한 시간에 반환한다** — 오류든 성공이든, **반환하지 않는 것은 실패다.** 이 케이스는 타임아웃을 건 상태로 실행한다.
+- **And** `--duration 1e24`는 `INVALID_DURATION`으로 거부된다 — 지수 표기가 검증을 통과하지 못한다.
+
+> 근거(spec.md §C.1-⑮): 상한이 없던 시점에 `--duration 1e24`가 **영원히 반환하지 않아** 강제 종료가 필요했다. 반환하지 않는 명령은 `ok:true`-무효과와 같은 계열이다 — 에이전트가 그 자리에서 멈춘다.
+>
+> 상한 60,000 ms는 **설계 선택이지 측정값이 아니다**(spec.md REQ-GEST-SWIPE-005). 60초를 넘는 것은 스와이프가 아니라 롱프레스-드래그이고 §D가 범위 밖으로 뺀 동작이다. 기기 동작 주장이 없으므로 측정 의무가 붙지 않는다 — `MIN_EFFECTIVE_SWIPE_PX`와 이 점이 다르다.
