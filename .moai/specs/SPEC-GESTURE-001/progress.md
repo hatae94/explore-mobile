@@ -852,7 +852,7 @@ m1_to_mN_commit_strategy: "M6은 단일 커밋(fix)으로 마감 -- 4건의 결�
 ```yaml
 sync_status: audit-ready
 sync_complete_at: "2026-07-28"
-sync_commit_sha: "pending-backfill-0.4.0-docs-sync"   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3)이 허용하는, 이 파일에서 이미 세 번(M5/M6/0.3.0-sync) 쓰인 것과 동일한 패턴. 이 값을 담은 별도 chore backfill 커밋에서 채운다.
+sync_commit_sha: "e10995f"   # backfill 완료(자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 세 번 쓰인 패턴 그대로). 이 값을 담은 별도 chore backfill 커밋 참조.
 b12_self_test_a: "grep -c 'SPEC-GESTURE-001' CHANGELOG.md (편집 후) -> 6 -- 기존 단일 블록을 제자리에서 수정했을 뿐 새 중복 블록을 추가하지 않았음을 확인(편집 전 5 -> 편집 후 6, 증가분은 0.4.0 amendment Fixed 신규 불릿 1개 언급뿐)"
 b12_self_test_b: "grep -cE '^### AC-GEST-[0-9]+' acceptance.md -> 21 -- CHANGELOG Notes의 '21 acceptance criteria' 및 README Status의 '21 acceptance criteria' 표기와 일치"
 b12_self_test_c: "CHANGELOG/README가 인용한 모든 파일 경로·명령 출력을 커밋 전 Read/Bash로 실재·실측 확인: src/cli/commands/{swipe,scroll,scroll-geometry,web-support}.ts, src/cli/validators.ts, 그리고 `node dist/cli/bin.js swipe 200 700 200 300 --duration 0`을 직접 재실행해 INVALID_DURATION 메시지 문구('positive integer')를 확인 -- git log로 이 문구가 HEAD(3feabfd, M6 이후 커밋)에서 이미 정정돼 있음도 함께 확인했다(위 M6 블로커 1번이 발견 시점 기준 남긴 기록과 달리, 현재 HEAD는 이미 고쳐진 상태)"
@@ -891,4 +891,4 @@ $ grep -cE '^### AC-GEST-[0-9]+' .moai/specs/SPEC-GESTURE-001/acceptance.md   �
 
 이 sync 커밋은 `README.md` + `CHANGELOG.md` + SPEC 아티팩트 4종(frontmatter만, `progress.md`는 본문도 포함— 이 §E.4 자체)을 담는다. `src/`는 건드리지 않는다(지시문 Section D). 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인한다. push는 지시문 Section C-4("Do NOT push. A re-audit runs after you.")에 따라 수행하지 않는다.
 
-sync 커밋 SHA: 이 문단이 속한 커밋 자체가 자신의 SHA를 모르므로(자기참조 문제), 위 `sync_commit_sha: pending-backfill-0.4.0-docs-sync`를 별도의 후속 backfill 커밋에서 실제 값으로 채운다 — M5/M6/0.3.0-sync에서 이미 세 번 쓰인 패턴 그대로.
+sync 커밋 SHA: `e10995f`(`docs(SPEC-GESTURE-001): correct 0.4.0 amendment docs + 3-phase close`). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — `e10995f` 자신은 이 SHA를 몰랐으므로(자기참조 문제), M5/M6/0.3.0-sync에서 이미 세 번 쓰인 패턴 그대로.
