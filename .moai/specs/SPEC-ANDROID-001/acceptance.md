@@ -1,10 +1,10 @@
 ---
 id: SPEC-ANDROID-001
 title: "Android(adb) 기기 제어 기본기 + 자동 환경 세팅 CLI 코어 — 인수 기준"
-version: "0.2.0"
-status: completed
+version: "0.3.0"
+status: in-progress
 created: 2026-07-22
-updated: 2026-07-27
+updated: 2026-07-29
 author: manager-spec
 amendment_of: SPEC-ANDROID-001
 ---
@@ -41,6 +41,16 @@ amendment_of: SPEC-ANDROID-001
 | AC-ANDROID-022 | `text` 후 소프트키보드 기본 숨김 + `--keep-keyboard` 옵트아웃 | REQ-INPUT-004(개정) | unit(mock) + e2e |
 | AC-ANDROID-023 | 요소 셀렉터 `tap --id/--text/--index` 중심 탭 + 좌표 XOR 셀렉터 | REQ-SELECT-001/003/004/005 | unit(mock) + e2e |
 | AC-ANDROID-024 | 요소 셀렉터 `text ... --id/--text/--index` 포커스 후 타이핑 | REQ-SELECT-002/004/005 | unit(mock) + e2e |
+| AC-ANDROID-025 | `launch`: DEFAULT 선언 앱을 명시적 컴포넌트로 시작 | REQ-APP-001(개정 0.3.0) | unit(mock) + 실측 |
+| AC-ANDROID-026 | `launch`: **DEFAULT 미선언 앱**을 시작 — 결함 회귀 증명 | REQ-APP-001(개정 0.3.0) | **실측 필수**(mock 단독 불가) |
+| AC-ANDROID-027 | `launch` 태스크 재개 의미 보존(경고 행은 실패 아님) | REQ-APP-001(개정 0.3.0) | **실측** |
+| AC-ANDROID-028 | 런처 컴포넌트 미해석 → 구분된 graceful 오류, 원인 미단정, 인텐트 미전송 | REQ-APP-001(개정 0.3.0) | unit(mock) + 실측 |
+| AC-ANDROID-029 | cold 경로(설치 직후) 비-ASCII `text`가 실제로 착지 | REQ-INPUT-003/004(개정 0.3.0) | **실측 필수**(mock 단독 불가) |
+| AC-ANDROID-030 | warm 경로 불변 — 이미 바인딩이면 대기 없이 즉시 전송 | REQ-INPUT-004(개정 0.3.0) | unit(mock) + 실측 |
+| AC-ANDROID-031 | 바인딩 대기 타임아웃 → **브로드캐스트 미전송 + `ok:false`**(응답 계약 변경) | REQ-INPUT-004(개정 0.3.0) | unit(mock) |
+| AC-ANDROID-032 | 준비 술어의 IME-id 결합항을 실기기에서 확인(미측정 항목) | REQ-INPUT-004(개정 0.3.0) | **실측 필수** |
+
+> **판정 방식 주의(개정 0.3.0)**: AC-026과 AC-029는 **mock 단독으로 충족할 수 없다.** 근거는 §D.4에 있다 — 이 둘이 두 결함이 실제로 고쳐졌음을 증명하는 유일한 판정이다.
 
 ---
 
@@ -189,6 +199,72 @@ amendment_of: SPEC-ANDROID-001
 
 ---
 
+> **개정 0.3.0 신규 인수 기준 (AC-ANDROID-025~032)** — 두 결함 모두 **`ok:true`인데 관측 가능한 효과가 없음** 부류다(spec.md `## Amendments` 0.3.0). 그래서 아래 AC는 **응답 봉투만으로 판정하지 않는다** — 봉투가 거짓말을 한 것이 결함의 내용이었다.
+
+### AC-ANDROID-025 — `launch`: DEFAULT 선언 앱 (REQ-APP-001 개정 0.3.0)
+- **Given** 런처 액티비티가 `android.intent.category.DEFAULT`를 선언한 설치된 패키지(실측 확인: `com.android.settings` → `/.Settings`, `isDefault=true`),
+- **When** `launch com.android.settings`를 실행하면,
+- **Then** CLI는 **런처 컴포넌트를 조회한 뒤 그 컴포넌트를 명시적으로 지정해** 시작하고 `ok:true`를 반환한다(mock: 조회 argv와 명시적 시작 argv가 이 순서로 구성됨을 단언; 암시적 `-p` argv가 **더 이상 구성되지 않음**을 함께 단언),
+- **And** 실기기에서 해당 앱이 포그라운드로 관찰된다(`dumpsys`의 포커스 액티비티 또는 `dump` 트리).
+- **Note**: 이 AC는 **회귀 방지**다 — 개정 전에도 이 패키지는 열렸다. 수정이 **되던 것을 깨지 않았음**을 확인한다.
+
+### AC-ANDROID-026 — `launch`: DEFAULT 미선언 앱 [결함 회귀 증명 · 실측 필수] (REQ-APP-001 개정 0.3.0)
+- **Given** 런처 액티비티가 `DEFAULT`를 선언하지 **않는** 설치된 패키지(실측 확인: `com.sec.android.app.popupcalculator` → `/.Calculator`, `com.sec.android.app.clockpackage` → `/.ClockPackage`. 둘 다 user 0에 설치돼 있고 손으로 누르면 열린다),
+- **When** `launch <package>`를 실행하면,
+- **Then** **실기기에서 해당 앱이 실제로 포그라운드로 관찰된다** — 개정 전 이 호출은 `BACKEND_COMMAND_FAILED`("Activity not started, unable to resolve Intent")로 실패했다,
+- **And** 응답이 `ok:true`인 것만으로는 이 AC를 충족하지 않는다 — **포그라운드 관측이 판정 근거다**.
+- **[HARD] mock 단독 불가**: mock은 구성된 argv의 모양만 단언할 수 있고, **기기가 그 argv를 어떻게 해석하는지**는 단언할 수 없다. 결함 1은 argv 모양이 완벽했는데 기기 쪽 매칭 규칙이 달랐던 사례다. §D.4 참조.
+- **기기 부재 시**: PASS로 승격하지 않고 미기록으로 남긴다.
+
+### AC-ANDROID-027 — `launch` 태스크 재개 의미 보존 [실측] (REQ-APP-001 개정 0.3.0)
+- **Given** 대상 앱이 이미 실행 중이며 앱 내부에 관찰 가능한 상태가 있는 화면(예: 계산기 입력란에 값이 들어 있음),
+- **When** 같은 패키지로 `launch`를 다시 실행하면,
+- **Then** **새 인스턴스가 만들어지지 않고 기존 태스크가 앞으로 나오며 앱 내부 상태가 보존된다**(실측 관측: 재개를 알리는 경고 행 + 종료 코드 0),
+- **And** CLI는 이 경고를 **실패로 처리하지 않는다**(`ok:true`) — 경고 행 존재만으로 오류를 반환하면 이 AC가 깨진다.
+- **Note**: 개정 전 `-p` 경로도 재개 동작이었다. 이 AC는 **명시적 컴포넌트 전환이 그 의미를 바꾸지 않았음**을 고정한다(spec.md §C.3-④).
+
+### AC-ANDROID-028 — 런처 컴포넌트 미해석 → 구분된 graceful 오류 (REQ-APP-001 개정 0.3.0)
+- **Given** 런처 컴포넌트 조회가 **단일 행 `No activity found`** 를 내면서 **종료 코드는 0**인 상황(mock; 실기기에서는 존재하지 않는 패키지명으로 재현),
+- **When** `launch <package>`를 실행하면,
+- **Then** CLI는 **종료 코드가 0임에도 실패로 판정**하고(파서가 stdout을 본다는 증거), `BACKEND_COMMAND_FAILED`와 **구분되는 `LAUNCHER_ACTIVITY_NOT_FOUND`** 를 `ok:false`로 반환한다,
+- **And** 오류 메시지가 원인을 **"패키지 미설치" 또는 "런처 액티비티 없음" 중 하나로 단정하지 않는다** — 두 가능성을 함께 제시함을 문자열 단언으로 검증한다(두 경우가 같은 출력을 내므로 단정은 거짓 주장이다, spec.md §C.3-③),
+- **And** 기기에는 **어떤 시작 인텐트도 전송되지 않는다**(mock: `am start` argv가 mock exec에 도달하지 않음).
+
+### AC-ANDROID-029 — cold 경로 비-ASCII `text` 착지 [결함 회귀 증명 · 실측 필수] (REQ-INPUT-003/004 개정 0.3.0)
+- **Given** ADBKeyBoard가 설치돼 있지 **않은** 기기(`reset` 직후) + 포커스가 잡힌 입력란,
+- **When** 비-ASCII `text "알림"`을 실행하면(같은 호출 안에서 자가치유 설치 → IME 전환 → 전송이 일어난다),
+- **Then** **스크린샷으로 해당 문자열이 입력란에 실제로 착지했음이 관찰된다** — 개정 전 이 경로는 `{"ok":true}`를 반환하면서 **아무것도 입력하지 않았다**(플레이스홀더 그대로, 5회 분리 실험 #1·#4),
+- **And** `doctor`로 방금 설치한 직후의 첫 입력 경로에서도 같은 결과를 확인한다(영향 경로 둘 다 — spec.md §C.3-⑧),
+- **And** 응답이 `ok:true`인 것만으로는 이 AC를 충족하지 않는다 — **화면 관측이 판정 근거다**.
+- **[HARD] mock 단독 불가**: 결함은 argv 순서가 아니라 **argv 사이의 시간**이었다. mock에는 IME 서비스 바인딩이라는 개념이 없다. §D.4 참조.
+- **[HARD] 유효 오라클은 스크린샷뿐**: `dumpsys input_method`의 `mServedView`는 **성공한 경우에도 `null`** 이라 판정 근거로 무효다(spec.md §C.3-⑨). 이 오라클을 다시 시도하지 않는다.
+- **기기 부재 시**: PASS로 승격하지 않고 미기록으로 남긴다.
+
+### AC-ANDROID-030 — warm 경로 불변 (REQ-INPUT-004 개정 0.3.0)
+- **Given** ADBKeyBoard가 이미 기기의 활성 IME이고 **바인딩된** 상태,
+- **When** 비-ASCII `text`를 실행하면,
+- **Then** IME 전환도 대기도 수행하지 않고 **즉시** 브로드캐스트한다(mock: 준비 신호 조회가 최대 1회이며 폴링 반복이 없음, `ime set` argv 미구성),
+- **And** 실기기에서 문자열이 착지한다(개정 전과 동일 — 이 경로는 원래 성공하던 경로다, 5회 분리 실험 #3·#5),
+- **And** 개정이 더한 지연이 **cold 경로에만** 적용됨을 확인한다.
+
+### AC-ANDROID-031 — 바인딩 대기 타임아웃 → 미전송 + `ok:false` [응답 계약 변경] (REQ-INPUT-004 개정 0.3.0)
+- **Given** 준비 신호가 상한 안에 참이 되지 않도록 강제된 상황(mock: 준비 신호 조회가 항상 미바인딩을 반환),
+- **When** 비-ASCII `text`를 실행하면,
+- **Then** CLI는 **base64 브로드캐스트를 전송하지 않는다** — mock exec에 `am broadcast` argv가 **한 번도 도달하지 않음**을 단언한다(미전송은 mock으로 정확히 검증 가능하다),
+- **And** `ok:false` + 전용 오류 코드 `IME_BIND_TIMEOUT`을 반환한다. **`ok:true`를 반환하면 이 AC는 FAIL이다** — 이는 의도된 **응답 계약 변경**(사용자 결정: 이 경로는 이미 깨져 있고 무음 실패가 오류보다 나쁘다),
+- **And** 전환 직전 원래 IME의 **디스크 영속이 유지된다** — 이후 `reset`/`doctor --clean`이 여전히 복원할 수 있다(REQ-IDEMP-004 불변, AC-021과 결합),
+- **And** 대기가 **유한하게 종료된다**(무한 정지 없음). 상한 값 자체는 **설계 선택이므로 이 AC가 특정 수치를 요구하지 않는다** — 요구하는 것은 "유한 종료 + 미전송 + `ok:false`"뿐이다.
+
+### AC-ANDROID-032 — 준비 술어 IME-id 결합항 실기기 확인 [미측정 항목 · 실측 필수] (REQ-INPUT-004 개정 0.3.0)
+- **Given** 준비 술어가 바인딩 플래그와 **바인딩된 IME id** 두 필드를 결합해 사용하는 구현,
+- **When** cold 사이클에서 미바인딩 창(`mBoundToMethod=false`) 동안 `dumpsys input_method`를 관측하면,
+- **Then** 그 창에서 IME id 필드가 **실제로 어떤 값을 갖는지 실기기에서 확인하고 기록한다** — 이 값은 **2026-07-29 검증에서 측정되지 않았다**(spec.md §C.3-⑩),
+- **And** 관측 결과가 결합 술어의 전제와 다르면(예: 미바인딩 창에서도 IME id가 이미 ADBKeyBoard로 보인다면) **술어를 관측에 맞게 정정한다** — 전제를 확립된 사실로 취급한 채 진행하지 않는다,
+- **And** 구현 주석 또는 spec.md §C.3에 **관측 결과를 기록**하여 다음 사람이 다시 추측하지 않게 한다.
+- **Note**: 이 AC의 산출물은 코드가 아니라 **관측 기록**이다. 결합항 없이 바인딩 플래그만으로 술어를 구성하기로 결정했다면, 그 결정과 근거를 기록하는 것으로 충족된다.
+
+---
+
 ## §D.1 엣지 케이스
 
 - 기기 0대 연결 → 명확한 "no device" 오류 JSON.
@@ -204,6 +280,13 @@ amendment_of: SPEC-ANDROID-001
 - `resource-id` 미설정 앱(예: React Native) → `--id` 매칭 실패(`ELEMENT_NOT_FOUND`); `--text` 셀렉터 사용(spec.md §C.2).
 - `--index`가 매칭 수 범위 초과 → `ELEMENT_NOT_FOUND`(범위 밖은 null 매칭).
 - `stop`이 이미 종료된 앱에 실행 → 오류 아님(graceful no-op, force-stop 멱등적 관찰).
+- 런처 컴포넌트 조회가 **선행 점 상대 액티비티**를 반환(`com.sec.android.app.popupcalculator/.Calculator`) → 파서가 그대로 통과시킨다(정규화·확장 시도 금지 — 실측된 형태다, 개정 0.3.0).
+- 조회 stdout이 **2행**이고 첫 행이 컴포넌트가 아님 → **마지막 비어있지 않은 행**을 취한다(개정 0.3.0).
+- 조회가 **종료 코드 0 + 단일 행 `No activity found`** → 실패로 판정한다. 종료 코드 기반 판정은 여기서 성공으로 오판한다(개정 0.3.0).
+- `launch` 대상이 이미 포그라운드 → 재개 경고 + 종료 코드 0. **오류 아님**(AC-027, 개정 0.3.0).
+- 바인딩 대기 중 상한 도달 → 브로드캐스트 미전송 + `IME_BIND_TIMEOUT`. 이때도 **원래 IME 디스크 영속은 유지**되어 `reset`이 복원 가능하다(AC-031 · REQ-IDEMP-004, 개정 0.3.0).
+- 준비 신호 조회(`dumpsys`) 자체가 실패 → 준비 확인 불가이므로 브로드캐스트하지 않는다(무음 유실 방지). graceful 오류로 보고한다(개정 0.3.0).
+- Secure Folder 등으로 `pm list packages`가 **stderr에 SecurityException을 내면서 종료 코드 0 + stdout 정상** → 정상 처리한다. stderr 비어있음을 성공 조건으로 삼으면 오탐이다(spec.md §C.3-⑪, 개정 0.3.0).
 
 ## §D.2 품질 게이트 (TRUST 5)
 
@@ -215,7 +298,7 @@ amendment_of: SPEC-ANDROID-001
 
 ## §D.3 Definition of Done
 
-- [ ] **REQ ↔ AC 추적성**: **44개** REQ(REQ-SELECT 5개 추가, 개정 0.2.0) 전 항목이 §D 매트릭스에서 하나 이상의 AC로 커버됨(REQ-ARCH-002는 AC-014 design-review로 커버). 커버리지 클레임은 매트릭스 대조로 검증된 사실이다.
+- [ ] **REQ ↔ AC 추적성**: **44개** REQ(REQ-SELECT 5개 추가, 개정 0.2.0. **개정 0.3.0은 신규 REQ 0건** — 기존 REQ-APP-001/INPUT-003/004에 날을 세웠을 뿐이다) 전 항목이 §D 매트릭스에서 하나 이상의 AC로 커버됨(REQ-ARCH-002는 AC-014 design-review로 커버). 커버리지 클레임은 매트릭스 대조로 검증된 사실이다.
 - [ ] 정규화 순수 함수 단위 테스트 GREEN(XML 픽스처) — AC-008.
 - [ ] 명령 구성 + 오류 경로 mock 테스트 GREEN — AC-009/010/012/015~019.
 - [ ] `--device` 다중 기기 graceful failure 검증 — AC-009.
@@ -226,6 +309,38 @@ amendment_of: SPEC-ANDROID-001
 - [ ] 스킬 래퍼 직접 adb 호출 0건(grep) — AC-013.
 - [ ] 기기 의존 AC(001~005, 007, 011)는 e2e/manual 체크리스트 또는 CI 에뮬레이터로 검증(오류 경로 015~019는 mock 우선).
 - [ ] spec.md에 구현 세부 없음(WHAT/WHY만).
-- [ ] @MX 태그 대상이 코드에 부착됨(개정 0.2.0 신규 경로 포함 — spec.md §F).
+- [ ] @MX 태그 대상이 코드에 부착됨(개정 0.2.0·0.3.0 신규 경로 포함 — spec.md §F).
+- [ ] **개정 0.3.0 — `launch` 명시적 컴포넌트**: 조회 파서 + 명시적 시작 + 전용 오류 코드 검증 — AC-025~028. **AC-026은 실측 없이는 미충족**이다.
+- [ ] **개정 0.3.0 — IME 바인딩 준비 대기**: cold 착지 / warm 불변 / 타임아웃 미전송+`ok:false` / 결합항 실기기 확인 — AC-029~032. **AC-029·032는 실측 없이는 미충족**이다.
+- [ ] **개정 0.3.0 — 회귀 없음**: 기존 653건 green 유지 + 신규 테스트만 증가. `pnpm typecheck` / `pnpm build` exit 0.
 
-> **AC 카운트(개정 0.2.0)**: §D 매트릭스 총 **24건**(AC-ANDROID-001~024). 원래 19건 + 신규 5건(AC-020~024). AC-003/AC-010은 세션 기반 IME 모델로 재작성(신규 아님).
+> **AC 카운트(개정 0.3.0)**: §D 매트릭스 총 **32건**(AC-ANDROID-001~032). 0.2.0 시점 24건 + 신규 8건(AC-025~032). **기존 AC는 하나도 재작성되지 않았다** — 0.3.0은 새 계약을 추가할 뿐 기존 판정을 바꾸지 않는다. 이전 카운트: 최초 19건 → 0.2.0 24건 → 0.3.0 **32건**.
+
+---
+
+## §D.4 판정 방식의 한계 — mock으로 충족 불가한 AC (개정 0.3.0)
+
+**두 결함 모두 unit/mock 스위트가 구조적으로 잡을 수 없었다.** 이것은 테스트가 부실해서가 아니라 **mock이 답할 수 있는 질문의 종류가 정해져 있기 때문**이다.
+
+| mock이 답할 수 있는 것 | mock이 답할 수 없는 것 |
+|------------------------|------------------------|
+| 어떤 `adb` argv가 **구성되는가** | 그 argv를 **기기가 어떻게 해석하는가** |
+| argv가 **어떤 순서로** 나가는가 | argv **사이에 흐른 시간**이 충분한가 |
+| 어떤 argv가 **나가지 않았는가**(미전송) | 나간 argv가 **화면에 무엇을 남겼는가** |
+| 오류 타입 → JSON 코드 매핑 | 오류가 **옳은 상황에서** 났는가 |
+
+- **결함 1**: `am start -a MAIN -c LAUNCHER -p <pkg>`라는 argv는 **모양이 완벽히 맞았다.** 틀린 것은 기기 쪽 매칭 규칙(DEFAULT 선언 요구)이었고, 이는 mock의 사정거리 밖이다.
+- **결함 2**: 설치 → `ime set` → 브로드캐스트라는 argv **순서도 맞았다.** 틀린 것은 그 사이 시간이었고, mock에는 IME 서비스 바인딩이라는 개념 자체가 없다.
+
+**따라서 다음 두 AC는 mock 단독으로 충족할 수 없으며, 이 둘이 각 결함이 실제로 고쳐졌음을 증명하는 유일한 판정이다.**
+
+| AC | 왜 mock 단독 불가인가 | 판정 근거 |
+|----|----------------------|-----------|
+| **AC-ANDROID-026** | 기기의 인텐트 매칭 규칙은 mock에 존재하지 않는다 | 실기기에서 DEFAULT 미선언 앱이 **포그라운드로 관찰됨** |
+| **AC-ANDROID-029** | IME 서비스 바인딩 시점은 mock에 존재하지 않는다 | **스크린샷**에서 문자열이 입력란에 착지함 |
+
+**추가로 실측만으로 판정되는 AC 둘**: AC-ANDROID-027(태스크 재개 의미 — 기기의 태스크 스택 거동), AC-ANDROID-032(미바인딩 창의 IME id — 아직 측정되지 않은 값의 관측).
+
+**mock으로 충분한 것도 분명히 해 둔다.** AC-031의 "브로드캐스트 미전송"은 **mock으로 정확히 단언 가능하다**(mock exec이 그 argv를 받지 않음). "무엇이 나가지 않았는가"는 mock의 강점이며, 실측 레그가 없다고 약한 AC가 아니다.
+
+**기기가 없을 때의 규율**: 실측 판정 AC는 **미기록으로 남기고 PASS로 승격하지 않는다.** 관측하지 않은 것을 PASS로 주장하는 것은 이 SPEC이 0.2.0 마감에서 이미 지킨 규율이며(progress.md §E.4-b: 8건을 PARTIAL로 유지), 하필 그 규율이 없었다면 이번 결함 2건도 "검증됨"으로 덮였을 것이다.

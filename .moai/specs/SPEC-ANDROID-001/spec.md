@@ -1,10 +1,10 @@
 ---
 id: SPEC-ANDROID-001
 title: "Android(adb) 기기 제어 기본기 + 자동 환경 세팅 CLI 코어"
-version: "0.2.0"
-status: completed
+version: "0.3.0"
+status: in-progress
 created: 2026-07-22
-updated: 2026-07-27
+updated: 2026-07-29
 author: manager-spec
 priority: P0
 phase: "v0.1.0 target"
@@ -32,8 +32,9 @@ amendment_of: SPEC-ANDROID-001
 | 개정 버전 | 이전 완료 버전 | prior_completed_sha | 날짜 | 근거(rationale) |
 |-----------|----------------|---------------------|------|-----------------|
 | 0.2.0 | 0.1.2 | `e536e11` | 2026-07-22 | **실기기 하드닝(real-device hardening) 후 문서-코드 정합화(docs↔code reconciliation).** SPEC이 `completed`(v0.1.2)로 닫힌 뒤, 실기기 검증 과정에서 구현이 5개 커밋에 걸쳐 유의미하게 진화했고(ADBKeyBoard GPL-2.0 런타임 다운로드, 세션 기반 IME + 디스크 영속화, `text` 자가치유 자동설치, 요소 셀렉터 tap/focus, 소프트키보드 자동 숨김) 문서가 드리프트되었다. 본 개정은 관찰 가능한 동작을 실제 코드에 맞춰 정정한다 — 재작성이 아니라 정합화다. 코드는 변경하지 않는다(docs-only). |
+| 0.3.0 | 0.2.0 | `7caea74` | 2026-07-29 | **실기기 검증이 드러낸 결함 2건 — 둘 다 `ok:true`인데 관측 가능한 효과가 없는 부류.** 2026-07-29 Galaxy S25 Ultra(SM-S938N, Android 16, 1440×3120, 무선 ADB) 검증에서 두 결함이 실측됐다(`.moai/reports/android-verification/remaining-commands-android-2026-07-29.md`). ① `launch`가 **암시적 인텐트**(`am start -p`)를 써서 `android.intent.category.DEFAULT`를 선언하지 않는 앱(삼성 기본앱 상당수)을 열지 못한다 — 설치돼 있고 손으로 누르면 열리는데도 실패한다. ② 비-ASCII `text`가 **IME 바인딩 전에 브로드캐스트를 쏘아** 입력이 조용히 유실되면서 `{"ok":true}`를 반환한다 — `doctor` 설치 직후 첫 입력과 `reset` 이후 자가치유 경로가 모두 여기에 걸린다. 둘 다 **기존 REQ에 대한 구현 결함**이며, 본 개정은 REQ가 그 결함을 **표현할 수 없게** 되도록 날을 세우고(mechanism을 관찰 가능한 계약으로 승격) AC를 추가한다. **0.2.0(docs-only)과 달리 본 개정은 코드를 변경한다** — M10·M11 구현은 manager-develop 소유다. **두 결함 모두 unit/mock 스위트의 사정거리 밖이다**(mock은 구성된 `adb` argv의 *모양*만 단언할 수 있고, 그 argv를 기기가 *어떻게 해석하는지*는 단언할 수 없다) — 신규 AC가 실측 판정 다리를 갖는 이유가 이것이다. 이 결함 부류는 SPEC-GESTURE-001이 여섯 라운드에 걸쳐 싸운 것과 동일하다. |
 
-**개정 범위(affected §B REQ IDs):**
+**0.2.0 개정 범위(affected §B REQ IDs):**
 - **REQ-INPUT-003** (재작성): 비-ASCII 경로에 ADBKeyBoard **자가치유 자동설치**(shared installer) 추가.
 - **REQ-INPUT-004** (재작성): per-call 복원 → **세션 기반 IME + 디스크 영속화 + `reset`시 복원** 모델로 전환. 소프트키보드 자동 숨김(`--keep-keyboard` 옵트아웃) 추가.
 - **REQ-DOCTOR-003** (정정): 번들 APK → **런타임 다운로드**(GPL-2.0 미재배포).
@@ -41,6 +42,13 @@ amendment_of: SPEC-ANDROID-001
 - **REQ-SELECT-001~005** (신설): 요소 셀렉터(`--id`/`--text`/`--index`) 기반 `tap`/`text` — 신규 REQ 그룹.
 - **§C 제약** (정정): ADBKeyBoard 라이선스 Apache-2.0 예시 → GPL-2.0, 번들 → 런타임 다운로드-미재배포.
 - **§C.2 알려진 한계** (신설): 실기기 노트(resource-id 미설정 앱은 `--text` 필요, 이모지 HTML 엔티티 미디코드).
+
+**0.3.0 개정 범위(affected §B REQ IDs):**
+- **REQ-APP-001** (날 세움): 암시적 인텐트 금지 → **런처 컴포넌트 조회 후 명시적 컴포넌트 시작**. 조회 실패 판정은 stdout 기준(종료 코드 아님), 전용 오류 코드 `LAUNCHER_ACTIVITY_NOT_FOUND`, 원인 단정 금지, **태스크 재개 의미 불변** 명시.
+- **REQ-INPUT-003** (절 추가): 자가치유 설치 직후 곧바로 전환·전송으로 진행 금지 — 준비 신호 확인은 REQ-INPUT-004로 위임.
+- **REQ-INPUT-004** (절 추가): 브로드캐스트 전 **IME 바인딩 준비 신호 확인 + 상한 있는 대기**. 타임아웃 시 **브로드캐스트 미전송 + `ok:false`**(`IME_BIND_TIMEOUT`) — **응답 계약 변경**(사용자 결정). 상한 값은 설계 선택이지 실측값이 아님(측정 의무 없음). 원래 IME 디스크 영속·warm 경로는 불변.
+- **§C.3 실측 메커니즘 사실** (신설): 암시적-대-명시적 인텐트, 바인딩 경쟁 조건, 폐기된 가설·무효 오라클, 주장 경계, Secure Folder 확증 — 나중에 읽는 사람이 수정을 다시 결함으로 "단순화"하지 못하도록 고정.
+- **신규 REQ 0건**: 두 결함은 REQ 공백이 아니라 REQ가 메커니즘을 규정하지 않아 구현이 틀릴 수 있었던 자리다. 신규 오류 코드는 별도 REQ-ERR 항목이 아니라 **소유 REQ 안에서 정의**한다.
 
 ---
 
@@ -130,7 +138,10 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
 
 ### B.5 앱 제어 (REQ-APP)
 
-- **REQ-APP-001** (When 이벤트): **When** `launch <package>`가 실행될 때, the CLI **shall** 지정한 앱을 시작한다.
+- **REQ-APP-001** (When 이벤트 — **개정 0.3.0**): **When** `launch <package>`가 Android 기기를 대상으로 실행될 때, the Android backend **shall** 먼저 대상 패키지의 **런처 컴포넌트를 조회**한 뒤(MAIN + LAUNCHER 카테고리 해석), 그 컴포넌트를 **명시적 컴포넌트(explicit component)** 로 지정해 앱을 시작한다. the Android backend **shall not** 패키지만 지정하는 **암시적 인텐트 해석**으로 앱을 시작한다 — 암시적 해석은 대상 액티비티가 `android.intent.category.DEFAULT`를 선언한 경우에만 매칭되며, 이를 선언하지 않는 앱(§C.3-①에서 3개 패키지로 실측)은 **설치돼 있고 런처 액티비티가 정상 조회되며 손으로 누르면 열리는데도** 실패한다.
+  - **판정 기준(observable)**: 컴포넌트 조회의 성공/실패는 **stdout 내용으로 판정하며 종료 코드로 판정하지 않는다**(shall not) — 조회가 실패해도 종료 코드는 0이다(§C.3-②).
+  - **When** 런처 컴포넌트가 해석되지 않는 경우, the CLI **shall** `BACKEND_COMMAND_FAILED`와 **구분되는 전용 오류 코드 `LAUNCHER_ACTIVITY_NOT_FOUND`** 로 graceful 하게 거부하고, 기기에는 **어떤 시작 인텐트도 전송하지 않는다**(shall not). 이 오류 메시지는 원인을 **"런처 액티비티 없음" 또는 "패키지 미설치" 중 하나로 단정해서는 안 된다**(shall not) — 두 경우가 **동일한 출력**을 내므로 구분 불가하다(§C.3-③). 메시지는 두 가능성을 함께 제시한다.
+  - **불변(non-regression)**: 명시적 컴포넌트 시작은 **기존 태스크 재개(task resume) 의미를 바꾸지 않는다** — 이미 실행 중인 앱을 대상으로 하면 새 인스턴스를 만들지 않고 기존 태스크를 앞으로 가져오며 앱 내부 상태가 보존된다(§C.3-④ 실측). 이 재개 동작은 **의도된 계약**이며, 재개를 알리는 경고 행은 **실패가 아니다** — 나중에 읽는 사람이 이를 "결함"으로 보고 되돌려서는 안 된다.
 - **REQ-APP-002** (When 이벤트): **When** `stop <package>`가 실행될 때, the CLI **shall** 지정한 앱을 강제 종료(force-stop)한다.
 
 ### B.6 화면 캡처 (REQ-SCREENSHOT)
@@ -142,8 +153,15 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
 
 - **REQ-INPUT-001** (When 이벤트): **When** `tap <x> <y>`가 실행될 때, the CLI **shall** `adb shell input tap`으로 좌표를 탭한다.
 - **REQ-INPUT-002** (While 상태): **While** 입력 문자열이 ASCII로만 구성된 상태일 때, the `text` command **shall** `adb shell input text` 빠른 경로(fast path)를 사용한다(비-ASCII 경로 REQ-INPUT-003과 대칭).
-- **REQ-INPUT-003** (When 이벤트): **When** `text "<...>"`의 입력에 비-ASCII(한글/이모지)가 포함된 경우, the CLI **shall** ADBKeyBoard IME를 통해 base64 브로드캐스트(`ADB_INPUT_B64`)로 입력한다. **When** 대상 기기에 ADBKeyBoard가 설치되어 있지 않은 경우, the `text` command **shall** 공유 설치기(shared installer)를 통해 **런타임에 자동 설치(self-heal)** 한 뒤 진행한다(설치 실패 시 REQ-ERR-002로 graceful 처리, 기기 상태 무변경). 이 자가치유 경로는 `doctor`의 설치 로직과 동일한 공유 헬퍼를 사용한다 — `reset`이 ADBKeyBoard를 제거하므로 리셋 이후/신규 기기에서도 `text`가 스스로 재설치할 수 있어야 한다.
-- **REQ-INPUT-004** (While 상태): **While** 비-ASCII `text` 입력이 IME 전환을 요구하는 경우, the `text` command **shall** 기기의 **현재 활성 IME를 조회(live source of truth)** 하여 아직 ADBKeyBoard가 아니면 ADBKeyBoard로 **한 번만 전환**하고, 전환 직전의 원래 IME를 **`serial`별로 디스크에 영속화**한다(별도 CLI 프로세스 간 생존 — `~/.cache/explore-mobile/ime-sessions.json`). the `text` command **shall not** 매 호출마다 원래 IME를 복원한다(세션 유지 — 실기기에서 매 입력 후 복원 시 소프트키보드 깜빡임/레이아웃 재트리거 발생). 원래 IME 복원은 오직 **`reset` / `doctor --clean`** 실행 시 수행된다(디스크에 영속된 원본을 읽어 `ime set`으로 복원하고 항목을 삭제; 복원 실패 시 REQ-ERR-001로 원래 IME id 보고). 추가로, **When** `text` 전송이 완료되면, the CLI **shall** 기본적으로 소프트키보드를 숨기며(`KEYCODE_ESCAPE`), **Where** `--keep-keyboard`가 지정된 경우 숨김을 생략한다.
+- **REQ-INPUT-003** (When 이벤트 — **개정 0.3.0**): **When** `text "<...>"`의 입력에 비-ASCII(한글/이모지)가 포함된 경우, the CLI **shall** ADBKeyBoard IME를 통해 base64 브로드캐스트(`ADB_INPUT_B64`)로 입력한다. **When** 대상 기기에 ADBKeyBoard가 설치되어 있지 않은 경우, the `text` command **shall** 공유 설치기(shared installer)를 통해 **런타임에 자동 설치(self-heal)** 한 뒤 진행한다(설치 실패 시 REQ-ERR-002로 graceful 처리, 기기 상태 무변경). 이 자가치유 경로는 `doctor`의 설치 로직과 동일한 공유 헬퍼를 사용한다 — `reset`이 ADBKeyBoard를 제거하므로 리셋 이후/신규 기기에서도 `text`가 스스로 재설치할 수 있어야 한다. **추가(개정 0.3.0)**: **When** 자가치유 설치가 방금 수행된 경우, the Android backend **shall not** 설치 직후 곧바로 IME 전환·브로드캐스트로 진행한다 — 설치 직후는 IME 서비스가 아직 등록·바인딩되지 않은 대표적 창이며, 5회 분리 실험에서 실패는 **오직 "같은 호출 안에서 설치한" 조건에서만** 발생했다(§C.3-⑧). 준비 신호 확인과 대기 계약은 REQ-INPUT-004(개정 0.3.0)가 규정한다.
+- **REQ-INPUT-004** (While 상태 — **개정 0.3.0**): **While** 비-ASCII `text` 입력이 IME 전환을 요구하는 경우, the `text` command **shall** 기기의 **현재 활성 IME를 조회(live source of truth)** 하여 아직 ADBKeyBoard가 아니면 ADBKeyBoard로 **한 번만 전환**하고, 전환 직전의 원래 IME를 **`serial`별로 디스크에 영속화**한다(별도 CLI 프로세스 간 생존 — `~/.cache/explore-mobile/ime-sessions.json`). the `text` command **shall not** 매 호출마다 원래 IME를 복원한다(세션 유지 — 실기기에서 매 입력 후 복원 시 소프트키보드 깜빡임/레이아웃 재트리거 발생). 원래 IME 복원은 오직 **`reset` / `doctor --clean`** 실행 시 수행된다(디스크에 영속된 원본을 읽어 `ime set`으로 복원하고 항목을 삭제; 복원 실패 시 REQ-ERR-001로 원래 IME id 보고). 추가로, **When** `text` 전송이 완료되면, the CLI **shall** 기본적으로 소프트키보드를 숨기며(`KEYCODE_ESCAPE`), **Where** `--keep-keyboard`가 지정된 경우 숨김을 생략한다.
+
+  **추가(개정 0.3.0 — IME 바인딩 경쟁 조건)**: **While** ADBKeyBoard IME가 아직 **바인딩되지 않은(not bound)** 상태일 때, the Android backend **shall not** base64 브로드캐스트를 전송한다. `ime set`은 *설정 값이 기록되는 즉시* 반환하지만 IME 서비스는 그 시점에 아직 바인딩되지 않았고, 그 창에서 발사된 브로드캐스트는 **조용히 유실된다** — 명령은 `{"ok":true}`를 반환하는데 포커스된 입력란에는 아무것도 들어가지 않는다(§C.3-⑤/⑧ 실측). 따라서 the Android backend **shall** 전송 전에 기기의 **바인딩 준비 신호**(§C.3-⑥)를 확인하고, 준비될 때까지 **상한이 있는(bounded) 대기**를 수행한다.
+  - **준비 술어(readiness predicate)**: 바인딩 여부 플래그가 참이고 **동시에** 바인딩된 IME id가 ADBKeyBoard여야 한다. **두 번째 결합항은 실측으로 확립되지 않았다** — 미바인딩 창에서의 IME id 값은 관측되지 않았다(§C.3-⑩). 구현은 이 결합항의 실제 거동을 **실기기에서 확인해야 하며**(AC-ANDROID-032), 이미 확립된 사실로 취급해서는 안 된다(shall not).
+  - **상한 값의 성격 — 설계 선택이지 실측값이 아니다**: 대기 상한은 **설계 선택(design choice)** 이며 `MAX_DURATION_MS`(SPEC-GESTURE-001 `src/cli/validators.ts`)와 같은 부류다. 터치 슬롭 문턱(`getMinEffectiveSwipeThreshold`)처럼 기기 거동을 주장하는 **실측 파생값과 다르며, 따라서 측정 의무가 붙지 않는다**. 목적은 "무한 대기 금지"뿐이므로 **넉넉하되 유한한** 값이면 충분하다(SPEC 권고: 5,000ms — 실측된 전환 시점은 대략 adb 왕복 1회다, §C.3-⑦). 다른 값을 택하려면 이 근거를 재검토한다. 폴링 간격은 구현 재량이다.
+  - **When** 상한 안에 준비 신호가 관측되지 않은 경우, the CLI **shall** 브로드캐스트를 **전송하지 않고**(shall not) `ok:false` + 전용 오류 코드 **`IME_BIND_TIMEOUT`** 을 반환한다. the CLI **shall not** 이 경로에서 `ok:true`를 반환한다 — 이는 **의도된 응답 계약 변경**(사용자 결정)이며, 현재 `ok:true`를 받던 경로가 오류가 된다. 근거: 그 경로는 이미 깨져 있고 **무음 실패가 오류보다 나쁘다**(AC-ANDROID-031).
+  - **불변(non-regression) 1**: 타임아웃으로 실패해도 전환 직전 원래 IME의 **디스크 영속은 유지된다** — 이후 `reset`/`doctor --clean`이 여전히 복원할 수 있다(REQ-IDEMP-004 불변).
+  - **불변(non-regression) 2 — warm 경로**: 기기의 활성 IME가 **이미 ADBKeyBoard이고 바인딩된** 상태면 대기 없이 즉시 전송한다(AC-ANDROID-030). 본 개정이 지연을 더하는 것은 **cold 경로뿐**이다.
 - **REQ-INPUT-005** (When 이벤트): **When** `key <name>`이 실행될 때, the CLI **shall** `adb shell input keyevent`로 키 이벤트를 전송한다. 지원 키 별칭 → Android KEYCODE 매핑: `back`→BACK(4), `home`→HOME(3), `enter`→ENTER(66), `menu`→MENU(82), `app_switch`→APP_SWITCH(187), `up`/`down`/`left`/`right`→DPAD_UP/DOWN/LEFT/RIGHT(19/20/21/22), `del`→DEL(67), `tab`→TAB(61), `power`→POWER(26), `volume_up`/`volume_down`→VOLUME_UP/DOWN(24/25). 목록 외 별칭은 graceful 오류로 거부한다(전체 keycode는 Android `KeyEvent` KEYCODE 목록 참조).
 
 ### B.7.1 요소 셀렉터 (REQ-SELECT) — 신규 역량(개정 0.2.0)
@@ -215,6 +233,26 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
 - **resource-id/testID 미설정 앱은 `--id` 셀렉터로 찾을 수 없다**: 일부 앱(특히 React Native — 실기기 `com.hatae.moyura`에서 확인)은 요소에 `resource-id`를 부여하지 않는다. 이 경우 `tap --id`/`text --id`는 매칭 실패(`ELEMENT_NOT_FOUND`)하므로, 표시 텍스트/접근성 레이블 기반 `--text` 셀렉터를 사용해야 한다(`content-desc`도 `--text`로 매칭됨).
 - **이모지가 정규화 텍스트에서 HTML 엔티티로 노출된다**: 현재 `dump` 정규화 출력에서 이모지가 디코드되지 않은 HTML/문자 엔티티 형태로 나타난다(예: `text` 필드에 원문 이모지가 아닌 엔티티 문자열). 입력(`text "...😸"`)은 정상 동작하나(base64 브로드캐스트), 덤프 결과의 이모지 디코드는 **후속 개선 후보**다(입력 경로에는 영향 없음).
 
+### C.3 실측 메커니즘 사실 (개정 0.3.0) — 수정을 다시 결함으로 되돌리지 않기 위한 고정
+
+> **출처**: `.moai/reports/android-verification/remaining-commands-android-2026-07-29.md` (2026-07-29). **기기**: Galaxy S25 Ultra(SM-S938N), Android 16, 1440×3120, 무선 ADB. 전문을 여기 옮기지 않는다 — 아래는 REQ와 AC가 딛고 서는 **메커니즘 사실만** 추린 것이다.
+>
+> 이 절이 존재하는 이유: 두 결함 모두 "그 명령이 왜 그렇게 생겼는지"가 문서에 없어서 발생했다. **여기 적힌 것을 모르는 사람은 수정을 "단순화"하다가 결함을 그대로 복원한다.**
+
+| # | 관측 사실 | 근거 (관측한 것) | 검증 수준 |
+|---|-----------|------------------|-----------|
+| ① | **`am start ... -p <pkg>`는 암시적(implicit) 인텐트 해석이다** — 대상 액티비티가 `android.intent.category.DEFAULT`를 선언해야만 매칭된다. 실제 런처는 명시적 컴포넌트로 띄우므로 이 제약을 받지 않는다 | 3개 패키지 실측: `com.android.settings`(`/.Settings`, `isDefault=true`) → `-p` **성공**; `com.sec.android.app.popupcalculator`(`/.Calculator`, DEFAULT 미선언) → `-p` **실패** / 명시적 컴포넌트 **성공**; `com.sec.android.app.clockpackage`(`/.ClockPackage`, DEFAULT 미선언) → `-p` **실패**. 셋 다 user 0에 설치돼 있고 런처 액티비티가 정상 조회되며 손으로 누르면 열린다 — **앱이 없어서가 아니라 실행 방식이 틀려서** 실패한다. 삼성 기본앱 상당수가 여기 걸린다 | **실측(Android)** |
+| ② | **런처 컴포넌트 조회의 판정은 stdout으로 해야 하며 종료 코드로는 불가능하다.** 조회 명령(`cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER <pkg>`)은 성공 시 **2행**을 내며 **마지막 비어있지 않은 행**이 컴포넌트다(액티비티가 선행 점 상대 경로일 수 있다 — 예: `com.sec.android.app.popupcalculator/.Calculator`). 실패 시 **단일 행 `No activity found`** 를 내는데 **종료 코드는 여전히 0이다** | 위 3개 패키지 조회에서 직접 관측. `--user` 인자는 **불필요**했다 | **실측(Android)** |
+| ③ | **"런처 액티비티 없음"과 "패키지 미존재"는 같은 출력을 낸다** — 조회 결과만으로 두 원인을 구분할 수 없다 | 양쪽 모두 `No activity found` 단일 행. 따라서 오류 메시지가 원인을 단정하면 **거짓을 주장하게 된다**(REQ-APP-001 개정의 단정 금지 조항 근거) | **실측(Android)** |
+| ④ | **명시적 컴포넌트 시작(`am start -n <component>`)은 기존 태스크 재개 의미를 보존한다** — 새 인스턴스를 만들지 않는다 | 실행 중인 앱 대상 실측: `Warning: Activity not started, its current task has been brought to the front`, **종료 코드 0**, 앱 내부 상태 그대로 유지. **경고 행은 실패가 아니다.** 개정 전 `-p` 경로의 재개 동작과 동일하며, 이 수정은 재개 의미를 **바꾸지 않는다** | **실측(Android)** |
+| ⑤ | **`ime set`은 IME 서비스가 바인딩되기 전에 반환한다** — 설정 값 기록 시점에 반환할 뿐이다. 그 창에서 발사한 base64 브로드캐스트는 **조용히 유실**되며 명령은 `{"ok":true}`를 반환한다 | 현재 구현은 `ensureAdbKeyboardInstalled` → `setImeToAdbKeyboard`(`ime enable` + `ime set`) → `broadcastBase64Text`를 **대기 없이 연달아** 보낸다(`adb-backend.ts`). 손으로 같은 adb 단계를 1초 간격을 두고 실행하면 **성공한다** — 논리 오류가 아니라 **경쟁 조건**이다 | **실측(Android)** |
+| ⑥ | **바인딩 준비 신호는 `dumpsys input_method`에 있다.** `mBoundToMethod=<bool>`이 덤프 안에 **정확히 1회**만 나타나므로 파싱이 모호하지 않다. 같은 덤프가 **실제로 바인딩된 IME id**(`mCurId=<ime id>`)도 노출한다 | 실측 관측값: `mCurId=com.android.adbkeyboard/.AdbIME` | **실측(Android)** |
+| ⑦ | **cold 사이클에서 `ime set` 직후에는 `mBoundToMethod=false`이며, 대략 adb 왕복 1회 안에 `true`로 뒤집힌다** | 직접 관측. 대기 상한(REQ-INPUT-004 개정)의 권고값이 넉넉해도 되는 근거다 — **다만 이 관측이 상한 값을 정하지는 않는다**(상한은 설계 선택) | **실측(Android)** |
+| ⑧ | **결정 실험 — 가르는 변수는 "바인딩 여부"다.** 같은 cold 사이클, 입력란 포커스 확보, 오라클은 스크린샷: `mBoundToMethod=false`에서 발사 → **텍스트 유실 + `ok:true`**; `mBoundToMethod=true`에서 발사 → **텍스트 착지** | 5회 분리 실험 보강: 같은 호출 안에서 **설치** → 실패(#1 `doctor` 설치 직후 / #4 `reset` 직후 미설치 상태에서 자가치유) · IME **전환만** → 성공(#2, `알림` 착지) · **이미 바인딩** → 성공(#3 `알림알림`, #5 `카메라`). 즉 **IME 전환은 원인이 아니다.** 실패 직후 포그라운드가 원래 액티비티에서 되돌아가 있는 현상도 함께 관측됐다 | **실측(Android)** |
+| ⑨ | **폐기된 가설과 무효 오라클(재수행 금지)** | (i) 최초 가설 **"IME 전환이 입력 연결을 끊는다"는 틀렸다** — ⑧의 #2가 전환을 포함하고도 성공해 반증했다. (ii) `dumpsys input_method`의 **`mServedView`는 오라클로 무효다** — 성공한 경우에도 `null`로 나왔다. **유효한 오라클은 스크린샷뿐이었다.** 같은 판정 수단을 다시 시도하는 것은 이미 소진된 길이다 | **실측(Android, 반증)** |
+| ⑩ | **주장 경계 — `mCurId`는 미바인딩 창에서 측정되지 않았다** | `mBoundToMethod`의 `false → true` 전환은 **직접 실측**했다. 그러나 `false`인 창에서 `mCurId`가 무슨 값이었는지는 **별도로 측정하지 않았다**. 두 필드를 결합한 준비 술어를 쓰는 구현은 그 거동을 **실기기에서 확인해야 하며**(AC-ANDROID-032), 확립된 사실로 제시해서는 안 된다 | **미측정(명시)** |
+| ⑪ | **Secure Folder 확증 — 현재 `pm list packages` 판정 방식이 옳다(되돌리지 말 것)** | 이 기기는 Secure Folder(유저 150)가 실행 중이라 `pm list packages`가 stderr에 `SecurityException: Shell does not have permission to access user 150`을 출력한다. 그러나 **종료 코드는 0이고 stdout은 user 0의 686개 패키지를 정상 반환**한다. `ensureAdbKeyboardInstalled`(`adbkeyboard-installer.ts`)는 `exitCode`와 `stdout`만 보므로 영향받지 않는다 — **"stderr가 비어 있어야 성공"으로 "개선"하면 여기서 오탐이 난다.** 결함이 아니라 기존 구현이 옳다는 실기기 확증이다 | **실측(Android)** |
+
 ---
 
 ## §D. 범위에서 제외 (Exclusions)
@@ -263,6 +301,8 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
 | 디스크 영속 IME 세션 저장소(`backend/ime-session-store.ts`) | `@MX:NOTE` | 프로세스 간 IME 세션 영속(REQ-INPUT-004 개정). read-modify-write 비원자성(동시 다른-serial 쓰기 경합) 한계 문서화. |
 | 런타임 APK 다운로드(`backend/apk-downloader.ts`) | `@MX:WARN` + `@MX:REASON` | 유일한 런타임 네트워크 페치 경로: 고정 참조에서 GPL-2.0 APK 다운로드→매직바이트 검증→`adb install`(REQ-DOCTOR-003 개정). |
 | 요소 셀렉터 매칭(`normalize/element-query.ts`) | `@MX:NOTE` | `id`+`text` 동시 지정 시 AND 의미(더 좁은 매칭) — 신규 역량(REQ-SELECT). |
+| IME 바인딩 준비 대기(`AdbBackend.inputText` 전송 직전 — 개정 0.3.0) | `@MX:WARN` + `@MX:REASON` | 위험 구역: 이 대기를 제거하거나 술어를 느슨하게 하면 `ok:true`-무효과 결함이 그대로 복원된다(§C.3-⑤/⑧). 대기 상한은 **설계 선택이지 실측값이 아니다**(§C.3-⑦, `MAX_DURATION_MS` 선례). |
+| 런처 컴포넌트 조회 후 명시적 시작(`AdbBackend.launchApp` — 개정 0.3.0) | `@MX:WARN` + `@MX:REASON` | 위험 구역: 암시적 인텐트(`-p`)로 "단순화"하면 DEFAULT 미선언 앱이 다시 열리지 않는다(§C.3-①). 조회 실패 판정을 종료 코드로 바꾸면 실패가 성공으로 오판된다(§C.3-②). |
 | 다중 기기 serial 격리 / 임시 리소스 네임스페이스 | `@MX:WARN` + `@MX:REASON` | 동시 실행 경합(concurrency) 위험(REQ-MULTIDEV-003/004). |
 | `doctor` 자동 설치(호스트/기기 환경 변경, `backend/doctor.ts`) | `@MX:WARN` + `@MX:REASON` | 호스트·기기 환경을 변경하는 부작용(`brew install`/APK 설치/uninstall). |
 | 기기 의존 경로(스크린샷 유효성, 탭/텍스트 효과 등 e2e 미검증) | `@MX:TODO` | 단위 테스트 불가, e2e/수동 검증까지 미완. |
@@ -275,3 +315,4 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
 - 구현 계획·마일스톤·iOS 필드 매핑 표: `plan.md`
 - 인수 기준(Given-When-Then)·엣지 케이스·DoD: `acceptance.md`
 - 진행 상태·감사 신호: `progress.md`
+- 개정 0.3.0 실측 근거 전문: `.moai/reports/android-verification/remaining-commands-android-2026-07-29.md`
