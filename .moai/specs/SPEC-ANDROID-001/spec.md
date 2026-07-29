@@ -1,8 +1,8 @@
 ---
 id: SPEC-ANDROID-001
 title: "Android(adb) 기기 제어 기본기 + 자동 환경 세팅 CLI 코어"
-version: "0.3.0"
-status: completed
+version: "0.4.0"
+status: in-progress
 created: 2026-07-22
 updated: 2026-07-29
 author: manager-spec
@@ -33,6 +33,7 @@ amendment_of: SPEC-ANDROID-001
 |-----------|----------------|---------------------|------|-----------------|
 | 0.2.0 | 0.1.2 | `e536e11` | 2026-07-22 | **실기기 하드닝(real-device hardening) 후 문서-코드 정합화(docs↔code reconciliation).** SPEC이 `completed`(v0.1.2)로 닫힌 뒤, 실기기 검증 과정에서 구현이 5개 커밋에 걸쳐 유의미하게 진화했고(ADBKeyBoard GPL-2.0 런타임 다운로드, 세션 기반 IME + 디스크 영속화, `text` 자가치유 자동설치, 요소 셀렉터 tap/focus, 소프트키보드 자동 숨김) 문서가 드리프트되었다. 본 개정은 관찰 가능한 동작을 실제 코드에 맞춰 정정한다 — 재작성이 아니라 정합화다. 코드는 변경하지 않는다(docs-only). |
 | 0.3.0 | 0.2.0 | `7caea74` | 2026-07-29 | **실기기 검증이 드러낸 결함 2건 — 둘 다 `ok:true`인데 관측 가능한 효과가 없는 부류.** 2026-07-29 Galaxy S25 Ultra(SM-S938N, Android 16, 1440×3120, 무선 ADB) 검증에서 두 결함이 실측됐다(`.moai/reports/android-verification/remaining-commands-android-2026-07-29.md`). ① `launch`가 **암시적 인텐트**(`am start -p`)를 써서 `android.intent.category.DEFAULT`를 선언하지 않는 앱(삼성 기본앱 상당수)을 열지 못한다 — 설치돼 있고 손으로 누르면 열리는데도 실패한다. ② 비-ASCII `text`가 **IME 바인딩 전에 브로드캐스트를 쏘아** 입력이 조용히 유실되면서 `{"ok":true}`를 반환한다 — `doctor` 설치 직후 첫 입력과 `reset` 이후 자가치유 경로가 모두 여기에 걸린다. 둘 다 **기존 REQ에 대한 구현 결함**이며, 본 개정은 REQ가 그 결함을 **표현할 수 없게** 되도록 날을 세우고(mechanism을 관찰 가능한 계약으로 승격) AC를 추가한다. **0.2.0(docs-only)과 달리 본 개정은 코드를 변경한다** — M10·M11 구현은 manager-develop 소유다. **두 결함 모두 unit/mock 스위트의 사정거리 밖이다**(mock은 구성된 `adb` argv의 *모양*만 단언할 수 있고, 그 argv를 기기가 *어떻게 해석하는지*는 단언할 수 없다) — 신규 AC가 실측 판정 다리를 갖는 이유가 이것이다. 이 결함 부류는 SPEC-GESTURE-001이 여섯 라운드에 걸쳐 싸운 것과 동일하다. |
+| 0.4.0 | 0.3.0 | `e8b1849` | 2026-07-29 | **Chrome 웹 페이지 구동과 2기기 운용(Android 실기기 + iOS 시뮬레이터)이 드러낸 결함 2건.** 0.3.0 마감(`e8b1849`) 직후 같은 날 두 결함이 실측됐다. **결함 4 — `text`가 자기가 방금 입력한 텍스트를 스스로 지운다**: 전송 후 소프트키보드를 내리려고 보내는 `KEYCODE_ESCAPE`가 Chrome 웹 페이지에서는 페이지로 전달되어 **입력 취소**로 해석된다. 네이티브 `EditText`에서는 같은 호출이 정상 동작하므로, 지금까지의 모든 검증(전부 Settings 앱)이 통과했다. 이것은 **`ok:true`인데 관측 가능한 효과가 없는 무음(silent) 부류** — M10·M11이 죽인 바로 그 부류 — 이며, 게다가 **이 도구의 주 용도(브라우저로 웹 콘텐츠 구동)에 정확히 얹힌다.** **결함 5 — 미연결 기기가 연결된 기기로 계수된다**: 대상 해석 계층이 `connectionState`를 전혀 보지 않아, Xcode가 설치된 Mac이면 어디서나 존재하는 offline 시뮬레이터들이 계수·자동 선택·오류 메시지에 섞인다. **심각도 부류는 결함 4와 다르다** — 봉투는 거짓말하지 않지만 **오류 메시지 본문이 거짓 수를 주장**하고(23 대 2), **문서화된 자동 선택이 도달 불가**가 되며, 미연결 기기를 명시 지정하면 **한 층 늦게** 실패한다. 두 결함 모두 **기존 REQ에 대한 구현 결함**이다 — 결함 4는 REQ-INPUT-004가 **틀린 메커니즘을 명시**해서, 결함 5는 REQ-MULTIDEV-002가 스스로 쓴 "연결"이 **어디에도 정의되지 않아서** 생겼다(구현은 REQ 자신의 문구를 위반한다). 본 개정은 REQ가 그 결함을 **표현할 수 없게** 되도록 날을 세우고 AC를 추가한다. **0.2.0(docs-only)과 달리, 0.3.0과 마찬가지로 본 개정은 코드를 변경한다** — M13·M14 구현은 manager-develop 소유다. |
 
 **0.2.0 개정 범위(affected §B REQ IDs):**
 - **REQ-INPUT-003** (재작성): 비-ASCII 경로에 ADBKeyBoard **자가치유 자동설치**(shared installer) 추가.
@@ -53,6 +54,14 @@ amendment_of: SPEC-ANDROID-001
 - **신규 REQ 0건**: 세 결함 모두 REQ 공백이 아니라 REQ가 메커니즘을 규정하지 않아 구현이 틀릴 수 있었던 자리다. 신규 오류 코드는 별도 REQ-ERR 항목이 아니라 **소유 REQ 안에서 정의**한다. M12도 신규 REQ를 만들지 않는다.
 
 > **M12는 같은 0.3.0 개정의 연장이지 새 개정이 아니다.** M10 실기기 검증이 **같은 cold 시퀀스의 더 앞 단계**(`adb install` → `ime enable`)에서 세 번째 결함을 드러냈고, 그것이 REQ-INPUT-003의 자가치유 설치 절 위에 서기 때문에 위 목록을 확장할 뿐 새 Amendments 행을 추가하지 않는다. **다만 심각도 부류는 다르다** — M10·M11이 죽인 것은 `ok:true`인데 효과가 없는 **무음(silent)** 부류였고, M12가 고치는 것은 `ok:false` + 구체적 메시지를 내는 **소리 내는(loud)** 실패다(§C.3-⑫). 더 낮은 심각도이며, 그럼에도 실제 결함인 이유는 **유효한 연산이 사용자에게 보이는 이유 없이 실패(spurious failure of a valid operation)** 하기 때문이다.
+
+**0.4.0 개정 범위(affected §B REQ IDs):**
+- **REQ-MULTIDEV-001 / REQ-MULTIDEV-002** (날 세움 — M13): **"연결(connected)"의 정의를 신설**한다(`connectionState === "device"`). 계수·자동 선택·오류 메시지가 모두 그 정의를 쓴다는 조항, **문서화된 자동 선택의 도달 가능성(reachability)** 조항, 명시 지정한 미연결 기기 전용 오류 코드 **`DEVICE_NOT_CONNECTED`**, `details.availableDevices` 구성 결정, 그리고 **본 REQ가 플랫폼 중립**임의 명시(Android 이름의 SPEC 안에 있으나 대상 해석 계층은 두 백엔드를 함께 서비스하며, 실측에서 위반 항목은 전부 iOS 시뮬레이터였다).
+- **REQ-INPUT-004** (날 세움 — M14): 소프트키보드 숨김 절 — 숨김 메커니즘을 `KEYCODE_ESCAPE` → **`KEYCODE_BACK`** 으로 교체하고, 그 위에 **"자기 입력을 파괴하지 않는다"** 는 상위 관찰 계약을 세운다. 키보드가 실제로 올라와 있는지 확인하는 **예방적 가드**(주장 경계 명시 — 실측으로 강제되지 않았고 반대 관측 1건이 있다). **best-effort 의미와 응답 계약은 불변**이다.
+- **§C.4 실측 메커니즘 사실** (신설 ⑰~㉒): ESCAPE 삭제 연쇄, BACK의 양 표면 실측, 예방적 가드의 주장 경계와 반대 관측, 23 대 2 기기 계수, 도달 불가한 자동 선택, 미연결 기기 지정의 늦은 실패.
+- **신규 REQ 0건**: 0.3.0과 같은 이유다 — 두 결함 모두 REQ 공백이 아니라, REQ가 **틀린 메커니즘을 명시**했거나(결함 4) **자기가 쓴 용어를 정의하지 않아서**(결함 5) 구현이 틀릴 수 있었던 자리다. 신규 오류 코드는 별도 REQ-ERR 항목이 아니라 **소유 REQ 안에서 정의**한다.
+
+> **응답 계약 변경의 정확한 범위(부풀리지 않는다).** 결함 5 수정은 **봉투(`ok`)를 바꾸지 않는다** — 미연결 기기 지정 경로는 개정 전에도 `ok:false`였다. 바뀌는 것은 (a) 오류 **코드**(`BACKEND_COMMAND_FAILED` → `DEVICE_NOT_CONNECTED`), (b) 실패가 나는 **지점**(백엔드 실행 후 → 대상 해석 시점, 즉 기기에 아무것도 보내기 전), (c) `AMBIGUOUS_DEVICE`/`DEVICE_NOT_FOUND`의 **`details.availableDevices` 구성**이다. M10의 `ok:true → ok:false` 같은 봉투 변경이 **아니다**. 결함 4 수정은 응답 계약을 **전혀** 바꾸지 않는다(숨김은 개정 전에도 best-effort였다).
 
 ---
 
@@ -164,7 +173,15 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
   - **재시도 상한과 백오프는 설계 선택이다(측정 의무 없음)**: M10의 대기 상한 5,000ms 및 `MAX_DURATION_MS`(`src/cli/validators.ts`)와 같은 부류다. 목적은 "무한 재시도 금지"뿐이며, 이 값들은 기기 거동을 주장하지 않는다 — 실측 파생값(터치 슬롭 문턱)과 부류가 다르다.
   - **왜 준비 신호 폴링이 아니라 재시도인가**: `ime list -a`를 등록 준비 신호로 쓸 수 있는지 탐침했으나 **간헐 실패 창을 잡지 못했고, 따라서 실패 중의 `ime list -a` 값을 한 번도 관측하지 못했다**(§C.3-⑭). 관측하지 않은 신호 위에 수정을 세우는 것은 §C.3-⑩이 이미 경고한 바로 그 오류다. **`ime enable`의 권위 있는 준비 판정은 `ime enable` 자신의 성공이며**, 재시도가 안전한 근거는 **실측된 멱등성**이다(§C.3-⑮).
   - **심각도(정확히 기술한다)**: 이 실패는 **소리 내어 실패한다** — `ok:false` + 구체적 메시지를 반환하고 브로드캐스트를 보내지 않는다. M10·M11이 죽인 **`ok:true`-무효과(무음)** 부류가 **아니며**, 그보다 심각도가 낮다. 그럼에도 결함인 이유는 `doctor` 직후 또는 `reset` 이후 **첫 한글/이모지 입력이 사용자에게 보이는 이유 없이 실패**하기 때문이다.
-- **REQ-INPUT-004** (While 상태 — **개정 0.3.0**): **While** 비-ASCII `text` 입력이 IME 전환을 요구하는 경우, the `text` command **shall** 기기의 **현재 활성 IME를 조회(live source of truth)** 하여 아직 ADBKeyBoard가 아니면 ADBKeyBoard로 **한 번만 전환**하고, 전환 직전의 원래 IME를 **`serial`별로 디스크에 영속화**한다(별도 CLI 프로세스 간 생존 — `~/.cache/explore-mobile/ime-sessions.json`). the `text` command **shall not** 매 호출마다 원래 IME를 복원한다(세션 유지 — 실기기에서 매 입력 후 복원 시 소프트키보드 깜빡임/레이아웃 재트리거 발생). 원래 IME 복원은 오직 **`reset` / `doctor --clean`** 실행 시 수행된다(디스크에 영속된 원본을 읽어 `ime set`으로 복원하고 항목을 삭제; 복원 실패 시 REQ-ERR-001로 원래 IME id 보고). 추가로, **When** `text` 전송이 완료되면, the CLI **shall** 기본적으로 소프트키보드를 숨기며(`KEYCODE_ESCAPE`), **Where** `--keep-keyboard`가 지정된 경우 숨김을 생략한다.
+- **REQ-INPUT-004** (While 상태 — **개정 0.3.0, 0.4.0**): **While** 비-ASCII `text` 입력이 IME 전환을 요구하는 경우, the `text` command **shall** 기기의 **현재 활성 IME를 조회(live source of truth)** 하여 아직 ADBKeyBoard가 아니면 ADBKeyBoard로 **한 번만 전환**하고, 전환 직전의 원래 IME를 **`serial`별로 디스크에 영속화**한다(별도 CLI 프로세스 간 생존 — `~/.cache/explore-mobile/ime-sessions.json`). the `text` command **shall not** 매 호출마다 원래 IME를 복원한다(세션 유지 — 실기기에서 매 입력 후 복원 시 소프트키보드 깜빡임/레이아웃 재트리거 발생). 원래 IME 복원은 오직 **`reset` / `doctor --clean`** 실행 시 수행된다(디스크에 영속된 원본을 읽어 `ime set`으로 복원하고 항목을 삭제; 복원 실패 시 REQ-ERR-001로 원래 IME id 보고). 추가로, **When** `text` 전송이 완료되면, the CLI **shall** 기본적으로 소프트키보드를 숨기며, **Where** `--keep-keyboard`가 지정된 경우 숨김을 생략한다.
+
+  **추가(개정 0.4.0 — 소프트키보드 숨김이 자기 입력을 파괴하는 결함)**: **When** `text` 전송 후 소프트키보드를 숨기는 경우, the `text` command **shall not** 방금 자신이 입력한 텍스트를 파괴한다. 이것이 **숨김 메커니즘 선택을 구속하는 상위 관찰 계약**이며, 특정 keycode보다 위에 선다 — 어떤 수단을 쓰든 입력이 살아남아야 한다.
+  - **메커니즘(관찰 가능한 계약으로 승격)**: the Android backend **shall** `KEYCODE_BACK`(4)로 소프트키보드를 숨기며, `KEYCODE_ESCAPE`(111)를 사용해서는 **안 된다**(shall not). 근거는 실측이다 — Chrome 웹 페이지 입력란에서 ESCAPE는 **페이지로 전달되어 입력 취소로 해석**되고 방금 입력한 텍스트를 지운다(§C.4-⑰). BACK은 **웹 입력란과 네이티브 `EditText` 양쪽에서** 키보드를 내리면서 텍스트를 보존한다(§C.4-⑱). 따라서 BACK은 이 자리에서 ESCAPE보다 **엄격히 우월**하다 — 네이티브 경로를 퇴행시키지 않으면서 웹 경로를 고친다.
+  - **결함 부류(정확히 기술한다)**: 이 실패는 **무음(silent)** 이다 — 명령이 `{"ok":true}`를 반환하는데 입력란은 비어 있다. M10·M11이 죽인 부류와 **같으며**, M12의 소리 내는 실패와는 다르다. 게다가 아무 일도 안 하는 것이 아니라 **사용자가 방금 요청한 작업의 결과를 능동적으로 파괴한다**. 네이티브 `EditText`에서는 정상 동작하므로 Settings 앱에서만 검증하면 **영원히 통과한다** — 판정은 반드시 웹 입력란에서 이뤄져야 한다(AC-ANDROID-036).
+  - **가드(예방적)**: the Android backend **shall** 소프트키보드가 실제로 표시된 상태임을 기기에서 확인한 뒤에만 숨김 키를 전송하고, 표시되지 않았으면 **전송하지 않는다**(shall not). 판정 신호는 `dumpsys input_method`의 `mInputShown`이며, M10 준비 신호 파서가 **이미 같은 덤프를 읽는다** — 새 adb 표면이 아니다.
+    - **주장 경계 — 이 가드는 예방적이며 실측으로 강제되지 않았다**: 근거는 "소비되지 않은 BACK은 앱의 뒤로가기 동작"이라는 **일반 논거**다. 실제로 `mInputShown=false` 상태에서 BACK을 보낸 **1회 시행**(Settings `SearchActivity`)에서는 **포그라운드가 바뀌지 않았다** — 즉 "키보드가 없을 때 BACK이 화면을 이탈시킨다"는 **여기서 관측되지 않았다**(§C.4-⑲). 문서·주석·커밋 어디에서도 이 가드의 근거를 **실측으로 서술해서는 안 된다**(shall not) — 미측정을 확립된 사실로 취급하는 것은 §C.3-⑩이 이미 경고한 오류다.
+  - **불변(non-regression) — best-effort**: 숨김 단계의 실패는 `text` 명령을 실패시키지 **않는다**(shall not). 표시 여부 조회의 실패도 마찬가지이며, 이 경우 숨김을 **생략**한다(조회 실패를 "표시됨"으로 낙관하지 않는다 — 확인되지 않은 신호 위에서 파괴 가능한 키를 쏘지 않는다). 전송이 이미 성공했으면 봉투는 `ok:true`다(AC-ANDROID-022 불변).
+  - **불변(non-regression) — 옵트아웃**: `--keep-keyboard`의 의미는 바뀌지 않는다(숨김 단계 전체를 생략).
 
   **추가(개정 0.3.0 — IME 바인딩 경쟁 조건)**: **While** ADBKeyBoard IME가 아직 **바인딩되지 않은(not bound)** 상태일 때, the Android backend **shall not** base64 브로드캐스트를 전송한다. `ime set`은 *설정 값이 기록되는 즉시* 반환하지만 IME 서비스는 그 시점에 아직 바인딩되지 않았고, 그 창에서 발사된 브로드캐스트는 **조용히 유실된다** — 명령은 `{"ok":true}`를 반환하는데 포커스된 입력란에는 아무것도 들어가지 않는다(§C.3-⑤/⑧ 실측). 따라서 the Android backend **shall** 전송 전에 기기의 **바인딩 준비 신호**(§C.3-⑥)를 확인하고, 준비될 때까지 **상한이 있는(bounded) 대기**를 수행한다.
   - **준비 술어(readiness predicate)**: 바인딩 여부 플래그가 참이고 **동시에** 바인딩된 IME id가 ADBKeyBoard여야 한다. **두 번째 결합항은 실측으로 확립되지 않았다** — 미바인딩 창에서의 IME id 값은 관측되지 않았다(§C.3-⑩). 구현은 이 결합항의 실제 거동을 **실기기에서 확인해야 하며**(AC-ANDROID-032), 이미 확립된 사실로 취급해서는 안 된다(shall not).
@@ -191,8 +208,19 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
 
 ### B.9 다중 기기 · 멱등성 · 리소스 위생 (REQ-MULTIDEV / REQ-IDEMP)
 
-- **REQ-MULTIDEV-001** (Ubiquitous): Every command **shall** `--device <serial>` 옵션을 수용하고 adb `-s`로 대상 기기를 지정한다.
-- **REQ-MULTIDEV-002** (When 감지된-이상상태): **When** 2대 이상의 기기가 연결되고 `--device`가 생략된 경우, the CLI **shall** 실행을 중단하고 **명확한 오류 메시지와 기기 목록**을 출력한다(graceful failure).
+- **REQ-MULTIDEV-001** (Ubiquitous — **개정 0.4.0**): Every command **shall** `--device <serial>` 옵션을 수용하고 adb `-s`로 대상 기기를 지정한다.
+
+  **추가(개정 0.4.0 — "연결"의 정의)**: 기기 목록의 한 항목이 **연결됨(connected)** 이라 함은 그 항목의 `connectionState`가 `"device"`인 상태를 말한다. `offline` · `unauthorized` 항목은 목록에 나타나더라도 **연결된 기기가 아니다** — 대상으로 삼을 수 없기 때문이다. 이 정의는 REQ-MULTIDEV-002가 개정 0.4.0 이전부터 이미 쓰고 있던 "연결"이라는 낱말에 **비로소 관찰 가능한 의미를 부여**하며, 정의가 없었던 것이 결함 5가 생긴 자리다.
+  - **플랫폼 중립(scope)**: 이 정의와 그것을 쓰는 대상 해석 규칙은 **플랫폼 중립**이다. 대상 해석 계층은 Android/iOS 두 백엔드를 **함께** 서비스하며, 실측에서 정의를 위반한 항목 21개는 **전부 iOS 시뮬레이터**였다(§C.4-⑳). 본 REQ가 Android 이름의 SPEC 안에 있다는 이유로 수정 범위를 Android 경로로 좁혀서는 **안 된다**(shall not) — 나중에 읽는 사람이 이 조항을 Android 문제로 오독하지 않도록 여기 못 박는다.
+  - **When** `--device <serial>`가 명시됐고 그 serial이 기기 목록에 **존재하지만 연결 상태가 아닌** 경우, the CLI **shall** `DEVICE_NOT_FOUND`(존재하지 않음)와도 백엔드 실행 실패(`BACKEND_COMMAND_FAILED`)와도 **구분되는 전용 오류 코드 `DEVICE_NOT_CONNECTED`** 로 거부하고, **백엔드 명령을 실행하지 않는다**(shall not). 오류 메시지는 관측된 `connectionState` 값을 포함한다. 근거: 개정 전 이 경로는 대상 해석을 통과한 뒤 **한 층 늦게** 백엔드에서 실패했고(§C.4-㉒), 메시지가 유익하더라도 **잡아야 할 층이 아니었다**. 사용자에게 필요한 정보는 "없다"가 아니라 **"있는데 부팅·연결되지 않았다"** 이며, 후자만이 조치 가능하다.
+  - **관계(REQ-ERR-003)**: 본 조항은 REQ-ERR-003("offline/unauthorized 대상 → 상태를 명시한 graceful 오류")을 대체하지 않는다. 같은 요구를 **더 이른 지점**에서, **전용 코드**로 충족한다 — 감지 지점이 백엔드에서 대상 해석 계층으로 앞당겨지는 것뿐이다.
+- **REQ-MULTIDEV-002** (When 감지된-이상상태 — **개정 0.4.0**): **When** **연결된**(REQ-MULTIDEV-001의 정의) 기기가 2대 이상이고 `--device`가 생략된 경우, the CLI **shall** 실행을 중단하고 **명확한 오류 메시지와 기기 목록**을 출력한다(graceful failure).
+
+  **추가(개정 0.4.0 — 계수·자동 선택·메시지가 모두 그 정의를 쓴다)**: the CLI **shall** 대상 기기 계수, 자동 선택, 오류 메시지 생성 **모두**에서 연결된 기기만을 대상으로 삼으며, 미연결 항목을 **계수에 포함해서는 안 된다**(shall not). 실측에서 이 호스트의 목록은 **23건**이었고 그중 연결된 것은 **2건**이었다 — 미연결을 포함한 오류 메시지(`23 devices connected; ...`)는 **사실이 아닌 수를 주장**했다(§C.4-⑳). 봉투는 `ok:false`로 정직했으나 **메시지 본문이 거짓이었다**.
+  - **자동 선택의 도달 가능성(reachability)**: **While** 연결된 기기가 정확히 1대인 경우, the CLI **shall** 미연결 항목이 목록에 몇 개 있든 그 1대를 자동 선택한다. **문서화된 동작은 실제로 도달 가능해야 한다** — 원시 목록 길이로 계수하면 Xcode가 설치된 Mac에서 길이가 **결코 1이 되지 않아** 자동 선택 분기가 한 번도 발동하지 않고, README/스킬 문서와 동작이 모순된다(§C.4-㉑). 이 조항이 요구하는 것은 새 기능이 아니라 **이미 문서화된 기능의 복구**다.
+  - **`details.availableDevices` 구성(결정)**: 오류의 `details.availableDevices`는 **연결된 기기만** 나열한다(shall). 미연결 항목은 **개수만** 별도로 요약 보고하고 전체 항목을 덤프하지 **않는다**(shall not). 근거 셋 — (i) 이 필드의 용도는 사용자가 `--device` 값을 **고르는** 것이고, 대상으로 삼을 수 없는 항목은 후보가 아니므로 나열은 사용자가 머릿속에서 걸러야 할 잡음이다; (ii) 잡음의 크기가 **무한정 자란다** — 사용자가 시뮬레이터를 만들수록 늘기만 하며 사용자가 한 일과 무관하다; (iii) 그럼에도 완전히 숨기면 "내 시뮬레이터는 왜 없지?"라는 새 혼란이 생기므로 **개수 요약이 발견 가능성을 보존**한다. **전체 분할 나열(연결/미연결 두 목록)은 기각한다** — 이 변경을 촉발한 비용(23건 덤프)을 그대로 두면서 스키마 분기만 늘린다. 전체 목록이 필요한 사용자에게는 **`devices` 명령이 이미 그 인벤토리**이며, 오류 메시지가 그쪽을 가리키면 충분하다.
+  - **불변(non-regression) — `devices` 출력**: `devices` 명령의 출력은 **바뀌지 않는다**. 미연결 항목을 계속 전부 나열하고 `connectionState`로 구별한다(REQ-DEVICES-001 불변). 본 개정이 바꾸는 것은 **대상 해석(targeting) 계층뿐**이다 — 인벤토리 명령까지 "일관성 있게" 필터링하면 사용자가 offline 시뮬레이터의 존재를 확인할 방법이 사라진다.
+  - **When** 연결된 기기가 0대인 경우, the CLI **shall** `NO_DEVICE`를 반환한다. 목록에 미연결 항목이 있으면 메시지에 그 사실을 포함한다 — "있는데 부팅되지 않았다"와 "아무것도 없다"는 사용자에게 다른 조치를 뜻한다.
 - **REQ-MULTIDEV-003** (Ubiquitous): The CLI **shall** 기기별 상태(원래 IME, 임시 리소스)를 `serial`을 키로 격리(isolation)한다.
 - **REQ-MULTIDEV-004** (Ubiquitous): The CLI **shall** 임시 리소스를 `serial`로 네임스페이스화하여 동시 실행(concurrency)에 안전해야 한다.
 - **REQ-IDEMP-001** (Ubiquitous): The setup/install/`doctor` operations **shall** 멱등(idempotent)해야 한다. (참고: `tap`/`text`/`key`/`screenshot`은 기기 효과 측면에서 본질적으로 비멱등이므로 멱등 대상에서 제외 — AC-ANDROID-005는 설치 멱등성만 검증한다.)
@@ -270,6 +298,22 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
 | ⑮ | **`ime enable`은 멱등이다 — 그래서 재시도가 안전하다** | 이미 활성화된 IME에 `ime enable`을 다시 실행: **종료 코드 0** + `Input method com.android.adbkeyboard/.AdbIME: already enabled for user #0`. `ime list -s`에 **중복 항목이 생기지 않는다**. 재시도가 기기 상태를 누적 변경하지 않음을 실측으로 확인한 것이며, M12 재시도 계약의 안전 근거다 | **실측(Android)** |
 | ⑯ | **`mCurId` 결합항 관측 해소 — 결합항은 판별력이 0이므로 `bound` 단독이 옳다(관측으로 확증)** | ⑩이 남겨 둔 미측정 항목을 실기기에서 관측했다: **미바인딩 창(`mBoundToMethod=false`)에서 `mCurId`는 이미 `com.android.adbkeyboard/.AdbIME`였다.** 즉 `bound && mCurId == ADBKeyBoard` 결합 술어는 **`bound` 단독과 같은 시점에 참이 되며, 판별력이 전혀 없다**(zero discriminating power). 구현이 `bound` 단독을 택한 것은 이제 **논증이 아니라 관측으로 확증된다**. AC-ANDROID-032가 요구한 산출물(관측 기록)이 이 행이다 | **실측(Android)** |
 
+### C.4 실측 메커니즘 사실 (개정 0.4.0) — Chrome 웹 구동 · 2기기 운용
+
+> **출처 ⑰~㉒**: 2026-07-29 Chrome/naver.com 구동 세션 및 2기기(Android 실기기 + iOS 시뮬레이터) 운용 실측. 별도 보고서 파일이 없으므로 **이 표가 그 관측의 1차 기록**이다. 번호는 §C.3에서 **이어진다**(⑯ 다음) — 교차 참조가 전역적으로 유일하도록.
+> **기기/호스트**: Galaxy S25 Ultra(SM-S938N), Android 16, 무선 ADB / macOS 호스트(Xcode 설치, iPhone 17 Pro 시뮬레이터 1대 부팅 + offline 시뮬레이터 21대).
+>
+> §C.3과 같은 이유로 존재한다: **여기 적힌 것을 모르는 사람은 수정을 "단순화"하다가 결함을 그대로 복원한다.** 검증 수준 칸의 **미측정(명시)** · **예방적** 은 빈칸이 아니라 **주장 경계**다.
+
+| # | 관측 사실 | 근거 (관측한 것) | 검증 수준 |
+|---|-----------|------------------|-----------|
+| ⑰ | **`KEYCODE_ESCAPE`가 Chrome 웹 입력란에서 방금 입력한 텍스트를 지운다** — 삭제의 주체는 ESCAPE 자신이다(전송·IME·포커스가 아니다) | Chrome으로 `m.naver.com` 구동, 3단계 분리 실측: (1) `text "abc" --keep-keyboard` → 검색창에 `abc` 착지, 자동완성 노출. (2) `text "날씨" --keep-keyboard`(전체 cold 경로: install → enable → switch → bind 대기 → broadcast) → 검색창 `abc날씨`. (3) `adb shell input keyevent 111`을 **단독으로**, 다른 어떤 것도 하지 않고 전송 → 검색창이 **플레이스홀더로 되돌아감**. Chrome은 ESCAPE를 페이지로 전달하고, 페이지에서 ESCAPE는 텍스트 입력의 관례적 취소/되돌리기다. 네이티브 `EditText`는 같은 키에서 **키보드만 내린다** — 그래서 지금까지의 모든 검증(전부 Settings 앱)이 통과했다 | **실측(Android, 3단계 분리)** |
+| ⑱ | **`KEYCODE_BACK`은 두 표면 모두에서 키보드를 내리면서 텍스트를 보존한다** — 이 자리에서 ESCAPE보다 **엄격히 우월**하다 | **Chrome 웹 입력란**: 입력 텍스트 있음 + `mInputShown=true` → BACK → `mInputShown=false` **그리고 텍스트 생존**(자동완성 계속 표시). **네이티브 EditText(Settings 검색)**: 동일 결과 — 키보드 숨겨지고 텍스트 생존. 즉 BACK은 **네이티브 경로를 퇴행시키지 않으면서** 웹 경로를 고친다. 부수 관측: `mInputShown=<bool>`은 `dumpsys input_method`에 노출되며 **M10 파서(`ime-binding-parser.ts`)가 이미 같은 덤프를 읽는다** — 새 adb 표면이 아니다. **다만 주장 경계**: `mBoundToMethod`가 덤프에 정확히 1회 나타난다는 §C.3-⑥의 확인은 `mInputShown`에 대해 **수행되지 않았다**. 출현 횟수는 **미측정**이며 파서가 이를 확립된 사실로 가정해서는 안 된다 | **실측(Android, 양 표면)** — 마커 출현 횟수는 **미측정(명시)** |
+| ⑲ | **주장 경계 — "키보드가 없을 때 BACK을 보내면 화면을 이탈한다"는 관측되지 않았다.** 표시 여부 가드는 **예방적**이지 실측으로 강제된 것이 아니다 | 가드의 근거는 **"소비되지 않은 BACK은 앱의 뒤로가기 동작"이라는 일반 논거**다. 실제로 `mInputShown=false` 상태에서 BACK을 보낸 **단 1회의 시행**(Settings `SearchActivity`)에서 **포그라운드는 바뀌지 않았다** — 예상된 이탈이 **일어나지 않았다**. 표본 1회이므로 "이탈하지 않는다"도 확립된 사실이 아니다; 확립된 것은 **"이탈한다"가 관측되지 않았다**는 사실뿐이다. 가드를 유지하는 것은 값싸고 안전하기 때문이지 측정이 그것을 요구해서가 아니며, 이 반대 관측을 지우고 가드를 실측 강제로 서술하면 §C.3-⑩이 경고한 오류의 재발이다 | **예방적 설계 + 반대 관측 1건(명시)** |
+| ⑳ | **미연결 기기가 연결된 기기로 계수된다 — 이 호스트에서 23건 대 2건.** 위반 항목은 **전부 iOS**이므로 이 결함은 Android 문제가 아니다 | 이 Mac에서 `devices`는 **23건**을 반환한다: `connectionState: "device"`가 **2건**(Android 실기기 + 부팅된 iPhone 17 Pro 시뮬레이터), 나머지 **21건은 offline iOS 시뮬레이터**. `simctl`은 Xcode가 설치된 Mac이면 어디서나 이 목록을 낸다 — **사용자가 무엇을 해서 생긴 것이 아니라 환경의 기본값**이고, 개수는 시뮬레이터를 만들수록 늘기만 한다. `resolveTargetDevice`(`src/cli/device-targeting.ts`)는 `connectionState`를 **한 번도 읽지 않고** 원시 목록으로 계수·자동 선택한다. `devices` 자신이 `connectionState`를 정확히 보고하므로(2건이 `"device"`) **정보는 이미 있었고 대상 해석 계층이 쓰지 않았을 뿐이다** | **실측(호스트 macOS + Xcode, 2기기 연결)** |
+| ㉑ | **문서화된 자동 선택이 도달 불가다** — 문서와 동작이 모순된다 | README(`Omit it when exactly one device is connected — it is auto-selected.`)와 스킬 문서가 같은 약속을 한다. 그러나 원시 목록 길이로 계수하므로 Xcode가 설치된 Mac에서 길이는 **결코 1이 되지 않고**, 자동 선택 분기는 **한 번도 발동하지 않는다**. 실제로 나오는 오류는 `23 devices connected; specify --device <serial>.` — 봉투는 `ok:false`로 정직하지만 **메시지 본문이 거짓 수를 주장**하고, `details.availableDevices`가 23건을 전부 덤프한다(사용자가 읽어야 하는 오류에 23행을 쏟는 것 자체가 별개의 사용성 문제다) | **실측(호스트)** |
+| ㉒ | **명시 지정한 미연결 기기는 대상 해석을 통과한 뒤 한 층 늦게 실패한다** — 유익하지만 틀린 층 | `--device <offline-simulator-serial>` → 대상 해석 **통과** → 백엔드에서 실패: `BACKEND_COMMAND_FAILED` / `idb ui describe-all failed (exit 1): Cannot run accessibility commands against ... as it is not booted`. 대조군: `--device <unknown-serial>` → `DEVICE_NOT_FOUND`로 **올바르게** 거부된다. 즉 "존재하지 않음"은 잡히는데 **"존재하지만 부팅되지 않음"은 잡히지 않는다**. 사용자에게 필요한 정보는 "없다"가 아니라 "있는데 부팅되지 않았다"이며 후자만 조치 가능하다 | **실측(호스트, offline 시뮬레이터 지정)** |
+
 ---
 
 ## §D. 범위에서 제외 (Exclusions)
@@ -321,6 +365,8 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
 | IME 바인딩 준비 대기(`AdbBackend.inputText` 전송 직전 — 개정 0.3.0) | `@MX:WARN` + `@MX:REASON` | 위험 구역: 이 대기를 제거하거나 술어를 느슨하게 하면 `ok:true`-무효과 결함이 그대로 복원된다(§C.3-⑤/⑧). 대기 상한은 **설계 선택이지 실측값이 아니다**(§C.3-⑦, `MAX_DURATION_MS` 선례). 준비 술어가 `bound` 단독인 것은 §C.3-⑯ 관측으로 확증됐다 — `mCurId` 결합항은 판별력이 0이다. |
 | `ime enable` 등록 경쟁 재시도(자가치유 설치 직후 — 개정 0.3.0 M12) | `@MX:WARN` + `@MX:REASON` | 위험 구역: 재시도 조건을 **실패 형태에 한정하지 않고 넓히면** 모든 `ime enable` 실패를 삼키는 루프가 되어, 실제 결함이 상한만큼 지연된 뒤 같은 오류로 나오면서 원인만 흐려진다(§C.3-⑫). 재시도가 안전한 근거는 **실측된 멱등성**(§C.3-⑮)이며, 상한·백오프는 **설계 선택이지 실측값이 아니다**. 준비 신호 폴링(`ime list -a`)으로 "개선"하지 말 것 — 그 신호는 실패 창에서 **관측된 적이 없다**(§C.3-⑭). |
 | 런처 컴포넌트 조회 후 명시적 시작(`AdbBackend.launchApp` — 개정 0.3.0) | `@MX:WARN` + `@MX:REASON` | 위험 구역: 암시적 인텐트(`-p`)로 "단순화"하면 DEFAULT 미선언 앱이 다시 열리지 않는다(§C.3-①). 조회 실패 판정을 종료 코드로 바꾸면 실패가 성공으로 오판된다(§C.3-②). |
+| 소프트키보드 숨김(`AdbBackend`의 `hideKeyboard` — 개정 0.4.0) | `@MX:WARN` + `@MX:REASON` | 위험 구역: `KEYCODE_BACK`을 `KEYCODE_ESCAPE`로 되돌리면 **Chrome 웹 입력란에서 방금 입력한 텍스트가 지워지는 무음 결함이 그대로 복원된다**(§C.4-⑰). 네이티브 `EditText`에서는 ESCAPE도 정상 동작하므로 **Settings 앱에서만 검증하면 회귀를 영원히 놓친다**(§C.4-⑱). 표시 여부 가드는 **예방적이며 실측 강제가 아니다** — 근거를 실측으로 서술하지 말 것(§C.4-⑲). 숨김은 best-effort이며 실패가 `text`를 실패시키지 않는다. |
+| 대상 기기 해석 + "연결" 정의(`cli/device-targeting.ts` — 개정 0.4.0) | `@MX:ANCHOR` + `@MX:REASON` | 불변 계약 + 높은 fan_in(모든 기기 대상 명령이 경유) + **플랫폼 중립**(Android/iOS 두 백엔드를 함께 서비스). 연결 정의(`connectionState === "device"`)를 되돌리거나 계수에서 빼면 Xcode 설치 Mac 전체에서 **문서화된 자동 선택이 다시 도달 불가**가 되고 오류 메시지가 거짓 수를 주장한다(§C.4-⑳/㉑). Android 이름의 SPEC에 있다는 이유로 Android 경로로 좁히지 말 것 — 실측 위반 항목은 전부 iOS였다. |
 | 다중 기기 serial 격리 / 임시 리소스 네임스페이스 | `@MX:WARN` + `@MX:REASON` | 동시 실행 경합(concurrency) 위험(REQ-MULTIDEV-003/004). |
 | `doctor` 자동 설치(호스트/기기 환경 변경, `backend/doctor.ts`) | `@MX:WARN` + `@MX:REASON` | 호스트·기기 환경을 변경하는 부작용(`brew install`/APK 설치/uninstall). |
 | 기기 의존 경로(스크린샷 유효성, 탭/텍스트 효과 등 e2e 미검증) | `@MX:TODO` | 단위 테스트 불가, e2e/수동 검증까지 미완. |
@@ -334,3 +380,4 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
 - 인수 기준(Given-When-Then)·엣지 케이스·DoD: `acceptance.md`
 - 진행 상태·감사 신호: `progress.md`
 - 개정 0.3.0 실측 근거 전문: `.moai/reports/android-verification/remaining-commands-android-2026-07-29.md`
+- 개정 0.4.0 실측 근거: **별도 보고서 없음** — §C.4 표가 1차 기록이다(Chrome/naver.com 구동 세션 + 2기기 운용, 2026-07-29).
