@@ -139,39 +139,6 @@ function parseEffectiveDensity(output: string): number | undefined {
   return Number.isFinite(dpi) && dpi > 0 ? dpi / 160 : undefined;
 }
 
-/**
- * How long a per-serial derived `SwipeThreshold` may be served from cache
- * before the next `getMinEffectiveSwipeThreshold` call re-queries `wm
- * density` (REQ-GEST-SCROLL-008 0.8.0 amendment note, SPEC-GESTURE-001 M10,
- * NN10). Caching-at-all is an implementation choice (plan.md §F M10); this
- * TTL is the invalidation mechanism that choice REQUIRES, not an optional
- * extra — the effective density this queries CAN change mid-session (a
- * user changing the display size, spec.md §C.1-⑳ measured), and unlike
- * `ImeSessionStore`'s per-serial state (which does not change mid-session),
- * a cache here that never expired would be exactly the "density rarely
- * changes" assumption this SPEC has already been proven wrong about twice
- * (B.7/B.8, spec.md `## Amendments`). An ENLARGING density change is the
- * dangerous direction: a stale, too-low cached threshold is not a no-op
- * but is interpreted by the device as a TAP (spec.md §C.1-⑱) — so this
- * cache self-corrects on a bounded delay rather than assuming an external
- * "density changed" signal will ever arrive to invalidate it explicitly.
- * Value is a DESIGN CHOICE (same character as `TOUCH_SLOP_MARGIN_PX` above
- * and `MAX_DURATION_MS` in `validators.ts`), not a measurement: short
- * enough that a user who pauses to change display settings between CLI
- * invocations sees the update within one realistic interactive session,
- * long enough to amortize a rapid burst of `scroll`/`swipe` calls issued
- * in quick succession against the same serial.
- *
- * @MX:NOTE: [AUTO] 이 TTL(5초)은 실측이 아니라 설계 선택이다 -- 유효 밀도가 세션 중 바뀔 수 있다는 것(§C.1-⑳)이 무효화가 규범인 이유이고, 가장 위험한 방향(확대)에서 오래된 캐시가 슬롭보다 낮은 문턱을 공급하면 그 결과는 무효과가 아니라 탭이다(§C.1-⑱)
- */
-const THRESHOLD_CACHE_TTL_MS = 5_000;
-
-/** One cached `SwipeThreshold` plus the clock reading it was derived at. */
-interface CachedThreshold {
-  readonly value: SwipeThreshold;
-  readonly cachedAtMs: number;
-}
-
 export class AdbBackend implements DeviceBackend {
   /**
    * Per-serial SESSION state (REQ-MULTIDEV-003, REQ-INPUT-004
@@ -194,23 +161,10 @@ export class AdbBackend implements DeviceBackend {
    */
   private readonly imeSessions: ImeSessionStore;
 
-  /**
-   * Per-serial cache of the derived swipe threshold (REQ-GEST-SCROLL-008
-   * 0.8.0 amendment note, SPEC-GESTURE-001 M10, NN10) — see
-   * `THRESHOLD_CACHE_TTL_MS` for why this expires rather than persisting
-   * indefinitely. In-memory only (unlike `imeSessions`, which persists to
-   * disk because a `text`/`reset` pair almost always crosses a process
-   * boundary): this cache exists to amortize repeated
-   * `getMinEffectiveSwipeThreshold` calls within a single process's
-   * lifetime, not to survive across separate CLI invocations.
-   */
-  private readonly thresholdCache = new Map<string, CachedThreshold>();
-
   constructor(
     private readonly exec: AdbExecutor = spawnAdb,
     private readonly acquireApk: ApkAcquirer = createApkAcquirer(),
     imeSessions: ImeSessionStore = new ImeSessionStore(),
-    private readonly now: () => number = Date.now,
   ) {
     this.imeSessions = imeSessions;
   }
@@ -564,19 +518,8 @@ export class AdbBackend implements DeviceBackend {
    * marks this as derived from a live query of the target device, distinct
    * from `IdbBackend`'s `"measured-constant"` (a value measured on a
    * DIFFERENT device) — see `SwipeThreshold`.
-   *
-   * M10/0.8.0 amendment (NN10): served from `thresholdCache` when a
-   * not-yet-expired entry exists for `serial` — see `THRESHOLD_CACHE_TTL_MS`
-   * for the invalidation design and why a bounded TTL, not an unconditional
-   * cache, is the required shape here.
    */
   async getMinEffectiveSwipeThreshold(serial: string): Promise<SwipeThreshold> {
-    const nowMs = this.now();
-    const cached = this.thresholdCache.get(serial);
-    if (cached !== undefined && nowMs - cached.cachedAtMs < THRESHOLD_CACHE_TTL_MS) {
-      return cached.value;
-    }
-
     const result = await this.exec(["-s", serial, "shell", "wm", "density"]);
     assertSuccess(result, "shell wm density");
 
@@ -587,7 +530,6 @@ export class AdbBackend implements DeviceBackend {
 
     const minEffectiveSwipePx = Math.floor(TOUCH_SLOP_DP * density) + TOUCH_SLOP_MARGIN_PX;
     const value: SwipeThreshold = { minEffectiveSwipePx, basis: "device-query" };
-    this.thresholdCache.set(serial, { value, cachedAtMs: nowMs });
     return value;
   }
 }

@@ -1824,3 +1824,127 @@ $ git fetch origin master && git rev-list --count --left-right origin/master...H
 이 sync 커밋은 `README.md` + `CHANGELOG.md` + SPEC 아티팩트 4종(frontmatter만, `progress.md`는 본문도 포함 — 이 §E.4 자체)을 담는다. `src/`는 건드리지 않는다(지시문 Section E). 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인했다(위 참조, 분기 없음). push는 지시문 Section D("Do NOT push.")에 따라 수행하지 않는다.
 
 sync 커밋 SHA: `67e5430`(`docs(SPEC-GESTURE-001): 0.8.0 amendment docs 정정 + 3-phase close`). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — 0.3.0/0.4.0/0.5.0/0.6.0/0.7.0 sync에서 이미 다섯 번 쓰인 패턴 그대로(여섯 번째).
+
+## §E.2 Run-phase Evidence (M11 — 0.9.0 amendment)
+
+> 이 마일스톤은 **제거만 한다** — 신규 REQ·신규 AC 0건, RED 단계 없음. "테스트"는 기존 스위트가 삭제된 4건만큼 정확히 줄어드는 것이다. 판정은 삭제 전/후 diff와 회귀 재계산으로 대신한다.
+
+### 삭제 diff — 순수 삭제(추가 0줄) 확인
+
+```
+$ git diff --numstat -- src/backend/adb-backend.ts src/backend/adb-backend.test.ts
+0	58	src/backend/adb-backend.ts
+0	65	src/backend/adb-backend.test.ts
+```
+
+0 insertions 확인 — diff 자체가 순수 삭제임을 증명한다. 남은 코드(`parseEffectiveDensity` · `TOUCH_SLOP_DP` · `TOUCH_SLOP_MARGIN_PX` · `getMinEffectiveSwipeThreshold`의 조회/파생 로직)는 한 글자도 바뀌지 않았다 — `git diff`에 `+` 줄이 0개.
+
+### 회귀 확인 — 캐시가 실제로 제거됐다는 동작 증거
+
+```
+$ node --input-type=module -e '
+import("./dist/backend/adb-backend.js").then(async m => {
+  const calls = [];
+  const exec = async (args) => { calls.push(args.join(" ")); return { stdout: Buffer.from("Physical density: 600\n","utf-8"), stderr: Buffer.alloc(0), exitCode: 0 }; };
+  const b = new m.AdbBackend(exec);
+  console.log(JSON.stringify(await b.getMinEffectiveSwipeThreshold("SERIAL1")));
+  console.log(JSON.stringify(await b.getMinEffectiveSwipeThreshold("SERIAL1")));
+  console.log("exec calls:", calls.length);
+});'
+{"minEffectiveSwipePx":32,"basis":"device-query"}
+{"minEffectiveSwipePx":32,"basis":"device-query"}
+exec calls: 2
+```
+
+값(32px/`device-query`) 자체는 M8/M9/M10과 바이트 동일하나, 같은 serial에 대한 두 번째 호출이 이제 다시 `exec`(즉 `wm density`)를 호출한다 — M10 §E.2가 기록한 "두 번째 호출은 `exec`를 재호출하지 않음"(캐시 적중, 호출 1회)과 정반대다. 이 반전 자체가 되돌림이 실제로 적용됐다는 동작 증거다.
+
+### 회귀 확인 — 양 플랫폼 `minValidRatio` 바이트 동일
+
+```
+$ node --input-type=module -e '
+import("./dist/cli/commands/scroll-geometry.js").then(m => {
+  console.log(m.minNonDegenerateRatio("down", {width:402,height:874}, 11));
+  console.log(m.minNonDegenerateRatio("down", {width:1440,height:3120}, 32));
+});'
+0.013984236866235733
+0.011039886623620987
+```
+
+iOS(402x874, 문턱 11) → `0.013984236866235733`, Android 실기기 화면(1440x3120, 문턱 32) → `0.011039886623620987` — M7/M8/M9/M10 progress.md 기록값 및 지시문이 인용한 두 값과 바이트 동일. 캐시 제거가 `minEffectiveSwipePx`를 만드는 조회/파생 경로에 전혀 관여하지 않았음을 재계산으로 재확인.
+
+### `DeviceBackend` 인터페이스 멤버 수 불변(10)
+
+```
+$ grep -cE '^  [a-zA-Z]+\(' src/schema/device-backend.ts
+10
+```
+
+되돌림이 생성자(클래스 내부 구현)만 축소했고 인터페이스 계약(`swipe`/`getMinEffectiveSwipeThreshold` 포함 10개 메서드)에는 손대지 않았음을 확인 — AC-GEST-027이 먼저 깨졌다면 이 값이 달라졌을 것이다.
+
+### 테스트 스위트
+
+```
+$ pnpm vitest run
+ Test Files  29 passed (29)
+      Tests  653 passed (653)
+```
+
+기준선 657 → 653(-4): `adb-backend.test.ts`의 캐시 TTL `describe` 블록의 `it` 4건(TTL 내 재조회 없음 / serial별 독립 / TTL 만료 후 갱신값 / TTL 내 stale 제공) 삭제 — 감소분이 산출물 2와 **정확히 일치**. 신규 파일 없음, 신규 테스트 없음, 다른 감소 없음.
+
+### Typecheck + Build
+
+```
+$ pnpm typecheck  → exit 0
+$ pnpm build      → exit 0
+```
+
+### Scope Check
+
+```
+$ git status --porcelain --untracked-files=no -- src/
+ M src/backend/adb-backend.test.ts
+ M src/backend/adb-backend.ts
+```
+
+plan.md §A.6 M11 행(2개 파일: `adb-backend.ts`/`.test.ts`)과 정확히 일치, 그 외 파일 없음. `src/backend/idb-backend.ts`(iOS 경로, M11 비대상) · `src/backend/ime-session-store.ts`(디스크 영속, 지시문이 명시적으로 범위 밖이라 규정) · `src/normalize/*` · `src/webview/{inspector-client,proxy-service,calibration}.ts`(PRESERVE) 전부 미변경. SPEC 본문 3종(spec.md/plan.md/acceptance.md) 미변경, frontmatter도 미변경(이 커밋에서 4개 아티팩트 전부 `updated: 2026-07-28` 그대로 유지 — 날짜 변경 없음, 같은 날짜의 in-place amendment 연속).
+
+### MX 태그 확인
+
+```
+$ grep -c "@MX:ANCHOR\|@MX:WARN\|@MX:NOTE\|@MX:TODO\|@MX:DEBT" src/backend/adb-backend.ts
+src/backend/adb-backend.ts:4
+```
+
+M10 §E.2가 기록한 5개(ANCHOR 1 · WARN 1 · NOTE 3)에서 4개(ANCHOR 1 · WARN 1 · NOTE 2)로 — M10이 `THRESHOLD_CACHE_TTL_MS`와 함께 추가한 `@MX:NOTE` 1개가 그 상수 삭제와 함께 자동으로 사라진 결과(별도 제거 작업 없음, 상수 삭제가 태그까지 가져감). NF5(감사가 조건부로 요구했던 "캐시가 CLI 경로에서 적중 불가함을 코드에 기록하라")는 되돌림으로 소멸했으므로(spec.md `## Amendments` 0.9.0) 새 태그를 추가하지 않았다 — 지시문이 명시한 대로 "되돌림 후 남길 주석은 없다".
+
+## 블로커 / 서프라이즈 (M11 종료 시점)
+
+1. **없음.** 삭제 대상이 지시문이 나열한 5개 자리(상수+독블록+`@MX:NOTE`, `CachedThreshold` 인터페이스, `thresholdCache` 필드+독블록, 생성자 4번째 인자, `getMinEffectiveSwipeThreshold` 본문의 조회/기록 두 줄+M10 독블록 문단)와 정확히 일치했다. 그 외 어떤 파일도 캐시 제거의 영향을 받지 않았다 — 확인한 대로 나머지 55개 `it`은 전부 `new AdbBackend(exec)` 1인자 생성이라 생성자 축소에 영향받지 않았다.
+2. **"죽은 코드" 오분석을 재도입하지 않았다.** 지시문이 명시적으로 정정을 요구한 대로, 이 기록 어디에도 "캐시가 CLI 경로에서 적중 불가능하다"는 서술을 남기지 않는다 — 되돌림의 근거는 죽은 코드가 아니라 "이득이 문서화된 제품 표면(CLI) 밖에 있고, 그 대가로 스스로 만든 위험을 스스로 완화한다"는 6차 감사의 판정이다(spec.md `## Amendments` 0.9.0 NN10).
+3. **REQ-GEST-SCROLL-008의 무효화 조항은 손대지 않았다.** 지시문·spec.md 0.9.0 amendment가 명시한 대로, 그 조항은 SPEC 층위에서 이미 조건부로 다시 쓰였고(spec.md B.2) 이 마일스톤(구현 되돌림)의 대상이 아니다 — `src/backend/adb-backend.ts`의 `getMinEffectiveSwipeThreshold` docblock에도 그 조항에 대한 별도 참조 문단을 추가하지 않았다(NF5 소멸과 동일한 이유).
+
+## §E.3 Run-phase Audit-Ready Signal (M11 최종 — 0.9.0 amendment)
+
+```yaml
+run_status: M11-complete
+run_complete_at: "2026-07-28"
+run_commit_sha: "pending-backfill-M11"   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 SPEC에서 이미 여러 번 쓰인 패턴(M10 022e282 등) 그대로. 별도 backfill 커밋에서 채운다.
+ac_pass_count: 0      # 신규 AC 0건 -- M11은 되돌림이며, 판정은 기존 AC-GEST-004/026/027 재확인으로 대신한다(아래 표)
+ac_fail_count: 0
+ac_partial_count: 0
+ac_deferred_count: 0
+preserve_list_post_run_count: 0   # src/normalize/*, src/webview/{inspector-client,proxy-service,calibration}.ts, src/backend/idb-backend.ts, src/backend/ime-session-store.ts 미변경
+l44_pre_commit_fetch: "git fetch origin master && git rev-list --count --left-right origin/master...HEAD -> 0 6 (로컬 6개 커밋 선행, 분기 없음)"
+l44_post_push_fetch: not_applicable   # 이 SPEC은 이번 커밋에서 push하지 않는다(사용자가 docs 세션 이후 일괄 push)
+new_warnings_or_lints_introduced: false
+cross_platform_build: { windows: not_applicable, note: "TypeScript/Node 프로젝트, GOOS 교차빌드 대상 아님" }
+total_run_phase_files: 20   # M11은 기존 2개 파일(plan.md §A.6 M11 행)만 축소 -- 신규 파일 없음, M9/M10까지의 20에서 불변
+m1_to_mN_commit_strategy: "M11은 단일 커밋(fix)으로 마감 -- 산출물 1(코드 제거)·산출물 2(테스트 삭제)·산출물 3(회귀 확인)이 서로 분리 불가능한 하나의 되돌림이므로 별도 커밋으로 쪼개지 않는다"
+```
+
+AC 판정 근거(신규 AC 없음, 기존 AC 재확인):
+
+| AC | 판정 | 근거 |
+|----|------|------|
+| AC-GEST-004(기존 백엔드 메서드 동작 불변) | PASS | `getMinEffectiveSwipeThreshold`가 반환하는 `{minEffectiveSwipePx, basis}` 값이 캐시 제거 전후 바이트 동일(위 회귀 확인) — 다른 9개 메서드는 이 마일스톤에서 아예 건드리지 않음 |
+| AC-GEST-026/027(문턱 공급 계약과 10번째 메서드) | PASS | `DeviceBackend` 인터페이스 멤버 수 10 그대로(위 grep), 시그니처도 미변경(생성자는 클래스 내부 구현이지 인터페이스 계약이 아니다) |
