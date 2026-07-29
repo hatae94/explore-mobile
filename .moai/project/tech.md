@@ -89,7 +89,9 @@ src/backend/process-executor.ts # 위와 동일한 이유
 
 - `.github/workflows/`에는 `label-sync.yml` **하나만** 있다(실측: `find .github/workflows -type f`). 테스트·타입체크·빌드를 돌리는 워크플로는 없다.
 - `label-sync.yml`은 `main` 브랜치 push에 트리거되지만, 이 저장소의 기본 브랜치는 `master`다(실측: `git remote show origin` → `HEAD branch: master`). 게다가 그 소스 오브 트루스인 `.github/labels.yml` 자체가 존재하지 않는다(실측: 파일 없음).
-- `.git_hooks/pre-push`는 `Makefile`이 존재할 때만 `make -C <repo> -s ci-local`을 실행한다. 이 저장소에는 `Makefile`이 없으므로(실측: 파일 없음) **항상 "skip (no Makefile)" 분기를 탄다** — 이 훅은 실제로 `.git/hooks/pre-push`에 설치되어 있음을 확인했지만(실측), `make ci-local`은 실행하지 않는다(테스트·타입체크·빌드 게이트 없음). 다만 완전히 아무 것도 하지 않는 것은 아니다 — `command -v moai`가 성공하면 push 대상 커밋 제목을 `moai hook pre-push`로 넘겨 커밋 메시지 컨벤션 검증을 실행한다(실측: 이 머신에서 `moai`는 `/Users/hatae/.local/bin/moai`로 PATH에 있다).
+- `.git_hooks/pre-push`는 `Makefile`이 존재할 때만 `make -C <repo> -s ci-local`을 실행한다. 이 저장소에는 `Makefile`이 없으므로(실측: 파일 없음) **항상 "skip (no Makefile)" 분기를 탄다** — 훅 자체는 `.git/hooks/pre-push`에 설치되어 있지만(실측) 테스트·타입체크·빌드 중 무엇도 실행하지 않는다. 훅이 이어서 호출하는 `moai hook pre-push`(커밋 메시지 컨벤션 검증)도 **현재 설정에서는 아무 일도 하지 않는다** — `.moai/config/sections/git-convention.yaml:23`이 `enforce_on_push: false`이기 때문이다. 실측: 컨벤션을 위반하는 제목을 `moai hook pre-push`에 넘겨 직접 실행했고 **출력 없이 exit 0**이었다.
+
+  > 이 항목은 세 라운드에 걸쳐 세 번 다시 쓰였다. 초판은 "아무 것도 실행하지 않고 통과"였고, 1차 감사가 "`moai`가 PATH에 있으므로 실행된다"고 **추론**해 정정을 요구했으며, 그 추론이 검증 없이 문서에 "실측" 태그를 달고 들어왔다. 3차 감사가 훅을 **실제로 실행**해 반증했다. 세 행위자를 거치는 동안 아무도 그것을 돌려보지 않았다는 사실 자체가, 이 문서가 §7에서 기록하는 게이트 부재의 실물 사례다.
 - 린터·포매터가 전혀 없다 — ESLint/Prettier/Biome/EditorConfig 설정 파일 모두 없음(실측). 유일한 정적 게이트는 `tsc --noEmit`(strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`, §2)뿐이다.
 - 85% 커버리지 기준은 문서에만 있다(§6).
 

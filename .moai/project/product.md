@@ -108,8 +108,10 @@ Android 쪽에도 열린 항목이 있다: 3개 키 별칭(`power`/`volume_up`/`
 
 ## 8. 발견 사항 (SPEC 생성 없이 기록만)
 
-문서 작성 중 코드/문서 대조에서 발견한, 이 문서(`product.md`)의 범위를 벗어나는 사실은 세 건이다. 두 건은 다른 문서에 직접 기록해 두었다 — `structure.md` §8(`src/index.ts` barrel의 문서 주석·export 목록이 SPEC-ANDROID-001 시절 표면 그대로 남아 있다는 발견)과 `tech.md` §9(`.claude/skills/explore-mobile/SKILL.md`가 존재하지 않는 에러 코드를 나열하고 `swipe`/`scroll`/`--web`를 문서화하지 않는다는 발견).
+문서 작성 중 코드/문서 대조에서 발견한, 이 문서(`product.md`)의 범위를 벗어나는 사실은 네 건이다. 두 건은 다른 문서에 직접 기록해 두었다 — `structure.md` §8(`src/index.ts` barrel의 문서 주석·export 목록이 SPEC-ANDROID-001 시절 표면 그대로 남아 있다는 발견)과 `tech.md` §9(`.claude/skills/explore-mobile/SKILL.md`가 존재하지 않는 에러 코드를 나열하고 `swipe`/`scroll`/`--web`를 문서화하지 않는다는 발견).
 
 세 번째는 `.moai/specs/SPEC-ANDROID-001/spec.md:35`(SPEC 본문)에 있다. `spec.md`의 0.3.0 Amendments 행은 실기기 검증이 드러낸 결함 2건을 "둘 다 `ok:true`인데 관측 가능한 효과가 없는 부류"로 분류하지만, 그중 `launch` 결함은 실제로는 `BACKEND_COMMAND_FAILED`(`ok:false`)로 실패했다 — 근거: `CHANGELOG.md:573-576` "Samsung's Calculator and Clock (neither declares it) both failed with `BACKEND_COMMAND_FAILED`, even though both are installed, resolve a launcher activity fine, and open when tapped by hand." SPEC 본문은 이 워크플로의 스코프 밖이라 `spec.md` 자체는 고치지 않는다 — 기록만 남기는 것이 올바른 처리다.
 
-`product.md`에 추가로 기록할 발견 사항은 위 세 건이 전부다. `.moai/specs/`에는 어떤 파일도 쓰지 않았다.
+네 번째는 **같은 오분류의 형제**이며 `CHANGELOG.md:561-563`에 있다. 그 항목의 헤더는 "Two `ok:true`-with-no-observable-effect defects"로 `launch`와 non-ASCII `text` 두 건을 묶는데, **바로 아래 같은 항목의 `:573-576`**이 그 `launch`를 `BACKEND_COMMAND_FAILED`로 기록한다. `CHANGELOG.md`는 `.moai/specs/` 밖이지만 이 워크플로의 쓰기 범위(`.moai/project/*`)에도 들어가지 않으므로, 여기서도 처리는 기록뿐이다. 세 번째와 네 번째를 함께 고치려면 별도 작업이 필요하다 — 한쪽만 고치면 남은 쪽이 형제로 살아남는다.
+
+`product.md`에 추가로 기록할 발견 사항은 위 네 건이 전부다. `.moai/specs/`에는 어떤 파일도 쓰지 않았다.
