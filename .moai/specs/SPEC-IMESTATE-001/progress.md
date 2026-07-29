@@ -15,7 +15,7 @@ author: hatae
 ```
 plan_status: audit-ready (0.2.0 — 1차 감사 반영 후 재감사 대기)
 plan_complete_at: 2026-07-29
-plan_commit_sha: pending-backfill-plan
+plan_commit_sha: 924cae2
 tier: M (3 artifacts — spec.md / plan.md / acceptance.md)
 REQ: 8   AC: 24   추적성: 100% (미커버 0)
 ```
