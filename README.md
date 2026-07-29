@@ -25,11 +25,16 @@ including multi-device interaction testing.
 > actually governs the device's touch behavior rather than always its
 > physical one; see [Status](#status) below for exactly what "verified"
 > covers here (one device, one density) before relying on this in
-> production. Real-device
-> verification of every other Android command (`tap`/`text`/`key`/
-> `stop`/`doctor`/`reset`) is still pending. The Unicode-IME APK
+> production. **Every other Android command was verified against the
+> same device** (2026-07-29): `tap`, `text`, `key`, `stop`, `doctor`,
+> `reset`, `screenshot`, and `dump` all behave as specified — and the
+> round found **two real defects** (`launch` cannot open apps whose
+> launcher activity omits `category.DEFAULT`; non-ASCII `text` silently
+> inputs nothing when it has to install ADBKeyBoard in the same call).
+> Both are described under [Status](#status). The Unicode-IME APK
 > (ADBKeyBoard, GPL-2.0) is never bundled — `doctor` downloads it from
-> its official release on first use.
+> its official release on first use, now confirmed end-to-end against
+> real hardware.
 
 ## Why
 
@@ -1026,25 +1031,49 @@ between success, `AMBIGUOUS_PAGE`, and `NO_WEB_PAGE` even against a
 single browser tab. Spacing calls a few seconds apart was the only
 reliable mitigation found; a real fix is out of scope here.
 
+Two real-device defects are open — both return `{"ok":true}` (or a
+package-not-found error) while doing nothing useful, and neither is
+reachable by the unit/mock suite, which asserts the shape of the `adb`
+command line rather than how a device resolves it. Full evidence:
+`.moai/reports/android-verification/remaining-commands-android-2026-07-29.md`.
+
+- **`launch <package>` fails for apps whose launcher activity does not
+  declare `android.intent.category.DEFAULT`.** `launchApp` sends
+  `am start -a MAIN -c LAUNCHER -p <package>`, and `-p` is *implicit*
+  intent resolution, which requires `DEFAULT`. A real launcher uses the
+  explicit component instead. Measured: `com.android.settings` succeeds
+  (`isDefault=true`); Samsung Calculator and Clock both fail, though
+  their launcher activities resolve fine and open when tapped by hand —
+  and both start correctly via `am start -n <package>/<activity>`.
+- **Non-ASCII `text` silently inputs nothing when ADBKeyBoard has to be
+  installed during that same call.** The install and the IME switch both
+  succeed, the command returns `ok:true`, and no text reaches the focused
+  field. The IME *switch* is not the cause — a call that only switches
+  works. This hits the first Korean/emoji input after `doctor`, and the
+  self-heal path after any `reset` (which uninstalls ADBKeyBoard), so it
+  is not a rare state. A second call then works.
+
 Still pending before this is production-ready:
 
-- Real-device verification of the remaining Android commands —
-  `tap`/`text`/`key`/`stop`/`doctor`/`reset` (screenshot PNG validity,
-  tap/text landing, `launch`/`stop` observed effects, multi-device
-  isolation with two physically connected devices). `swipe`/`scroll`
-  are now verified against a real device (see above); `adb` itself
-  turned out to be installed on the build machine, just not on `PATH`,
-  so it is no longer the blocker it was previously recorded as.
-- Verifying the runtime ADBKeyBoard download end-to-end against a real
-  device (the download/cache/validate logic is unit/mock-verified; see
-  the Unicode caveat above and `vendor/adbkeyboard/README.md`).
+- Real-device verification of the remaining Android commands: `tap`,
+  `text` (ASCII and Korean), `key`, `stop`, `doctor`, and `reset` are
+  **now verified against a real device**, as are `screenshot` PNG
+  validity and `dump` — joining `swipe`/`scroll` from the previous
+  round. `launch` is verified only insofar as the defect above was
+  found. Three key aliases (`power`, `volume_up`, `volume_down`) were
+  deliberately not exercised — turning off the screen or changing the
+  volume is a poor trade for the coverage — and multi-device isolation
+  still needs two physically connected devices. `adb` itself turned out
+  to be installed on the build machine, just not on `PATH`, so it is no
+  longer the blocker it was previously recorded as.
+- ~~Verifying the runtime ADBKeyBoard download end-to-end against a real
+  device~~ — **done.** With the local cache moved aside, `doctor`
+  downloaded the APK from its pinned tag
+  (`.../ADBKeyBoard/raw/v2.4-dev/ADBKeyboard.apk`, `cached:false`),
+  installed it, and enabled the IME; the re-downloaded file is
+  SHA-256-identical to the previously cached one.
 - A published npm package (`npx explore-mobile` will work once this
   ships to the registry — today it only runs from a local checkout).
-
-The remaining Android items above (`tap`/`text`/`key`/`stop`/`doctor`/
-`reset`) are unit/mock-verified against constructed `adb` command lines
-and mocked subprocess output, not against live hardware; `swipe` and
-`scroll` are the exception — see above.
 
 ## Roadmap
 
