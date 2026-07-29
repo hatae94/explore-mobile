@@ -36,11 +36,11 @@ import { parseAdbDevicesList } from "./device-list-parser.js";
 import { ImeSessionStore } from "./ime-session-store.js";
 import { AdbKeyboardInstallFailedError, ImeBindTimeoutError } from "./ime-errors.js";
 import type { InputMethodBindingState } from "./ime-binding-parser.js";
-import { parseInputMethodBindingState } from "./ime-binding-parser.js";
+import { parseInputMethodBindingState, parseSoftKeyboardShown } from "./ime-binding-parser.js";
 import { isImeEnableRegistrationRaceFailure } from "./ime-enable-retry-predicate.js";
 import { LauncherActivityNotFoundError } from "./launch-errors.js";
 import { parseLauncherResolveOutput } from "./launcher-resolve-parser.js";
-import { ANDROID_KEYCODE, KEYCODE_ESCAPE } from "./keycodes.js";
+import { ANDROID_KEYCODE, KEYCODE_HIDE_KEYBOARD } from "./keycodes.js";
 
 const CONNECTED_STATES = new Set(["device", "offline", "unauthorized"]);
 
@@ -363,7 +363,8 @@ export class AdbBackend implements DeviceBackend {
    * answer that question correctly. The switch is never restored
    * per-call; restore happens ONLY via `reset`/`doctor --clean` (see
    * `getTrackedOriginalIme()` / `clearTrackedOriginalIme()`). A
-   * best-effort keyboard-hide (KEYCODE_ESCAPE) runs after every send
+   * best-effort keyboard-hide (`KEYCODE_BACK`, gated by a soft-keyboard
+   * visibility check — REQ-INPUT-004 개정 0.4.0, M14) runs after every send
    * unless `options.hideKeyboardAfter` is `false`.
    * @MX:REASON — REQ-INPUT-004 (disk-persistence revision, real-device
    * finding): the prior in-memory-only session tracking recorded the
@@ -481,16 +482,54 @@ export class AdbBackend implements DeviceBackend {
   }
 
   /**
-   * Best-effort soft-keyboard dismissal after `text` input (real-device
-   * UX fix): sends KEYCODE_ESCAPE. Never fails the caller — a failure
-   * here is cosmetic, not a functional regression of the text send that
-   * already succeeded.
+   * @MX:WARN — best-effort soft-keyboard dismissal after `text` input,
+   * gated by a visibility check (REQ-INPUT-004 개정 0.4.0, M14): sends
+   * `KEYCODE_BACK` (4) ONLY when `dumpsys input_method` confirms the
+   * keyboard is actually shown (`mInputShown=true`). Never fails the
+   * caller — a failure in EITHER the visibility probe or the hide-keycode
+   * send itself is cosmetic, not a functional regression of the text send
+   * that already succeeded.
+   * @MX:REASON — this used to send `KEYCODE_ESCAPE` (111) unconditionally.
+   * On a Chrome web page input, ESCAPE is delivered to the PAGE and
+   * interpreted as the page's own input-cancel action, silently erasing
+   * the text `inputText` just typed — the command still returns
+   * `{"ok":true}` (spec.md §C.4-⑰). `KEYCODE_BACK` dismisses the keyboard
+   * on BOTH a Chrome web input AND a native `EditText` WITHOUT erasing the
+   * text (spec.md §C.4-⑱) — reverting to ESCAPE ("BACK is for navigation,
+   * ESCAPE sounds more correct") resurrects this exact silent defect
+   * (plan.md §F M14 안티패턴). The visibility guard is PRECAUTIONARY, not
+   * measured-forced: the one trial that sent BACK while the keyboard was
+   * NOT shown did not observe a foreground change (spec.md §C.4-⑲) — a
+   * single trial establishes neither that a screen-leaving BACK occurs nor
+   * that it never does, so the guard is cheap insurance against an
+   * unconfirmed side effect, not a response to an observed one.
    */
   private async hideKeyboard(serial: string): Promise<void> {
+    const shown = await this.isSoftKeyboardShown(serial);
+    if (!shown) return;
     try {
-      await this.exec(["-s", serial, "shell", "input", "keyevent", String(KEYCODE_ESCAPE)]);
+      await this.exec(["-s", serial, "shell", "input", "keyevent", String(KEYCODE_HIDE_KEYBOARD)]);
     } catch {
       // Intentionally swallowed: keyboard-hide is best-effort.
+    }
+  }
+
+  /**
+   * Probes `dumpsys input_method` for the soft-keyboard visibility marker
+   * `hideKeyboard` gates on (REQ-INPUT-004 개정 0.4.0, M14). A failed query
+   * (non-zero exit OR the `exec` call itself rejecting) is treated as
+   * "not shown" — the same fail-closed posture `probeImeBindingState` uses
+   * for the bind-ready poll: an unconfirmed signal never authorizes a
+   * side-effecting send (here, a keycode that could navigate the screen;
+   * there, a broadcast that could be silently lost).
+   */
+  private async isSoftKeyboardShown(serial: string): Promise<boolean> {
+    try {
+      const result = await this.exec(["-s", serial, "shell", "dumpsys", "input_method"]);
+      if (result.exitCode !== 0) return false;
+      return parseSoftKeyboardShown(result.stdout.toString("utf-8"));
+    } catch {
+      return false;
     }
   }
 

@@ -35,6 +35,7 @@ export interface InputMethodBindingState {
 
 const BOUND_TO_METHOD_PATTERN = /mBoundToMethod=(true|false)/;
 const CUR_ID_PATTERN = /mCurId=(\S+)/;
+const INPUT_SHOWN_PATTERN = /mInputShown=(true|false)/;
 
 /**
  * Parses `dumpsys input_method` stdout into a binding-state snapshot.
@@ -52,4 +53,34 @@ export function parseInputMethodBindingState(dumpsysOutput: string): InputMethod
     bound: boundMatch?.[1] === "true",
     currentImeId: curIdMatch?.[1],
   };
+}
+
+/**
+ * Parses the SAME `dumpsys input_method` dump for the soft-keyboard
+ * visibility marker `mInputShown`, consumed by `AdbBackend`'s pre-hide-
+ * keycode guard (REQ-INPUT-004 개정 0.4.0, plan.md §F M14 산출물 1) — the
+ * keyboard-hide keycode is sent only when the keyboard is confirmed
+ * visible.
+ *
+ * @MX:NOTE — like `mBoundToMethod` (confirmed to appear EXACTLY ONCE in the
+ * dump, spec.md §C.3-⑥), `mInputShown`'s occurrence count has ALSO now been
+ * confirmed EXACTLY ONCE, measured in both states (`false` and `true`) on a
+ * real device — the M14 real-device verification session resolved the
+ * claim boundary spec.md §C.4-⑱ originally left open. This parser takes the
+ * FIRST match, which is therefore unambiguous by the same property as
+ * `mBoundToMethod`'s parse — not merely "sufficient in practice so far".
+ *
+ * Defaults to `false` when the marker is absent — deliberately the SAME
+ * default value as `parseInputMethodBindingState`'s `bound`, but for a
+ * mirrored reason (spec.md §C.4 M14 산출물 1): an unconfirmed `bound`
+ * signal must not authorize a broadcast that could be silently lost,
+ * while an unconfirmed `mInputShown` signal must not authorize a
+ * keyboard-hide keycode that could (per §C.4-⑲'s single, inconclusive
+ * counter-trial) navigate the screen away. Both defaults refuse to act on
+ * an unconfirmed signal — same principle, applied to two different
+ * side-effecting sends.
+ */
+export function parseSoftKeyboardShown(dumpsysOutput: string): boolean {
+  const match = INPUT_SHOWN_PATTERN.exec(dumpsysOutput);
+  return match?.[1] === "true";
 }

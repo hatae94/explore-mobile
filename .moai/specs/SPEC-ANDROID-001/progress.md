@@ -488,3 +488,128 @@ $ pnpm test:coverage (발췌)
 ### 프롬프트 사전 기술 중 틀린 것으로 확인된 항목
 
 없음. "이 마일스톤은 기기가 필요 없다", "논리 판정은 전부 순수 함수 unit", "23건 중 2건 연결"이라는 실측 분포, `unauthorized`를 미연결로 취급하라는 지시, `devices` 명령 출력 불변 요구 등 프롬프트가 인용한 사실·지시는 plan.md/spec.md/acceptance.md 본문과 정확히 일치했다. 유일하게 프롬프트가 재량으로 남긴 것("오류 클래스/`instanceof` 왕복이 필요한지는 구현 재량")은 plan.md §A.6/§F가 이미 예견한 대로 불필요하다고 판단했다 — `resolveTargetDevice`가 순수 함수로 이미 구조화된 `CommandErrorInfo`를 반환하므로 M10/M12의 `ime-errors.ts` 같은 별도 Error 클래스 계층이 필요 없었다.
+
+## §E.2-M14 개정(0.4.0) M14 — 소프트키보드 숨김이 자기 입력을 파괴하는 결함 (2026-07-29)
+
+> M13(위 §E.2-M13)과 완전히 독립이다 — 공유 코드 0(`cli/device-targeting.ts` vs `adb-backend.ts`의 private `hideKeyboard`). M10·M12와도 파일은 같지만 메서드가 다르다(`hideKeyboard` vs `inputText` 본체·`setImeToAdbKeyboard`) — 다만 `hideKeyboard`가 `inputText` 말미에서 호출되므로 M10/M12가 작성한 기존 `inputText` 경로 테스트 픽스처가 숨김 argv도 함께 관측하고 있었고, 그 픽스처들의 기대값(대기/재시도 시퀀스 뒤에 이어지는 숨김 keyevent)을 이번 커밋에서 함께 갱신했다(plan.md §F.10이 예견한 접촉면 — 의존이 아니라 접촉면).
+
+### 산출물
+
+- **`src/backend/keycodes.ts`**(수정) — `KEYCODE_ESCAPE`(111) 상수 제거, `KEYCODE_HIDE_KEYBOARD`(4, `KEYCODE_BACK`과 수치상 동일하나 별도 상수로 유지 — `ANDROID_KEYCODE`는 공개 `key` 별칭 어휘, 이쪽은 `inputText`의 내부 구현 세부라는 기존 구분 보존) 신설. 정의 지점에 왜 BACK인지(§C.4-⑰/⑱) 독블록으로 기록.
+- **`src/backend/ime-binding-parser.ts`**(수정, 기존 `bound`/`currentImeId` 계약 불변 — PRESERVE) — `parseSoftKeyboardShown(dumpsysOutput): boolean` 신규 순수 함수. `mInputShown=<bool>` 정규식 첫 매치, 마커 부재 시 `false` 기본값(`bound`와 같은 원리 — 확인되지 않은 신호 위에서 부작용 있는 동작을 하지 않는다. 다만 `bound`의 `false`는 "브로드캐스트 안 보냄"을, 이쪽의 `false`는 "숨김 키 안 보냄"을 뜻하므로 결과의 안전 방향은 같되 근거는 다르다).
+- **`src/backend/adb-backend.ts`**(수정) — `hideKeyboard(serial)`가 이제 (1) 신규 private `isSoftKeyboardShown(serial)`으로 `dumpsys input_method`를 조회해 `parseSoftKeyboardShown`으로 판정하고, (2) `true`일 때만 `KEYCODE_HIDE_KEYBOARD`(4, BACK)를 전송한다. 조회 자체의 실패(`exitCode !== 0` 또는 `exec()` 자체의 rejection)는 "미표시"로 처리(fail-closed, `probeImeBindingState`와 같은 원칙). 숨김 키 전송 자체의 실패도 여전히 swallow(best-effort 불변). `@MX:WARN` + `@MX:REASON` 독블록으로 ESCAPE→BACK 교체 근거(§C.4-⑰/⑱)와 가드의 주장 경계(§C.4-⑲, 예방적·실측 강제 아님)를 명시.
+- **`src/backend/ime-binding-parser.ts`의 `@MX:NOTE` 정정** — spec.md §C.4-⑱이 열어 둔 "`mInputShown` 출현 횟수 미측정" 주장 경계를 M14 실측 세션에서 **해소**했다(아래 "실측 근거" 참고 — `false`/`true` 양쪽 상태에서 `grep -c`로 정확히 1회 확인). 프롬프트가 사전에 이 사실을 준 상태였고 본 세션에서 독립적으로 재확인했으므로, 이 사실을 다루는 doc comment(내가 작성하는 코드 주석)는 "미확립"으로 반복 서술하지 않았다 — spec.md 본문 자체(`§C.4-⑱`)의 표현은 manager-spec 소유이므로 건드리지 않았다(SPEC Artifact Ownership 경계).
+- 테스트: `src/backend/adb-backend.test.ts` — 신규 `describe("hideKeyboard — KEYCODE_BACK + soft-keyboard visibility guard ...")` 블록 5건(shown→BACK 전송+ESCAPE 미구성 확인 / 미표시→미전송 / 조회 exit≠0→미전송 / 조회 exec() rejection→미전송(guard 재활용 검증) / `--keep-keyboard`→조회조차 안 함) + 기존 hideKeyboard 관련 테스트 **14건**의 mock 시퀀스·호출 횟수·keyevent 기대값 갱신(ASCII fast path 2건, 비-ASCII 세션 라이프사이클 4건, M10 바인딩 대기 4건, M12 재시도 1건, self-heal install 2건, `createDeviceImeSimulator`/`okFirstSwitchSequence` 공유 헬퍼 2건도 함께 갱신 — `mInputShown=true` 마커 추가). `git diff --stat`: 146 insertions / 33 deletions.
+
+### AC 판정 매트릭스 (AC-ANDROID-036~040)
+
+| AC ID | 요약 | 검증 방식 | Status | Actual Output |
+|-------|------|-----------|--------|----------------|
+| AC-ANDROID-036 | Chrome 웹 입력란에서 텍스트 생존 [결함 회귀 증명 · 실측 필수 · 무대 지정] | 실측 필수(mock 단독 불가) | **PASS** | mock: `adb-backend.test.ts` "sends KEYCODE_BACK (4), never the retired KEYCODE_ESCAPE (111)..." — `keyevent 4` 전송 + `keyevent 111` argv 0건 확인. **실측(무대: Chrome, `m.naver.com` 검색창)**: `reset` 직후(ADBKeyBoard 미설치, cold 경로) `tap`으로 검색창 포커스 확보(`mInputShown=true` 확인 후) → `text "탐사"`(`--keep-keyboard` 없이) → `{"ok":true}` → 스크린샷에서 **"탐사"가 검색창에 남아 있고 자동완성(탐사수/탐사/탐사 세제 등)까지 뜬 상태**로 관찰됨(아래 "실측 근거" verbatim 참고). 개정 전 이 경로는 정확히 이 상황에서 플레이스홀더로 되돌아갔다(spec.md §C.4-⑰) — 이번 관찰은 그 반대다 |
+| AC-ANDROID-037 | 네이티브 `EditText`에서 텍스트 생존 [비회귀 · 실측] | 실측 | **PASS** | **실측(무대: Settings 검색창, `com.android.settings:id/search_src_text`)**: `tap --id`로 포커스(`mInputShown=true` 확인) → `text "탐사"` → 스크린샷에서 **"탐사"가 검색창에 남아 있고 "검색 결과가 없습니다" 표시**로 관찰됨 — 숨김 후에도 텍스트 생존 확인. 이 AC의 PASS는 AC-036의 근거가 될 수 없다(무대가 다르다, acceptance.md 명시) — 별개로 기록 |
+| AC-ANDROID-038 | 숨김 후 소프트키보드가 실제로 내려감(두 표면) | 실측 + unit(mock, argv) | **PASS** | mock: 위 AC-036 mock 레그가 `keyevent 4` argv 구성을 확인. 실측: **Chrome** — `text` 실행 직후 `dumpsys input_method`의 `mInputShown`이 `true`(tap 후 확인) → `false`(text 후 확인)로 전환됨을 직접 관측. **Settings(네이티브)** — 동일하게 `tap` 후 `mInputShown=true` 확인, `text` 실행 직후 즉시 조회 시 일시적으로 `true`가 관측된 순간이 있었으나(§Residual-risk 참고) 곧이어(수 초 내) `false`로 안정화됨을 재조회로 확인 — 최종 상태는 두 표면 모두 숨겨짐(스크린샷으로도 키보드가 화면에 없음을 확인) |
+| AC-ANDROID-039 | 숨김 실패가 `text`를 실패시키지 않음(best-effort 불변) | unit(mock) | **PASS** | `adb-backend.test.ts` "a hide-keyevent send failure AFTER a shown=true probe is swallowed..." — `shown:true` 확정 후 실제 keyevent 전송이 `mockRejectedValueOnce`로 실패해도 `inputText`가 `resolves.toBeUndefined()`함을 확인(AC-ANDROID-022 불변 계약 그대로) |
+| AC-ANDROID-040 | 가드 — 키보드 미표시/조회 실패 시 숨김 키 미전송 | unit(mock) | **PASS** | `adb-backend.test.ts` 신규 2건 — "does NOT send the hide keyevent when the visibility probe reports the keyboard is NOT shown"(`mInputShown=false` → keyevent 0건) / "...when the visibility query itself exits non-zero"(조회 자체 실패 → keyevent 0건, `text`는 `ok:true`). 기존 재사용 테스트("a visibility-probe failure (exec() rejection) is treated as 'not shown'")도 같은 가드의 exec()-rejection 갈래를 확인 |
+
+### mock 레그가 실제로 단언하는 것
+
+- **BACK만 구성됨, ESCAPE는 더 이상 구성되지 않음**: `keyevent 4` argv가 나가고 `keyevent 111`은 어떤 테스트에서도 mock exec에 도달하지 않음(전체 스위트 전역 검색으로 재확인 — `grep '"111"'`가 오직 negative-assertion 자리 1건뿐).
+- **가드의 3갈래 미전송**: 미표시(`mInputShown=false`) / 조회 exit≠0 / 조회 exec() rejection — 셋 다 `keyevent` argv가 mock exec에 도달하지 않음을 각각 확인.
+- **`--keep-keyboard`는 조회조차 하지 않음**: `dumpsys` 계열 argv가 0건임을 필터로 확인(REQ-INPUT-004 옵트아웃 불변).
+- **best-effort 양쪽 실패 모두 swallow**: 조회 실패든 keyevent 전송 자체의 실패든 `text`는 `ok:true`로 귀결됨(AC-ANDROID-022/039).
+
+### 실측 근거 (verbatim, 기기: Galaxy S25 Ultra SM-S938N, 무선 ADB `adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp`)
+
+**무대 A — Chrome, `m.naver.com` 검색창 (AC-036 결함 회귀 증명, cold 경로: ADBKeyBoard 미설치 상태에서 시작):**
+
+```
+$ export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
+$ SERIAL="adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp"
+$ adb -s "$SERIAL" shell settings get secure default_input_method
+com.samsung.android.honeyboard/.service.HoneyBoardService
+$ adb -s "$SERIAL" shell pm list packages | grep adbkeyboard
+(no output — not installed, 기준선 확인)
+
+$ node dist/cli/bin.js launch com.android.chrome --device "$SERIAL"
+{"ok":true,"command":"launch","data":{...}}
+# Chrome이 마지막 탭(m.naver.com)을 복원 — 스크린샷으로 확인, 별도 네비게이션 불필요
+
+$ node dist/cli/bin.js tap 624 810 --device "$SERIAL"   # 네이버 검색창 (uiautomator dump 대신 스크린샷 좌표 스케일 계산으로 산출)
+{"ok":true,"command":"tap",...}
+$ adb -s "$SERIAL" shell dumpsys input_method | grep -oE 'mInputShown=[a-zA-Z]+'
+mInputShown=true    # 포커스 확보 확인 (재탭 불필요 — 1회 tap으로 즉시 포커스됨)
+
+$ node dist/cli/bin.js text "탐사" --device "$SERIAL"
+{"ok":true,"command":"text","data":{"serial":"adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp"}}
+# ok:true — 이것은 정확히 결함이 반환하던 것과 같은 응답. 오라클은 스크린샷뿐이다.
+
+$ adb -s "$SERIAL" shell dumpsys input_method | grep -oE 'mInputShown=[a-zA-Z]+'
+mInputShown=false   # 숨김 keyevent가 전송되어 키보드가 실제로 내려감
+
+$ node dist/cli/bin.js screenshot --device "$SERIAL"   # decoded pngBase64
+```
+
+**스크린샷 관찰(무대 A)**: 검색창에 커서와 함께 **"탐사"** 텍스트가 그대로 남아 있고, 그 아래로 네이버 자동완성 목록(탐사수 / 탐사 / 탐사 세제 / 뉴탐사 / 실화탐사대 슈니 / 실화탐사대 / 화성탐사 / 더탐사 / 어둠탐사기록 / 탐사펑)이 표시되어 있다 — 자동완성이 뜬다는 것은 페이지의 검색 입력 이벤트가 "탐사"라는 실제 값으로 정상 발화했다는 방증이다. 화면 하단에는 소프트키보드가 없다(숨김 확인). 개정 전이었다면 이 자리에 플레이스홀더 "N에게 물어보세요"(또는 유사 placeholder)가 보이고 자동완성도 없었을 것이다(spec.md §C.4-⑰의 3단계 분리 실험이 정확히 이 붕괴를 기록했다).
+
+**무대 B — Settings, 네이티브 `EditText` 검색창 (AC-037 비회귀 + AC-038 두 번째 표면):**
+
+```
+$ node dist/cli/bin.js launch com.android.settings --device "$SERIAL"
+$ node dist/cli/bin.js dump --device "$SERIAL"
+# com.android.settings:id/search_src_text  bounds:{x:420,y:2876,w:531,h:105}
+
+$ node dist/cli/bin.js tap --id com.android.settings:id/search_src_text --device "$SERIAL"
+{"ok":true,"command":"tap","data":{...,"warnings":["Matched element is not tappable (clickable && enabled is false); tapped its center anyway."]}}
+$ adb -s "$SERIAL" shell dumpsys input_method | grep -oE 'mInputShown=[a-zA-Z]+'
+mInputShown=true
+
+$ node dist/cli/bin.js text "탐사" --device "$SERIAL"
+{"ok":true,"command":"text",...}
+$ adb -s "$SERIAL" shell dumpsys input_method | grep -oE 'mInputShown=[a-zA-Z]+'
+mInputShown=true    # 순간 관측 — 아래 Residual-risk 참고
+$ node dist/cli/bin.js screenshot --device "$SERIAL"   # decoded pngBase64 → "탐사" 착지 + "검색 결과가 없습니다" 관찰, 화면상 키보드 없음
+$ adb -s "$SERIAL" shell dumpsys input_method | grep -oE 'mInputShown=[a-zA-Z]+'
+mInputShown=false   # 재조회 — 안정화된 최종 상태
+```
+
+**스크린샷 관찰(무대 B)**: 검색창에 **"탐사"** 텍스트가 남아 있고 "검색 결과가 없습니다"가 표시됨 — 실제 검색이 수행됐다는 방증(입력이 살아남았을 뿐 아니라 애플리케이션 로직에도 정상 도달). 스크린샷상 화면 하단에 소프트키보드가 없다.
+
+**`mInputShown` 출현 횟수 실측(§C.4-⑱ 주장 경계 해소)**: 위 두 무대에서 `grep -c 'mInputShown='`로 **양쪽 상태(`false`/`true`) 모두 정확히 1회**를 확인했다 — 프롬프트가 사전에 준 사실("mInputShown appears EXACTLY ONCE, measured in both states")을 이 세션에서 독립적으로 재확인한 것이며, 새로 발견한 것이 아니다.
+
+### 회귀 없음 확인
+
+```
+$ pnpm typecheck
+(no output; exit=0)
+
+$ pnpm test
+ Test Files  32 passed (32)
+      Tests  702 passed (702)          # 697(M13 마감 기준선) + 5(M14 신규 hideKeyboard describe 블록)
+
+$ pnpm build
+(exit=0)
+```
+
+### 기기 최종 상태 (device etiquette)
+
+세션 중 `reset`(1회, cold 경로 확보용) → Chrome/Settings 구동 → 두 차례 `text` 호출(웹/네이티브 각 1회, 둘 다 cold: ADBKeyBoard 자가치유 설치 경유) → `mInputShown` 출현 횟수 재확인용 Chrome 재구동(짧게 tap만, `text` 호출 없음)까지 기기 상태를 여러 차례 흔들었다. 세션 종료 시 `stop`+`key home`으로 복귀하고 4개 항목을 재확인 — **모두 기준선과 정확히 일치**:
+
+| 항목 | 기준선 | 세션 종료 시점 |
+|------|--------|----------------|
+| 기본 IME | `com.samsung.android.honeyboard/.service.HoneyBoardService` | `com.samsung.android.honeyboard/.service.HoneyBoardService` (일치) |
+| ADBKeyBoard 설치 여부 | 미설치 | 미설치(`pm list packages` 무매칭, Secure Folder stderr는 spec.md §C.3-⑪ 그대로) (일치) |
+| `ime-sessions.json` | `{}` | `{}` (일치) |
+| 포그라운드 | 런처(홈 화면) | `com.sec.android.app.launcher/.activities.LauncherActivity`(`stop`+`key home`으로 복귀) (일치) |
+
+화면 잠금/PIN/디스플레이 밀도/`power`/`volume_*` 관련 조작은 전혀 수행하지 않았다. Chrome 탭/검색어는 `key back`으로 검색어 입력 UI를 닫고 `stop`으로 앱 자체를 종료해 남기지 않았다.
+
+### Residual-risk (§verification-claim-integrity 5-섹션 형식)
+
+- **Gap**: 재시도가 실제로 몇 회 발동했는지, `ime enable`/바인딩 대기가 실제로 몇 회 폴링됐는지는 이번 M14 실측에서 별도 계측(logcat 등)하지 않았다 — CLI의 최종 결과(`ok:true` + 스크린샷 오라클)만 관측했다.
+- **Gap/Residual — 무대 B의 순간적 `mInputShown=true` 재관측**: `text` 실행 직후 **즉시** 조회했을 때 `mInputShown=true`가 한 차례 관측됐고, 곧이어(재조회 시) `false`로 안정화됐다. 두 가지 해석이 모두 가능하고 어느 쪽도 확정하지 않는다 — (a) 가드가 정상적으로 `true`를 읽고 BACK을 전송했으나 IME 창이 닫히는 데 조회 타이밍보다 약간의 지연이 있었다, 또는 (b) 그 시점의 가드 조회 자체가 `false`를 읽어 BACK을 보내지 않았고 그 뒤 다른 경로(예: 사용자 조작 없이도 포커스 변화 등)로 자연히 닫혔다. 최종 스크린샷은 키보드가 없는 상태를 보였고 텍스트는 두 무대 모두 생존했으므로 AC-036/037/038의 판정 자체는 흔들리지 않지만, "가드가 그 순간 정확히 무엇을 관측했는가"는 이 세션에서 결정적으로 확정하지 못했다 — mock 레그가 이 인과를 정확히 분리해 단언하므로(§AC 판정 매트릭스 AC-038), unit 증거로 보완된다.
+- **Residual**: 무대 A(Chrome)의 tap 좌표(624,810)는 스크린샷 픽셀을 수동으로 스케일 계산해 산출한 것이며 `dump`의 `--id`/`--text` 셀렉터를 쓰지 않았다 — 네이버 검색창이 `resource-id`를 노출하지 않을 가능성이 있어(spec.md §C.2 알려진 한계, React Native 사례와 유사) 좌표 탭으로 우회했다. 무대 B(Settings)는 `tap --id`로 정확히 셀렉터 기반 탭을 사용했다.
+
+### 프롬프트 사전 기술 중 틀린 것으로 확인된 항목
+
+- **`mInputShown` 출현 횟수 — 사실은 맞았고, 내가 작성 중이던 코드 주석이 틀려 있었다.** 프롬프트는 "mInputShown appears EXACTLY ONCE ... measured in both states"라고 전제했고, 이 세션에서 독립 재확인해 사실임을 확인했다(위 실측 근거). 문제는 spec.md §C.4-⑱의 "미측정" 문구 자체가 아니라(그 문서 수정은 manager-spec 소유이므로 건드리지 않았다), 내가 새로 작성한 `ime-binding-parser.ts`의 `parseSoftKeyboardShown` doc comment가 처음에는 이 "미측정" 주장 경계를 그대로 반복해 썼다는 점이다(프롬프트가 명시적으로 경고한 실수: "documents are otherwise manager-spec's, but a now-false claim-boundary note in a doc comment you write must not repeat it"). 실측 확인 직후 그 주석을 "양쪽 상태에서 정확히 1회 확인됨"으로 정정했다.
+- 그 외: Chrome이 마지막 탭을 복원한다는 전제, 좌표 대신 `mInputShown` 폴링으로 포커스를 확인하라는 절차, 오라클은 스크린샷뿐이라는 규율, BACK이 두 표면 모두에서 텍스트를 보존한다는 사실 — 전부 프롬프트 기술과 정확히 일치했다.
