@@ -1003,9 +1003,13 @@ Android's derivation as a value read off the device rather than what it
 is — a platform rule parameterized by one. No response schema, error
 code, or `basis` token changed.
 
-Final tally across all five amendments: **33 PASS / 1 PARTIAL / 0 FAIL
+Final tally across all six amendments: **33 PASS / 1 PARTIAL / 0 FAIL
 across 34 acceptance criteria** in
-`.moai/specs/SPEC-GESTURE-001/progress.md`. AC-GEST-006 (Android
+`.moai/specs/SPEC-GESTURE-001/progress.md`. The 0.9.0 amendment is not
+narrated above because it added no acceptance criteria and no
+user-facing change — it reverted an internal per-serial threshold cache
+introduced by 0.8.0, leaving every returned value byte-identical, so
+the tally is unchanged by it. AC-GEST-006 (Android
 real-device swipe) is now PASS, promoted by the 0.6.0 amendment above.
 The one remaining PARTIAL is AC-GEST-020 (the `--duration` omission
 reliability measurement — it is intermittent by nature, so a fixed
