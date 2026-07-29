@@ -34,7 +34,9 @@ import type { ApkAcquirer } from "./apk-downloader.js";
 import { createApkAcquirer } from "./apk-downloader.js";
 import { parseAdbDevicesList } from "./device-list-parser.js";
 import { ImeSessionStore } from "./ime-session-store.js";
-import { AdbKeyboardInstallFailedError } from "./ime-errors.js";
+import { AdbKeyboardInstallFailedError, ImeBindTimeoutError } from "./ime-errors.js";
+import type { InputMethodBindingState } from "./ime-binding-parser.js";
+import { parseInputMethodBindingState } from "./ime-binding-parser.js";
 import { LauncherActivityNotFoundError } from "./launch-errors.js";
 import { parseLauncherResolveOutput } from "./launcher-resolve-parser.js";
 import { ANDROID_KEYCODE, KEYCODE_ESCAPE } from "./keycodes.js";
@@ -87,6 +89,42 @@ function isAsciiOnly(text: string): boolean {
  */
 function shellSingleQuoteForDevice(text: string): string {
   return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Upper bound for the pre-broadcast IME-binding-readiness wait, in
+ * milliseconds (REQ-INPUT-004 개정 0.3.0, plan.md §F M10 산출물 2). This is
+ * a DESIGN CHOICE, not a measured value — same character as
+ * `MAX_DURATION_MS` (`src/cli/validators.ts:47-64`): its only purpose is
+ * "no infinite wait", and it makes no device-behavior claim, unlike
+ * `TOUCH_SLOP_MARGIN_PX` below (or `getMinEffectiveSwipeThreshold`), which
+ * do. spec.md §C.3-⑦ measured that a cold `ime set` flips
+ * `mBoundToMethod` from false to true within roughly one adb round-trip —
+ * that observation motivates a GENEROUS ceiling, but a measured *typical
+ * speed* is not the same thing as a chosen *timeout ceiling*, so this value
+ * carries no measurement obligation of its own. SPEC recommends 5,000ms;
+ * choosing a different value only requires re-reviewing this rationale, not
+ * a new real-device measurement.
+ *
+ * @MX:NOTE: [AUTO] 5000이라는 값은 설계 선택이지 실측값이 아니다 -- 다른 값을 택하려면 spec.md REQ-INPUT-004의 근거(무한 대기 방지 목적, mBoundToMethod 왕복 관찰은 이 값을 정하지 않음)를 재검토해야 한다
+ */
+const IME_BIND_TIMEOUT_MS = 5_000;
+
+/**
+ * Interval between binding-readiness polls, in milliseconds. Polling
+ * interval is explicitly implementer's discretion (plan.md §F M10 산출물
+ * 2) — short enough to resolve well inside the roughly-one-adb-round-trip
+ * flip observed at spec.md §C.3-⑦, without issuing an excessive number of
+ * `dumpsys` invocations against the device.
+ */
+const IME_BIND_POLL_INTERVAL_MS = 250;
+
+/** `Math.ceil` so a non-divisible timeout/interval pair still allows a final poll at (or just past) the nominal deadline rather than one short of it. */
+const IME_BIND_MAX_POLL_ATTEMPTS = Math.ceil(IME_BIND_TIMEOUT_MS / IME_BIND_POLL_INTERVAL_MS);
+
+/** Real inter-poll delay. Injectable via `AdbBackend`'s constructor `sleep` parameter so unit tests never wait out the real ceiling. */
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -167,6 +205,13 @@ export class AdbBackend implements DeviceBackend {
     private readonly exec: AdbExecutor = spawnAdb,
     private readonly acquireApk: ApkAcquirer = createApkAcquirer(),
     imeSessions: ImeSessionStore = new ImeSessionStore(),
+    /**
+     * Inter-poll delay for `waitForImeBindingReady` (REQ-INPUT-004 개정
+     * 0.3.0). Injectable so unit tests never wait out the real
+     * `IME_BIND_POLL_INTERVAL_MS` ceiling; defaults to a real
+     * `setTimeout`-based delay in production.
+     */
+    private readonly sleep: (ms: number) => Promise<void> = defaultSleep,
   ) {
     this.imeSessions = imeSessions;
   }
@@ -310,6 +355,17 @@ export class AdbBackend implements DeviceBackend {
    * missing it — `ime enable` on a missing package fails with "Unknown
    * input method" — so `text` self-heals by installing it on demand via
    * the same shared helper `doctor` uses, before attempting the switch.
+   * Additionally (REQ-INPUT-004 개정 0.3.0): on the COLD path only (this
+   * call just switched the IME), a bounded readiness wait
+   * (`waitForImeBindingReady`) runs AFTER the switch and BEFORE the
+   * broadcast — `ime set` returns once the setting is written, not once
+   * the IME service is actually bound (spec.md §C.3-⑤/⑧), and a broadcast
+   * fired in that window is silently lost even though the command still
+   * reports `{"ok":true}`. On timeout, NO broadcast is sent and
+   * `ImeBindTimeoutError` is thrown instead (AC-ANDROID-031 — an intended
+   * response-contract change). The warm path (ADBKeyBoard already active
+   * and bound) is untouched — no wait, immediate broadcast
+   * (AC-ANDROID-030).
    */
   async inputText(serial: string, text: string, options?: { hideKeyboardAfter?: boolean }): Promise<void> {
     const hideKeyboardAfter = options?.hideKeyboardAfter ?? true;
@@ -371,12 +427,24 @@ export class AdbBackend implements DeviceBackend {
       if (existingOriginal === undefined) {
         await this.imeSessions.setOriginalIme(serial, currentIme);
       }
+
+      // REQ-INPUT-004 개정 0.3.0 — cold path only: confirm the IME service
+      // has actually finished binding before sending the broadcast. The
+      // disk-persisted original IME above is ALREADY written at this
+      // point, so a timeout here still leaves REQ-IDEMP-004's guarantee
+      // intact (reset/doctor --clean can still restore it).
+      const ready = await this.waitForImeBindingReady(serial);
+      if (!ready) {
+        throw new ImeBindTimeoutError(serial, IME_BIND_TIMEOUT_MS);
+      }
     }
     // else: ADBKeyBoard is already the device's active IME — established
     // by this call, an earlier call in this process, OR a call from a
     // DIFFERENT CLI process entirely. Skip the switch (and the self-heal
     // check) entirely: no flicker, and no risk of ever recording
-    // ADBKeyBoard as its own "original".
+    // ADBKeyBoard as its own "original". Also skip the binding-readiness
+    // wait entirely (AC-ANDROID-030, warm path) — an already-active IME is
+    // already bound; this amendment adds latency only to the cold path.
 
     await this.broadcastBase64Text(serial, text);
 
@@ -422,6 +490,62 @@ export class AdbBackend implements DeviceBackend {
 
     const setResult = await this.exec(["-s", serial, "shell", "ime", "set", ADBKEYBOARD_IME_ID]);
     assertSuccess(setResult, "shell ime set (ADBKeyBoard)");
+  }
+
+  /**
+   * @MX:WARN — polls `dumpsys input_method` up to `IME_BIND_MAX_POLL_ATTEMPTS`
+   * times (bounded by `IME_BIND_TIMEOUT_MS`), returning `true` as soon as a
+   * poll reports the IME service bound, or `false` once the bounded wait
+   * is exhausted (REQ-INPUT-004 개정 0.3.0). Called ONLY from `inputText`'s
+   * cold path (a switch just happened this call) — the warm path skips
+   * this entirely (AC-ANDROID-030).
+   *
+   * Readiness predicate — DELIBERATELY `bound` alone, NOT `bound &&
+   * currentImeId === ADBKEYBOARD_IME_ID`: the decisive real-device
+   * experiment (spec.md §C.3-⑧) varied ONLY the `mBoundToMethod` flag
+   * while every other condition (focus, cycle, oracle) stayed constant,
+   * and success/failure tracked that flag exactly across 5 separated
+   * trials. `currentImeId`'s value DURING the unbound window was never
+   * observed (spec.md §C.3-⑩) — AC-ANDROID-032 asks a future real-device
+   * pass to confirm or correct this. Adding an unverified conjunct would
+   * assert something never measured; this is the documented decision
+   * AC-ANDROID-032 explicitly permits recording in lieu of a combined
+   * predicate ("결합항 없이 바인딩 플래그만으로 술어를 구성하기로
+   * 결정했다면, 그 결정과 근거를 기록하는 것으로 충족된다").
+   * @MX:REASON — removing this wait, or weakening the predicate to
+   * "bound OR a short fixed delay", resurrects the exact `ok:true`-with-no-
+   * effect defect this amendment exists to fix (spec.md §C.3-⑤/⑧).
+   */
+  private async waitForImeBindingReady(serial: string): Promise<boolean> {
+    for (let attempt = 0; attempt < IME_BIND_MAX_POLL_ATTEMPTS; attempt++) {
+      const state = await this.probeImeBindingState(serial);
+      if (state?.bound === true) return true;
+      if (attempt < IME_BIND_MAX_POLL_ATTEMPTS - 1) {
+        await this.sleep(IME_BIND_POLL_INTERVAL_MS);
+      }
+    }
+    return false;
+  }
+
+  /**
+   * A `dumpsys` failure — non-zero exit, or the `exec` call itself
+   * rejecting — is treated as "not yet confirmed ready" rather than a
+   * fatal error: it simply consumes one poll attempt within the same
+   * bounded wait (acceptance.md §D.1 edge case: "준비 신호 조회 자체가
+   * 실패 → 준비 확인 불가이므로 브로드캐스트하지 않는다"). Exhausting
+   * every attempt this way still ends in `waitForImeBindingReady`
+   * returning `false`, which `inputText` turns into the same graceful
+   * `ImeBindTimeoutError` — no broadcast is ever sent on an unconfirmed
+   * readiness state.
+   */
+  private async probeImeBindingState(serial: string): Promise<InputMethodBindingState | undefined> {
+    try {
+      const result = await this.exec(["-s", serial, "shell", "dumpsys", "input_method"]);
+      if (result.exitCode !== 0) return undefined;
+      return parseInputMethodBindingState(result.stdout.toString("utf-8"));
+    } catch {
+      return undefined;
+    }
   }
 
   private async broadcastBase64Text(serial: string, text: string): Promise<void> {

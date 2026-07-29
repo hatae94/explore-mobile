@@ -145,7 +145,7 @@ _<pending run-phase — manager-develop 소유>_
 
 ## §E.2-M11 개정(0.3.0) M11 — `launch` 명시적 컴포넌트 시작 (2026-07-29)
 
-> §E.4-b 마감 이후 2026-07-29 실기기 검증(`.moai/reports/android-verification/remaining-commands-android-2026-07-29.md`)이 결함 2건을 드러냈고, 개정 0.3.0(`ba3b563`)이 spec.md/plan.md/acceptance.md를 정정했다. 본 절은 그 개정의 **M11만** 마감한다(M10 — IME 바인딩 준비 대기 — 는 별도 마일스톤·별도 커밋이며 아직 미착수). progress.md의 `version`/`status`가 spec.md/plan.md/acceptance.md(0.3.0/in-progress)에서 뒤처져 있던 드리프트도 본 커밋에서 정합화한다.
+> §E.4-b 마감 이후 2026-07-29 실기기 검증(`.moai/reports/android-verification/remaining-commands-android-2026-07-29.md`)이 결함 2건을 드러냈고, 개정 0.3.0(`ba3b563`)이 spec.md/plan.md/acceptance.md를 정정했다. 본 절은 그 개정의 **M11만** 마감한다(M10 — IME 바인딩 준비 대기 — 은 별도 마일스톤·별도 커밋이다; M10의 mock 레그 마감은 아래 `§E.2-M10`을 보라 — 기기 잠김으로 실측 레그는 아직 미완이다). progress.md의 `version`/`status`가 spec.md/plan.md/acceptance.md(0.3.0/in-progress)에서 뒤처져 있던 드리프트도 본 커밋에서 정합화한다.
 
 ### 산출물
 
@@ -220,3 +220,77 @@ $ pnpm build       → exit 0
 ### 프롬프트 사전 기술 중 틀린 것으로 확인된 항목
 
 없음. `--user` 불필요, 성공 2행/마지막 비어있지 않은 행, 실패 단일 행 `No activity found`+exit 0, 재개 경고+exit 0은 실기기 값과 정확히 일치했다(재개 경고 문구는 `.moai/reports/.../remaining-commands-android-2026-07-29.md` §4가 인용한 것과 달리 이번 관측에서는 "intent has been delivered to currently running top-most instance." — spec.md §C.3-④가 인용한 "its current task has been brought to the front"와 표현이 다르지만 **둘 다 Android가 문맥에 따라 내는 별개의 재개-경고 변형**이며 재개/exit-0 의미는 동일하다).
+
+## §E.2-M10 개정(0.3.0) M10 — IME 바인딩 준비 대기 (2026-07-29)
+
+> M11(§E.2-M11, `994b881`)과 완전히 독립인 별도 커밋(§F.10). `launchApp`/`launcher-resolve-parser.ts`/`launch-errors.ts`는 전혀 건드리지 않았다. **기기가 보안 잠금(`isKeyguardShowing=true`, PIN 없음) 상태라 실측 레그(AC-029/030 실기기·AC-032)는 이번 커밋에서 수행하지 못했다** — mock 레그만 마감하고, 실측이 필요한 3건은 아래에서 명시적으로 미기록으로 남긴다.
+
+### 산출물
+
+- **`src/backend/ime-binding-parser.ts`**(신규, 순수 함수) — `dumpsys input_method` stdout → `{bound, currentImeId}`. `mBoundToMethod`가 덤프에 정확히 1회 등장한다는 전제(spec.md §C.3-⑥)로 모호성 없이 파싱하며, 마커 부재 시 `bound: false` 기본값(미확인 상태를 준비완료로 취급하지 않음 — 이 결함 부류를 되풀이하지 않기 위한 안전한 기본값).
+- **`src/backend/ime-errors.ts`**(수정) — `ImeBindTimeoutError` 신규 타입(`serial` + 메시지에 `timeoutMs` 포함). 기존 `ImeRestoreFailedError`/`AdbKeyboardInstallFailedError`와 같은 자리·같은 형태.
+- **`src/backend/adb-backend.ts` `AdbBackend.inputText`**(수정) — cold 경로(`currentIme !== ADBKEYBOARD_IME_ID`)에서 `setImeToAdbKeyboard`(및 원래 IME 디스크 영속) 이후·`broadcastBase64Text` 이전에 `waitForImeBindingReady` 삽입. 타임아웃 시 브로드캐스트를 전혀 호출하지 않고 `ImeBindTimeoutError`를 throw한다. warm 경로(이미 ADBKeyBoard가 활성 IME)는 무변경 — 대기 0회, 즉시 전송. 생성자에 4번째 선택 인자 `sleep`을 추가했다(기본값은 실제 `setTimeout` 기반, 테스트는 `noRealDelay`를 주입) — 기존 3-인자 생성 호출 59건 이상이 하위호환으로 그대로 통과한다.
+- **`src/cli/commands/text.ts`**(수정) — `ImeBindTimeoutError` → `IME_BIND_TIMEOUT` JSON 코드 매핑(`details.serial` 포함), 기존 두 `instanceof` 분기와 동일한 형태.
+- 테스트: `src/backend/ime-binding-parser.test.ts`(신규 7건) + `src/backend/adb-backend.test.ts`(신규 `describe` 블록 6건: 다중 폴링 성공, dumpsys 비정상 종료 재시도, dumpsys `exec()` reject 재시도, warm 무대기, 타임아웃 미전송, 폴링 횟수 상한 확인 — + 기존 cold-path 테스트 8건의 call-count/nth-call 값을 dumpsys 삽입에 맞춰 갱신 + `createDeviceImeSimulator`와 커스텀 mock 2곳에 `dumpsys` 분기 추가) + `src/cli/router.test.ts`(신규 1건 + "세션 기반 IME 통합" 실 `AdbBackend` 테스트 4건에 `dumpsys` 분기 추가).
+
+### 판정 근거 — 대기 상한은 설계 선택이다
+
+`IME_BIND_TIMEOUT_MS = 5,000`(SPEC 권고값 그대로). `MAX_DURATION_MS`(`src/cli/validators.ts:47-64`) 선례와 동일한 부류의 독블록으로 근거를 남겼다(`adb-backend.ts` 상수 정의 지점) — 목적은 "무한 대기 금지"뿐이고 이 값은 기기 거동을 주장하지 않는다. spec.md §C.3-⑦의 "cold 사이클에서 대략 adb 왕복 1회 안에 `mBoundToMethod`가 뒤집힌다"는 관측은 이 상한이 넉넉해도 됨을 뒷받침할 뿐 — 같은 §C.3-⑦이 "이 관측이 상한 값을 정하지는 않는다"고 명시한다. 폴링 간격은 250ms(구현 재량, plan.md §F 명시) — `webview/proxy-service.ts`의 `START_POLL_INTERVAL_MS` 선례와 동일 값을 재사용했다. `IME_BIND_MAX_POLL_ATTEMPTS = ceil(5000/250) = 20`.
+
+### 준비 술어 — `mCurId` 결합항에 대한 결정 (AC-ANDROID-032)
+
+파서는 `bound`와 `currentImeId` 둘 다 추출하지만, `waitForImeBindingReady`의 준비 술어는 **`bound` 단독**이며 `currentImeId === ADBKEYBOARD_IME_ID`를 결합하지 않는다. 근거:
+
+1. 결정 실험(spec.md §C.3-⑧)은 포커스·사이클·오라클을 고정한 채 `mBoundToMethod` 플래그만 변화시켰고, 5회 분리 실험 전체에서 성공/실패가 그 플래그와 정확히 일치했다 — `currentImeId`는 변수로 다뤄지지 않았다.
+2. `currentImeId`가 미바인딩(`bound=false`) 창에서 어떤 값을 갖는지는 2026-07-29 검증에서 **측정되지 않았다**(spec.md §C.3-⑩, 명시적 미측정 — "주장 경계"로 기록됨).
+3. 결합항을 추가하면 실측되지 않은 전제를 코드에 넣는 것이 된다. acceptance.md AC-ANDROID-032가 명시적으로 인정하는 대안 — "결합항 없이 바인딩 플래그만으로 술어를 구성하기로 결정했다면, 그 결정과 근거를 기록하는 것으로 충족된다" — 를 택했다.
+
+이 결정은 기기 관측이 아니라 §C.3-⑧ 실험 설계의 재검토에 근거한다. 실기기 재검증(AC-032, 기기 잠김으로 이번 커밋에서 미수행)이 이 전제를 반증하면 정정 대상이다.
+
+### AC 판정 매트릭스 (AC-ANDROID-029~032)
+
+| AC ID | 요약 | 검증 방식 | Status | Actual Output |
+|-------|------|-----------|--------|----------------|
+| AC-ANDROID-029 | cold 경로 비-ASCII `text` 착지 [결함 회귀 증명] | 실측 필수 | **NOT YET VERIFIED — 기기 잠김** | mock 레그만 완료(아래 "mock 레그가 실제로 단언하는 것" 참고). 필요한 관측: `reset` 직후 미설치 상태에서 `node dist/cli/bin.js text "알림" --device <serial>` 실행 → 스크린샷으로 입력란에 "알림"이 착지했는지 확인(유효 오라클은 스크린샷뿐 — `mServedView`는 성공 시에도 `null`이라 무효, spec.md §C.3-⑨). `doctor` 직후 첫 입력 경로도 별도로 확인 필요(spec.md §C.3-⑧이 두 영향 경로를 구분함). |
+| AC-ANDROID-030 | warm 경로 불변 | unit(mock) + 실측 | **PASS (unit/mock) — 실측 미검증** | mock: `adb-backend.test.ts` "warm path performs NO dumpsys poll at all" — `dumpsys` 호출 0회, `ime enable`/`set` 호출 0회, 총 3회 호출(settings get + broadcast + hide)만 발생함을 확인. 실측(이미 바인딩된 ADBKeyBoard 상태에서 문자열이 실제로 착지하는지)은 기기 잠김으로 미실행. |
+| AC-ANDROID-031 | 바인딩 대기 타임아웃 → 미전송 + `ok:false` [응답 계약 변경] | unit(mock) | **PASS** | `adb-backend.test.ts` "throws ImeBindTimeoutError and sends NO broadcast..." — `am broadcast` argv가 mock exec에 **0회** 도달함을 직접 단언, `ImeBindTimeoutError` throw 확인(`.serial` 필드 포함), 원래 IME의 디스크 영속이 타임아웃 후에도 유지됨을 확인(`getTrackedOriginalIme`, REQ-IDEMP-004 불변). `router.test.ts` "surfaces an ImeBindTimeoutError as a dedicated IME_BIND_TIMEOUT envelope..." — CLI 봉투 `ok:false` + `IME_BIND_TIMEOUT` 코드 + `details.serial` 확인. acceptance.md §D.4가 이 AC를 mock 단독으로 완전히 충족 가능하다고 명시하므로 실측이 필요 없다. |
+| AC-ANDROID-032 | 준비 술어의 IME-id 결합항 실기기 확인 [미측정 항목] | 실측 필수 | **NOT YET VERIFIED — 기기 잠김** | 위 "준비 술어" 절에 결정(`bound` 단독, 결합항 미사용)과 근거를 기록했다 — acceptance.md가 명시한 "산출물은 코드가 아니라 관측 기록" 대안 중 결정-기록 경로를 택했다. 완전한 PASS는 여전히 실기기 관측을 요구한다: cold 사이클의 미바인딩 창(`mBoundToMethod=false`)에서 `adb shell dumpsys input_method`의 `mCurId` 값을 직접 관측·기록해야 한다. |
+
+### mock 레그가 실제로 단언하는 것
+
+- **cold 경로, 다중 폴링 후 성공**: "polls dumpsys until bound=true, THEN sends the broadcast" — `bound=false` 2회 → `bound=true` 1회 → 그 다음에만 `am broadcast` 호출됨을 nth-call 순서로 단언.
+- **`dumpsys` 조회 자체의 실패(비-zero exit code 및 `exec()` reject 양쪽)**: 준비 미확인으로 처리되어 재시도되고, 같은 bounded wait 안에서 궁극적으로 성공함을 확인(acceptance.md §D.1 엣지 케이스: "준비 신호 조회 자체가 실패 → 브로드캐스트하지 않는다"를 재시도-후-성공/재시도-후-타임아웃 양쪽으로 커버).
+- **warm 경로 무변경**: `dumpsys` 호출 0회, `ime enable`/`set` 호출 0회.
+- **타임아웃 → 미전송**: `am broadcast` argv가 mock exec에 **도달하지 않음**을 직접 단언 — 프롬프트가 지정한 "mock-assertable core requirement".
+- **폴링 횟수 상한**: 20회(`ceil(5000/250)`) 이하로 유한하게 종료됨을 확인(무한 대기 없음).
+
+### 회귀 없음 확인
+
+```
+$ pnpm test
+ Test Files  31 passed (31)
+      Tests  679 passed (679)          # 665(M11 마감 기준선) + 14(M10 신규: 파서 7 + adb-backend 6 + router 1)
+$ pnpm typecheck   → exit 0
+$ pnpm build       → exit 0
+$ pnpm test:coverage (발췌)
+ adb-backend.ts          97.67% stmt / 92.85% branch / 92.3% funcs / 99.18% lines
+   (미커버: L127 — defaultSleep의 실제 setTimeout 본문. webview/proxy-service.ts의
+    defaultSleep과 동일한, 주입 가능한 실 타이머의 기존 수용 패턴)
+ ime-binding-parser.ts   100% stmt (branches: 0/0, 분기 없음)
+ ime-errors.ts           100% stmt (branches: 0/0, 분기 없음)
+```
+
+### 기기 상태 (device etiquette)
+
+**본 M10 구현·검증은 기기에 어떤 `adb` 명령도 전송하지 않았다** — 전부 mock `exec` 기반 unit test다. 프롬프트가 명시한 대로 기기가 보안 잠금(`isKeyguardShowing=true`, `mWakefulness=Dozing`) 상태이고 PIN 자격 증명이 없어 잠금 해제를 시도하지 않았으며, `power`/`volume_*`/wake 키 전송도 시도하지 않았다. 기기 기준선(기본 IME=HoneyBoard / ADBKeyBoard 미설치 / `~/.cache/explore-mobile/ime-sessions.json={}`)은 이번 세션에서 전혀 건드리지 않았으므로 그대로 유지된다 — 별도 원상복구가 필요 없다.
+
+### Residual-risk (§verification-claim-integrity 5-섹션 형식)
+
+- **Gap**: AC-029(cold 착지 실측)와 AC-032(`mCurId` 결합항 실기기 확인)는 기기 잠김으로 완전히 미검증이다. mock 레그는 "구성된 argv의 순서·시점이 옳다"만 증명하고, "기기가 실제로 그렇게 반응한다"는 증명하지 못한다 — acceptance.md §D.4가 이미 명시한 mock의 사정거리 한계이며, 결함 2 자체가 이 한계 때문에 발생했었다(같은 함정을 mock으로 "다 검증됐다"고 주장하지 않도록 주의했다).
+- **Residual**: `waitForImeBindingReady`의 준비 술어(`bound` 단독)가 §C.3-⑧의 5회 실험 범위를 벗어난 실기기 조건(예: 훨씬 느린 기기, 다른 Android 버전의 `dumpsys` 출력 형식 차이)에서도 유효한지는 미확인이다. `IME_BIND_TIMEOUT_MS=5000`이 실제로 "충분히 넉넉한지"도 이번 세션에서 실측되지 않았다 — §C.3-⑦의 "대략 1회 왕복" 관측이 유일한 간접 근거다.
+
+### 프롬프트 사전 기술 중 틀린 것으로 확인된 항목
+
+- **"warm 경로는 준비 신호 조회가 최대 1회"라는 acceptance.md AC-030 문구**: 실제 구현은 warm 경로에서 `dumpsys` 조회를 **0회** 수행한다 — "1회 이하"이므로 문구와 모순되지는 않지만, 같은 AC의 앞 문장("IME 전환도 대기도 수행하지 않고 즉시")과 더 정확히 일치하는 "0회" 해석을 택했다. 코드나 실측이 틀렸다는 의미는 아니고, AC 문구의 여지를 어떻게 해석했는지 기록해 둔다.
+- 그 외 프롬프트 서술(측정된 사실, claim boundary, mock leg의 사정거리, "N일선 없이 넣지 말라"는 지시)은 코드로 확인해 틀린 것이 없었다.
+- 프롬프트가 예상한 대로: 기기가 잠겨 있어 실측 3건(AC-029/030 실측 레그·AC-032)을 완료하지 못했다 — 예상된 제약이며 새로 발견된 사실은 아니다.

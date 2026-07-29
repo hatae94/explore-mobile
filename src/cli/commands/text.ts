@@ -23,7 +23,7 @@
  */
 
 import { elementCenter, findElement, type ElementSelector } from "../../normalize/element-query.js";
-import { AdbKeyboardInstallFailedError, ImeRestoreFailedError } from "../../backend/ime-errors.js";
+import { AdbKeyboardInstallFailedError, ImeBindTimeoutError, ImeRestoreFailedError } from "../../backend/ime-errors.js";
 import type { DeviceBackend } from "../../schema/device-backend.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
@@ -116,6 +116,13 @@ export const textCommand: CommandHandler = async (args, backend) => {
       // failure classes (PM_LIST_FAILED / APK_DOWNLOAD_FAILED /
       // APK_INSTALL_FAILED) instead of degrading to BACKEND_COMMAND_FAILED.
       return failure("text", err.code, err.message);
+    }
+    if (err instanceof ImeBindTimeoutError) {
+      // REQ-INPUT-004 개정 0.3.0 / AC-ANDROID-031: an intended response-
+      // contract change — the cold path that used to silently return
+      // ok:true while losing the input now returns ok:false with a
+      // dedicated code, instead of degrading to BACKEND_COMMAND_FAILED.
+      return failure("text", "IME_BIND_TIMEOUT", err.message, { serial: err.serial });
     }
     return failure("text", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }

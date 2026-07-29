@@ -8,7 +8,7 @@ import type { AdbExecResult, AdbExecutor } from "../backend/adb-executor.js";
 import type { ApkAcquirer } from "../backend/apk-downloader.js";
 import { AdbDoctor } from "../backend/doctor.js";
 import { IdbDoctor } from "../backend/idb-doctor.js";
-import { AdbKeyboardInstallFailedError, ImeRestoreFailedError } from "../backend/ime-errors.js";
+import { AdbKeyboardInstallFailedError, ImeBindTimeoutError, ImeRestoreFailedError } from "../backend/ime-errors.js";
 import { UnsupportedKeyOnIosError } from "../backend/idb-errors.js";
 import { LauncherActivityNotFoundError } from "../backend/launch-errors.js";
 import { ImeSessionStore } from "../backend/ime-session-store.js";
@@ -733,6 +733,21 @@ describe("runCli", () => {
       expect(backend.inputText).not.toHaveBeenCalled();
     });
 
+    it("surfaces an ImeBindTimeoutError as a dedicated IME_BIND_TIMEOUT envelope, ok:false (REQ-INPUT-004 개정 0.3.0, AC-ANDROID-031)", async () => {
+      const backend = createMockBackend();
+      (backend.inputText as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ImeBindTimeoutError("R58N90ABCDE", 5000),
+      );
+
+      const result = await runCli(["text", "알림"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("IME_BIND_TIMEOUT");
+        expect(result.error.details?.["serial"]).toBe("R58N90ABCDE");
+      }
+    });
+
     it("reports originalImeId as null when the ImeRestoreFailedError carries no known id", async () => {
       const backend = createMockBackend();
       (backend.inputText as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
@@ -1062,6 +1077,12 @@ describe("runCli", () => {
           if (args[3] === "settings") {
             return { stdout: Buffer.from(`${originalIme}\n`, "utf-8"), stderr: Buffer.alloc(0), exitCode: 0 };
           }
+          if (args[3] === "dumpsys") {
+            // Binding-readiness poll (REQ-INPUT-004 개정 0.3.0) — bound on
+            // the first poll so these pre-existing integration tests are
+            // unaffected in shape, only in call count.
+            return { stdout: Buffer.from("mBoundToMethod=true\n", "utf-8"), stderr: Buffer.alloc(0), exitCode: 0 };
+          }
           return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 };
         });
 
@@ -1106,6 +1127,12 @@ describe("runCli", () => {
           if (args[3] === "settings") {
             return { stdout: Buffer.from(`${originalIme}\n`, "utf-8"), stderr: Buffer.alloc(0), exitCode: 0 };
           }
+          if (args[3] === "dumpsys") {
+            // Binding-readiness poll (REQ-INPUT-004 개정 0.3.0) — bound on
+            // the first poll so these pre-existing integration tests are
+            // unaffected in shape, only in call count.
+            return { stdout: Buffer.from("mBoundToMethod=true\n", "utf-8"), stderr: Buffer.alloc(0), exitCode: 0 };
+          }
           return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 };
         });
 
@@ -1140,6 +1167,12 @@ describe("runCli", () => {
           }
           if (args[3] === "settings") {
             return { stdout: Buffer.from(`${originalIme}\n`, "utf-8"), stderr: Buffer.alloc(0), exitCode: 0 };
+          }
+          if (args[3] === "dumpsys") {
+            // Binding-readiness poll (REQ-INPUT-004 개정 0.3.0) — bound on
+            // the first poll so these pre-existing integration tests are
+            // unaffected in shape, only in call count.
+            return { stdout: Buffer.from("mBoundToMethod=true\n", "utf-8"), stderr: Buffer.alloc(0), exitCode: 0 };
           }
           return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 };
         });
@@ -1189,6 +1222,12 @@ describe("runCli", () => {
           }
           if (args[3] === "ime" && args[4] === "set" && args[5] === originalIme) {
             return { stdout: Buffer.alloc(0), stderr: Buffer.from("adb: ime set rejected", "utf-8"), exitCode: 1 };
+          }
+          if (args[3] === "dumpsys") {
+            // Binding-readiness poll (REQ-INPUT-004 개정 0.3.0) — bound on
+            // the first poll so this pre-existing integration test is
+            // unaffected in shape, only in call count.
+            return { stdout: Buffer.from("mBoundToMethod=true\n", "utf-8"), stderr: Buffer.alloc(0), exitCode: 0 };
           }
           return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 };
         });

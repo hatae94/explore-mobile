@@ -8,7 +8,7 @@ import type { AdbExecResult, AdbExecutor } from "./adb-executor.js";
 import { AdbBackend } from "./adb-backend.js";
 import { ADBKEYBOARD_IME_ID } from "./adbkeyboard.js";
 import type { ApkAcquirer } from "./apk-downloader.js";
-import { AdbKeyboardInstallFailedError } from "./ime-errors.js";
+import { AdbKeyboardInstallFailedError, ImeBindTimeoutError } from "./ime-errors.js";
 import { ImeSessionStore } from "./ime-session-store.js";
 import { LauncherActivityNotFoundError } from "./launch-errors.js";
 import { normalizeUiAutomatorXml } from "../normalize/uiautomator.js";
@@ -24,6 +24,16 @@ function okBinary(bytes: Buffer): AdbExecResult {
 function fail(stderr: string, exitCode = 1): AdbExecResult {
   return { stdout: Buffer.alloc(0), stderr: Buffer.from(stderr, "utf-8"), exitCode };
 }
+
+/** `dumpsys input_method` stdout fixture for the IME-binding-readiness poll (REQ-INPUT-004 개정 0.3.0, M10). */
+function dumpsysBindingState(bound: boolean): AdbExecResult {
+  return ok(`mCurId=${ADBKEYBOARD_IME_ID}\nmBoundToMethod=${bound}\n`);
+}
+
+/** A no-op sleep, injected into `AdbBackend`'s constructor so tests exercising the bounded poll never wait out the real inter-poll delay. */
+const noRealDelay = async (): Promise<void> => {
+  // Intentionally instant — see AdbBackend's `sleep` constructor parameter.
+};
 
 /**
  * Simulates a real device's IME state across (possibly several, process-
@@ -46,6 +56,13 @@ function createDeviceImeSimulator(initialIme: string, options?: { adbKeyboardIns
     if (args[3] === "ime" && args[4] === "set") {
       currentIme = args[5] as string;
       return ok("");
+    }
+    if (args[3] === "dumpsys" && args[4] === "input_method") {
+      // Idealized instant-bound device (real hardware measured roughly one
+      // adb round-trip, spec.md §C.3-⑦) — always reports bound on the
+      // first poll, so tests using this simulator exercise exactly one
+      // dumpsys call on the cold path.
+      return ok(`mCurId=${currentIme}\nmBoundToMethod=true\n`);
     }
     return ok("");
   });
@@ -653,13 +670,16 @@ describe("AdbBackend", () => {
     function okFirstSwitchSequence(originalIme = "com.google.android.inputmethod.latin/.LatinIME") {
       // settings get (current/original IME, NOT yet ADBKeyBoard) -> pm
       // list packages (self-heal check, already installed) -> ime enable
-      // -> ime set (ADBKeyBoard) -> am broadcast -> keyevent hide
+      // -> ime set (ADBKeyBoard) -> dumpsys input_method (binding-readiness
+      // poll, REQ-INPUT-004 개정 0.3.0, bound on the first poll) -> am
+      // broadcast -> keyevent hide
       return vi
         .fn<AdbExecutor>()
         .mockResolvedValueOnce(ok(`${originalIme}\n`)) // settings get secure default_input_method
         .mockResolvedValueOnce(ok("package:com.android.adbkeyboard\n")) // pm list packages (already installed)
         .mockResolvedValueOnce(ok("")) // ime enable ADBKeyBoard
         .mockResolvedValueOnce(ok("")) // ime set ADBKeyBoard
+        .mockResolvedValueOnce(dumpsysBindingState(true)) // dumpsys input_method (bound on first poll)
         .mockResolvedValueOnce(ok("")) // am broadcast ADB_INPUT_B64
         .mockResolvedValueOnce(ok("")); // keyevent 111 (keyboard hide)
     }
@@ -670,7 +690,7 @@ describe("AdbBackend", () => {
 
       await backend.inputText("R58N90ABCDE", "😸");
 
-      expect(exec).toHaveBeenCalledTimes(6);
+      expect(exec).toHaveBeenCalledTimes(7);
     });
 
     it("reads the device's CURRENT IME first, records it as the original, switches to ADBKeyBoard, persists to disk, broadcasts base64 UTF-8, then hides the keyboard — WITHOUT restoring the original IME per-call (REQ-INPUT-004 disk-persistence fix)", async () => {
@@ -709,7 +729,10 @@ describe("AdbBackend", () => {
         "set",
         "com.android.adbkeyboard/.AdbIME",
       ]);
-      expect(exec).toHaveBeenNthCalledWith(5, [
+      // 5th call is the binding-readiness poll (REQ-INPUT-004 개정 0.3.0) —
+      // it must happen AFTER the switch and BEFORE the broadcast.
+      expect(exec).toHaveBeenNthCalledWith(5, ["-s", "R58N90ABCDE", "shell", "dumpsys", "input_method"]);
+      expect(exec).toHaveBeenNthCalledWith(6, [
         "-s",
         "R58N90ABCDE",
         "shell",
@@ -721,8 +744,8 @@ describe("AdbBackend", () => {
         "msg",
         expectedBase64,
       ]);
-      // 6th call is the keyboard-hide keyevent — NEVER a restore `ime set`.
-      expect(exec).toHaveBeenNthCalledWith(6, ["-s", "R58N90ABCDE", "shell", "input", "keyevent", "111"]);
+      // 7th call is the keyboard-hide keyevent — NEVER a restore `ime set`.
+      expect(exec).toHaveBeenNthCalledWith(7, ["-s", "R58N90ABCDE", "shell", "input", "keyevent", "111"]);
 
       // The session stays active on disk: the original IME is persisted,
       // ready to be restored only by `reset` (see reset.ts / doctor.ts tests).
@@ -738,7 +761,7 @@ describe("AdbBackend", () => {
       const backend = new AdbBackend(simulator.exec, undefined, new ImeSessionStore(imeStorePath));
 
       await backend.inputText("R58N90ABCDE", "안녕");
-      expect(simulator.exec).toHaveBeenCalledTimes(6); // settings get, pm list, ime enable, ime set, broadcast, hide
+      expect(simulator.exec).toHaveBeenCalledTimes(7); // settings get, pm list, ime enable, ime set, dumpsys (bind poll), broadcast, hide
 
       simulator.exec.mockClear();
       await backend.inputText("R58N90ABCDE", "반가워");
@@ -810,14 +833,15 @@ describe("AdbBackend", () => {
         .mockResolvedValueOnce(ok("package:com.android.adbkeyboard\n")) // pm list packages (already installed)
         .mockResolvedValueOnce(ok("")) // ime enable
         .mockResolvedValueOnce(ok("")) // ime set ADBKeyBoard
+        .mockResolvedValueOnce(dumpsysBindingState(true)) // dumpsys input_method (bound on first poll)
         .mockResolvedValueOnce(fail("adb: broadcast failed", 1)); // am broadcast FAILS
 
       const backend = new AdbBackend(exec, undefined, new ImeSessionStore(imeStorePath));
 
       await expect(backend.inputText("R58N90ABCDE", "안녕")).rejects.toThrow(/broadcast failed/);
 
-      // No 6th call: no restore, no keyboard-hide attempted after a failed send.
-      expect(exec).toHaveBeenCalledTimes(5);
+      // No 7th call: no restore, no keyboard-hide attempted after a failed send.
+      expect(exec).toHaveBeenCalledTimes(6);
       // The switch itself succeeded, so the session remains persisted to
       // disk as active — a retry on this serial will skip re-switching.
       await expect(backend.getTrackedOriginalIme("R58N90ABCDE")).resolves.toBe(originalIme);
@@ -845,6 +869,7 @@ describe("AdbBackend", () => {
         .mockResolvedValueOnce(ok("package:com.android.adbkeyboard\n")) // pm list packages (already installed)
         .mockResolvedValueOnce(ok("")) // ime enable
         .mockResolvedValueOnce(ok("")) // ime set ADBKeyBoard
+        .mockResolvedValueOnce(dumpsysBindingState(true)) // dumpsys input_method (bound on first poll)
         .mockResolvedValueOnce(ok("")) // am broadcast succeeds
         .mockResolvedValueOnce(ok("")); // keyevent hide
 
@@ -852,10 +877,150 @@ describe("AdbBackend", () => {
 
       await expect(backend.inputText("R58N90ABCDE", "안녕")).resolves.toBeUndefined();
 
-      expect(exec).toHaveBeenCalledTimes(6);
+      expect(exec).toHaveBeenCalledTimes(7);
       // Persisted as an active session with an unknown (empty) original id —
       // `getTrackedOriginalIme` resolves to "" (defined, but empty), not undefined.
       await expect(backend.getTrackedOriginalIme("R58N90ABCDE")).resolves.toBe("");
+    });
+  });
+
+  describe("inputText — IME binding-readiness wait before broadcast (REQ-INPUT-004 개정 0.3.0, M10, AC-ANDROID-029/030/031)", () => {
+    function coldSwitchThenPolls(pollResults: AdbExecResult[], originalIme = "com.google.android.inputmethod.latin/.LatinIME") {
+      const mock = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok(`${originalIme}\n`)) // settings get secure default_input_method
+        .mockResolvedValueOnce(ok("package:com.android.adbkeyboard\n")) // pm list packages (already installed)
+        .mockResolvedValueOnce(ok("")) // ime enable ADBKeyBoard
+        .mockResolvedValueOnce(ok("")); // ime set ADBKeyBoard
+      for (const pollResult of pollResults) {
+        mock.mockResolvedValueOnce(pollResult);
+      }
+      return mock;
+    }
+
+    it("polls dumpsys until bound=true, THEN sends the broadcast — cold path (AC-ANDROID-029 mock leg)", async () => {
+      const exec = coldSwitchThenPolls([
+        dumpsysBindingState(false), // poll 1: not yet bound
+        dumpsysBindingState(false), // poll 2: still not bound
+        dumpsysBindingState(true), // poll 3: bound — proceed
+        ok(""), // am broadcast
+        ok(""), // keyevent hide
+      ]);
+      const backend = new AdbBackend(exec, undefined, new ImeSessionStore(imeStorePath), noRealDelay);
+
+      await backend.inputText("R58N90ABCDE", "알림");
+
+      // 4 switch calls + 3 dumpsys polls + broadcast + hide = 9.
+      expect(exec).toHaveBeenCalledTimes(9);
+      expect(exec).toHaveBeenNthCalledWith(5, ["-s", "R58N90ABCDE", "shell", "dumpsys", "input_method"]);
+      expect(exec).toHaveBeenNthCalledWith(6, ["-s", "R58N90ABCDE", "shell", "dumpsys", "input_method"]);
+      expect(exec).toHaveBeenNthCalledWith(7, ["-s", "R58N90ABCDE", "shell", "dumpsys", "input_method"]);
+      expect(exec).toHaveBeenNthCalledWith(8, [
+        "-s",
+        "R58N90ABCDE",
+        "shell",
+        "am",
+        "broadcast",
+        "-a",
+        "ADB_INPUT_B64",
+        "--es",
+        "msg",
+        Buffer.from("알림", "utf-8").toString("base64"),
+      ]);
+    });
+
+    it("a dumpsys query failure (non-zero exit) during polling is treated as not-yet-ready and retried within the same bounded wait (acceptance.md §D.1 edge case)", async () => {
+      const exec = coldSwitchThenPolls([
+        fail("adb: dumpsys unavailable", 1), // poll 1: the readiness query itself fails
+        dumpsysBindingState(true), // poll 2: succeeds, bound
+        ok(""), // am broadcast
+        ok(""), // keyevent hide
+      ]);
+      const backend = new AdbBackend(exec, undefined, new ImeSessionStore(imeStorePath), noRealDelay);
+
+      await expect(backend.inputText("R58N90ABCDE", "알림")).resolves.toBeUndefined();
+
+      expect(exec).toHaveBeenCalledTimes(8);
+    });
+
+    it("a dumpsys exec() REJECTION (not just a non-zero exit) during polling is also treated as not-yet-ready and retried", async () => {
+      const exec = coldSwitchThenPolls([]); // switch sequence only; dumpsys handled below
+      exec
+        .mockRejectedValueOnce(new Error("spawn adb ENOENT")) // poll 1: the exec() call itself rejects
+        .mockResolvedValueOnce(dumpsysBindingState(true)) // poll 2: succeeds, bound
+        .mockResolvedValueOnce(ok("")) // am broadcast
+        .mockResolvedValueOnce(ok("")); // keyevent hide
+      const backend = new AdbBackend(exec, undefined, new ImeSessionStore(imeStorePath), noRealDelay);
+
+      await expect(backend.inputText("R58N90ABCDE", "알림")).resolves.toBeUndefined();
+
+      expect(exec).toHaveBeenCalledTimes(8);
+    });
+
+    it("warm path performs NO dumpsys poll at all — ADBKeyBoard already active and bound sends immediately (AC-ANDROID-030)", async () => {
+      const simulator = createDeviceImeSimulator(ADBKEYBOARD_IME_ID); // already ADBKeyBoard = warm from the start
+      const backend = new AdbBackend(simulator.exec, undefined, new ImeSessionStore(imeStorePath), noRealDelay);
+
+      await backend.inputText("R58N90ABCDE", "카메라");
+
+      const dumpsysCalls = simulator.exec.mock.calls.filter(([callArgs]) => callArgs[3] === "dumpsys");
+      expect(dumpsysCalls).toHaveLength(0);
+      const imeSwitchCalls = simulator.exec.mock.calls.filter(
+        ([callArgs]) => callArgs[3] === "ime" && (callArgs[4] === "enable" || callArgs[4] === "set"),
+      );
+      expect(imeSwitchCalls).toHaveLength(0);
+      // settings get (live current-IME check) + broadcast + hide = 3, no wait.
+      expect(simulator.exec).toHaveBeenCalledTimes(3);
+    });
+
+    it("throws ImeBindTimeoutError and sends NO broadcast when the binding never reports ready within the bounded wait (AC-ANDROID-031 — the mock-assertable core requirement)", async () => {
+      const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
+      const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        if (args[3] === "settings") return ok(`${originalIme}\n`);
+        if (args[3] === "pm" && args[4] === "list") return ok("package:com.android.adbkeyboard\n");
+        if (args[3] === "ime") return ok(""); // enable / set both succeed
+        if (args[3] === "dumpsys") return dumpsysBindingState(false); // NEVER reports bound
+        return ok("");
+      });
+      const backend = new AdbBackend(exec, undefined, new ImeSessionStore(imeStorePath), noRealDelay);
+
+      const thrown: unknown = await backend.inputText("R58N90ABCDE", "알림").catch((err: unknown) => err);
+
+      expect(thrown).toBeInstanceOf(ImeBindTimeoutError);
+      expect((thrown as ImeBindTimeoutError).serial).toBe("R58N90ABCDE");
+
+      // The mock-assertable core requirement: `am broadcast` argv must
+      // NEVER reach the mock exec.
+      const broadcastCalls = exec.mock.calls.filter(([callArgs]) => callArgs[3] === "am" && callArgs[4] === "broadcast");
+      expect(broadcastCalls).toHaveLength(0);
+      // The keyboard-hide keyevent is also never attempted after a timeout.
+      const hideCalls = exec.mock.calls.filter(
+        ([callArgs]) => callArgs[3] === "input" && callArgs[4] === "keyevent",
+      );
+      expect(hideCalls).toHaveLength(0);
+
+      // REQ-IDEMP-004 invariant: the original IME is STILL persisted to
+      // disk even though the send itself failed — `reset`/`doctor --clean`
+      // can still restore it.
+      await expect(backend.getTrackedOriginalIme("R58N90ABCDE")).resolves.toBe(originalIme);
+    });
+
+    it("the bounded wait polls a fixed, finite number of times (design-choice ceiling, not a measured value — MAX_DURATION_MS precedent)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        if (args[3] === "settings") return ok("com.example/.Original\n");
+        if (args[3] === "pm" && args[4] === "list") return ok("package:com.android.adbkeyboard\n");
+        if (args[3] === "ime") return ok("");
+        if (args[3] === "dumpsys") return dumpsysBindingState(false);
+        return ok("");
+      });
+      const backend = new AdbBackend(exec, undefined, new ImeSessionStore(imeStorePath), noRealDelay);
+
+      await expect(backend.inputText("R58N90ABCDE", "알림")).rejects.toBeInstanceOf(ImeBindTimeoutError);
+
+      const dumpsysCalls = exec.mock.calls.filter(([callArgs]) => callArgs[3] === "dumpsys");
+      // Bounded and finite: never an infinite/unbounded number of polls.
+      expect(dumpsysCalls.length).toBeGreaterThan(0);
+      expect(dumpsysCalls.length).toBeLessThanOrEqual(20); // ceil(5000ms / 250ms)
     });
   });
 
@@ -874,6 +1039,7 @@ describe("AdbBackend", () => {
         .mockResolvedValueOnce(ok("Success")) // adb install <downloaded apk path>
         .mockResolvedValueOnce(ok("")) // ime enable ADBKeyBoard
         .mockResolvedValueOnce(ok("")) // ime set ADBKeyBoard
+        .mockResolvedValueOnce(dumpsysBindingState(true)) // dumpsys input_method (bound on first poll)
         .mockResolvedValueOnce(ok("")) // am broadcast ADB_INPUT_B64
         .mockResolvedValueOnce(ok("")); // keyevent 111 (keyboard hide)
       const acquireApk = vi.fn<ApkAcquirer>().mockResolvedValue({
@@ -918,7 +1084,8 @@ describe("AdbBackend", () => {
         "set",
         "com.android.adbkeyboard/.AdbIME",
       ]);
-      expect(exec).toHaveBeenCalledTimes(7);
+      expect(exec).toHaveBeenNthCalledWith(6, ["-s", "R58N90ABCDE", "shell", "dumpsys", "input_method"]);
+      expect(exec).toHaveBeenCalledTimes(8);
       await expect(backend.getTrackedOriginalIme("R58N90ABCDE")).resolves.toBe(originalIme);
     });
 
@@ -929,6 +1096,7 @@ describe("AdbBackend", () => {
         .mockResolvedValueOnce(ok("package:com.android.adbkeyboard\n")) // pm list packages (already present)
         .mockResolvedValueOnce(ok("")) // ime enable
         .mockResolvedValueOnce(ok("")) // ime set
+        .mockResolvedValueOnce(dumpsysBindingState(true)) // dumpsys input_method (bound on first poll)
         .mockResolvedValueOnce(ok("")) // am broadcast
         .mockResolvedValueOnce(ok("")); // keyevent hide
       const acquireApk = vi.fn<ApkAcquirer>();
@@ -937,7 +1105,7 @@ describe("AdbBackend", () => {
       await backend.inputText("R58N90ABCDE", "안녕");
 
       expect(acquireApk).not.toHaveBeenCalled();
-      expect(exec).toHaveBeenCalledTimes(6);
+      expect(exec).toHaveBeenCalledTimes(7);
     });
 
     it("throws AdbKeyboardInstallFailedError with the APK_DOWNLOAD_FAILED code and attempts no IME switch when the runtime download fails (device left unchanged)", async () => {
@@ -1045,6 +1213,7 @@ describe("AdbBackend", () => {
       };
       const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
         if (args[3] === "pm") return ok("package:com.android.adbkeyboard\n"); // self-heal check: already installed
+        if (args[3] === "dumpsys") return dumpsysBindingState(true); // binding-readiness poll: bound on first poll
         const serial = args[1] as string;
         if (args[3] === "settings") {
           return ok(`${originalImeFor[serial]}\n`);
