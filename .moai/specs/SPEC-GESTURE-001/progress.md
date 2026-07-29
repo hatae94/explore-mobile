@@ -1956,7 +1956,7 @@ AC 판정 근거(신규 AC 없음, 기존 AC 재확인):
 ```yaml
 sync_status: audit-ready
 sync_complete_at: "2026-07-29"
-sync_commit_sha: "pending-backfill"   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 여섯 번 쓰인 패턴 그대로(일곱 번째). 별도 backfill 커밋에서 채운다
+sync_commit_sha: "debd3ca"   # backfill 완료(자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 여섯 번 쓰인 패턴 그대로(일곱 번째)). 이 값을 담은 별도 backfill 커밋 참조.
 b12_self_test_a: "grep -c 'SPEC-GESTURE-001' CHANGELOG.md (편집 전, HEAD 4172b2b 시점) -> 14. 이번 sync는 CHANGELOG.md를 전혀 편집하지 않는다(아래 CHANGELOG 결정 참조) -- 편집 후에도 14로 불변. 새 항목을 추가하지 않았으므로 중복 방출 위험 자체가 없다"
 b12_self_test_b: "grep -cE '^### AC-GEST-[0-9]+' acceptance.md -> 34. 0.9.0은 신규 AC 0건이므로 CHANGELOG Notes/README Status가 이미 담고 있는 '34 acceptance criteria' 표기와 계속 일치(불변, 정정 불필요)"
 b12_self_test_c: "README.md가 인용하는 모든 수치를 이 sync 세션에서 직접 재실행해 확인 -- pnpm vitest run(29 files/653 tests, exit 0) + pnpm typecheck(exit 0) + pnpm build(exit 0). 문턱값 재계산(node --input-type=module로 dist/cli/commands/scroll-geometry.js의 minNonDegenerateRatio 직접 호출): iOS(402x874, 11) -> 0.013984236866235733, Android 실측 기기(1440x3120, 32) -> 0.011039886623620987 -- M7~M11 §E.2 기록값과 바이트 동일. DeviceBackend 인터페이스 멤버 수 재확인(grep -cE '^  [a-zA-Z]+\\(' src/schema/device-backend.ts) -> 10. src/backend/idb-backend.ts는 git diff --numstat 0줄(M11 대상 아님, 미변경) 확인. 인용한 파일 경로(README.md, src/index.ts, src/schema/device-backend.ts, src/backend/adb-backend.ts)는 전부 ls로 실재 확인"
@@ -2019,4 +2019,4 @@ $ git fetch origin master && git rev-list --count --left-right origin/master...H
 
 이 sync 커밋은 `README.md` + SPEC 아티팩트 4종(frontmatter — `status`/`updated`만; `progress.md`는 본문도 포함 — 이 §E.4 자체)을 담는다. `CHANGELOG.md`는 편집 없음(위 "CHANGELOG 결정" 참조), `src/`는 이 sync에서 건드리지 않는다. 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인했다(위 참조, 분기 없음). push는 사용자 커밋 규칙("Do not push.")에 따라 수행하지 않는다.
 
-sync 커밋 SHA: pending-backfill(위 참조). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — 0.3.0/0.4.0/0.5.0/0.6.0/0.7.0/0.8.0 sync에서 이미 여섯 번 쓰인 패턴 그대로(일곱 번째).
+sync 커밋 SHA: `debd3ca`(`docs(SPEC-GESTURE-001): 0.9.0 sync-phase + 3-phase close — README 수치 정정, CHANGELOG 무편집`). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — 0.3.0/0.4.0/0.5.0/0.6.0/0.7.0/0.8.0 sync에서 이미 여섯 번 쓰인 패턴 그대로(일곱 번째).
