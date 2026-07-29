@@ -44,11 +44,15 @@ amendment_of: SPEC-ANDROID-001
 - **§C.2 알려진 한계** (신설): 실기기 노트(resource-id 미설정 앱은 `--text` 필요, 이모지 HTML 엔티티 미디코드).
 
 **0.3.0 개정 범위(affected §B REQ IDs):**
-- **REQ-APP-001** (날 세움): 암시적 인텐트 금지 → **런처 컴포넌트 조회 후 명시적 컴포넌트 시작**. 조회 실패 판정은 stdout 기준(종료 코드 아님), 전용 오류 코드 `LAUNCHER_ACTIVITY_NOT_FOUND`, 원인 단정 금지, **태스크 재개 의미 불변** 명시.
-- **REQ-INPUT-003** (절 추가): 자가치유 설치 직후 곧바로 전환·전송으로 진행 금지 — 준비 신호 확인은 REQ-INPUT-004로 위임.
-- **REQ-INPUT-004** (절 추가): 브로드캐스트 전 **IME 바인딩 준비 신호 확인 + 상한 있는 대기**. 타임아웃 시 **브로드캐스트 미전송 + `ok:false`**(`IME_BIND_TIMEOUT`) — **응답 계약 변경**(사용자 결정). 상한 값은 설계 선택이지 실측값이 아님(측정 의무 없음). 원래 IME 디스크 영속·warm 경로는 불변.
-- **§C.3 실측 메커니즘 사실** (신설): 암시적-대-명시적 인텐트, 바인딩 경쟁 조건, 폐기된 가설·무효 오라클, 주장 경계, Secure Folder 확증 — 나중에 읽는 사람이 수정을 다시 결함으로 "단순화"하지 못하도록 고정.
-- **신규 REQ 0건**: 두 결함은 REQ 공백이 아니라 REQ가 메커니즘을 규정하지 않아 구현이 틀릴 수 있었던 자리다. 신규 오류 코드는 별도 REQ-ERR 항목이 아니라 **소유 REQ 안에서 정의**한다.
+- **REQ-APP-001** (날 세움 — M11): 암시적 인텐트 금지 → **런처 컴포넌트 조회 후 명시적 컴포넌트 시작**. 조회 실패 판정은 stdout 기준(종료 코드 아님), 전용 오류 코드 `LAUNCHER_ACTIVITY_NOT_FOUND`, 원인 단정 금지, **태스크 재개 의미 불변** 명시.
+- **REQ-INPUT-003** (절 추가 ×2):
+  - **(M10)** 자가치유 설치 직후 곧바로 전환·전송으로 진행 금지 — 준비 신호 확인은 REQ-INPUT-004로 위임.
+  - **(M12)** 자가치유 `adb install` **직후의 `ime enable`이 IMMS 미등록으로 실패**할 수 있으므로, **그 실패 형태에 한정한 상한 있는 재시도**를 규정한다. 다른 실패 형태는 재시도하지 않고 즉시 표면화한다(shall not). 재시도 상한·백오프는 **설계 선택**이며 측정 의무가 없다.
+- **REQ-INPUT-004** (절 추가 — M10): 브로드캐스트 전 **IME 바인딩 준비 신호 확인 + 상한 있는 대기**. 타임아웃 시 **브로드캐스트 미전송 + `ok:false`**(`IME_BIND_TIMEOUT`) — **응답 계약 변경**(사용자 결정). 상한 값은 설계 선택이지 실측값이 아님(측정 의무 없음). 원래 IME 디스크 영속·warm 경로는 불변.
+- **§C.3 실측 메커니즘 사실** (신설 ①~⑪, M12에서 ⑫~⑯ 확장): 암시적-대-명시적 인텐트, 바인딩 경쟁 조건, 폐기된 가설·무효 오라클, 주장 경계, Secure Folder 확증에 더해 — **`ime enable` 등록 경쟁의 실측 실패 형태(⑫), 포커스된 입력란과의 상관(⑬ — 상관이지 원인 아님), `ime list -a`의 미관측 창(⑭), `ime enable` 멱등성 실측(⑮), `mCurId` 결합항 관측 해소(⑯)**. 나중에 읽는 사람이 수정을 다시 결함으로 "단순화"하지 못하도록 고정.
+- **신규 REQ 0건**: 세 결함 모두 REQ 공백이 아니라 REQ가 메커니즘을 규정하지 않아 구현이 틀릴 수 있었던 자리다. 신규 오류 코드는 별도 REQ-ERR 항목이 아니라 **소유 REQ 안에서 정의**한다. M12도 신규 REQ를 만들지 않는다.
+
+> **M12는 같은 0.3.0 개정의 연장이지 새 개정이 아니다.** M10 실기기 검증이 **같은 cold 시퀀스의 더 앞 단계**(`adb install` → `ime enable`)에서 세 번째 결함을 드러냈고, 그것이 REQ-INPUT-003의 자가치유 설치 절 위에 서기 때문에 위 목록을 확장할 뿐 새 Amendments 행을 추가하지 않는다. **다만 심각도 부류는 다르다** — M10·M11이 죽인 것은 `ok:true`인데 효과가 없는 **무음(silent)** 부류였고, M12가 고치는 것은 `ok:false` + 구체적 메시지를 내는 **소리 내는(loud)** 실패다(§C.3-⑫). 더 낮은 심각도이며, 그럼에도 실제 결함인 이유는 **유효한 연산이 사용자에게 보이는 이유 없이 실패(spurious failure of a valid operation)** 하기 때문이다.
 
 ---
 
@@ -153,7 +157,13 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
 
 - **REQ-INPUT-001** (When 이벤트): **When** `tap <x> <y>`가 실행될 때, the CLI **shall** `adb shell input tap`으로 좌표를 탭한다.
 - **REQ-INPUT-002** (While 상태): **While** 입력 문자열이 ASCII로만 구성된 상태일 때, the `text` command **shall** `adb shell input text` 빠른 경로(fast path)를 사용한다(비-ASCII 경로 REQ-INPUT-003과 대칭).
-- **REQ-INPUT-003** (When 이벤트 — **개정 0.3.0**): **When** `text "<...>"`의 입력에 비-ASCII(한글/이모지)가 포함된 경우, the CLI **shall** ADBKeyBoard IME를 통해 base64 브로드캐스트(`ADB_INPUT_B64`)로 입력한다. **When** 대상 기기에 ADBKeyBoard가 설치되어 있지 않은 경우, the `text` command **shall** 공유 설치기(shared installer)를 통해 **런타임에 자동 설치(self-heal)** 한 뒤 진행한다(설치 실패 시 REQ-ERR-002로 graceful 처리, 기기 상태 무변경). 이 자가치유 경로는 `doctor`의 설치 로직과 동일한 공유 헬퍼를 사용한다 — `reset`이 ADBKeyBoard를 제거하므로 리셋 이후/신규 기기에서도 `text`가 스스로 재설치할 수 있어야 한다. **추가(개정 0.3.0)**: **When** 자가치유 설치가 방금 수행된 경우, the Android backend **shall not** 설치 직후 곧바로 IME 전환·브로드캐스트로 진행한다 — 설치 직후는 IME 서비스가 아직 등록·바인딩되지 않은 대표적 창이며, 5회 분리 실험에서 실패는 **오직 "같은 호출 안에서 설치한" 조건에서만** 발생했다(§C.3-⑧). 준비 신호 확인과 대기 계약은 REQ-INPUT-004(개정 0.3.0)가 규정한다.
+- **REQ-INPUT-003** (When 이벤트 — **개정 0.3.0**): **When** `text "<...>"`의 입력에 비-ASCII(한글/이모지)가 포함된 경우, the CLI **shall** ADBKeyBoard IME를 통해 base64 브로드캐스트(`ADB_INPUT_B64`)로 입력한다. **When** 대상 기기에 ADBKeyBoard가 설치되어 있지 않은 경우, the `text` command **shall** 공유 설치기(shared installer)를 통해 **런타임에 자동 설치(self-heal)** 한 뒤 진행한다(설치 실패 시 REQ-ERR-002로 graceful 처리, 기기 상태 무변경). 이 자가치유 경로는 `doctor`의 설치 로직과 동일한 공유 헬퍼를 사용한다 — `reset`이 ADBKeyBoard를 제거하므로 리셋 이후/신규 기기에서도 `text`가 스스로 재설치할 수 있어야 한다. **추가(개정 0.3.0 — M10)**: **When** 자가치유 설치가 방금 수행된 경우, the Android backend **shall not** 설치 직후 곧바로 IME 전환·브로드캐스트로 진행한다 — 설치 직후는 IME 서비스가 아직 등록·바인딩되지 않은 대표적 창이며, 5회 분리 실험에서 실패는 **오직 "같은 호출 안에서 설치한" 조건에서만** 발생했다(§C.3-⑧). 준비 신호 확인과 대기 계약은 REQ-INPUT-004(개정 0.3.0)가 규정한다.
+
+  **추가(개정 0.3.0 — M12, `ime enable` 등록 경쟁)**: **When** 자가치유 `adb install`이 성공한 직후의 `ime enable`이 **"해당 IME를 알 수 없어 활성화할 수 없다"는 형태로 실패한 경우**(§C.3-⑫의 실측 메시지·종료 코드), the Android backend **shall** `ime enable`을 **상한 있는(bounded) 횟수만큼 재시도**한다. 패키지는 방금 설치에 성공했고(`pm list packages` 계수 0 → 1) IMMS가 새로 설치된 IME를 아직 등록하지 못한 것일 뿐이므로, 이 실패는 **일시적**이다.
+  - **재시도 대상은 이 실패 형태뿐이다(shall not)**: `ime enable`의 **다른 실패**는 재시도하지 않고 **즉시 표면화**한다. 재시도가 모든 실패를 삼키는 루프가 되면, 실제로 고쳐야 할 실패(권한·API 레벨·기기 상태)가 상한만큼 지연된 뒤 같은 오류로 나오면서 원인만 흐려진다.
+  - **재시도 상한과 백오프는 설계 선택이다(측정 의무 없음)**: M10의 대기 상한 5,000ms 및 `MAX_DURATION_MS`(`src/cli/validators.ts`)와 같은 부류다. 목적은 "무한 재시도 금지"뿐이며, 이 값들은 기기 거동을 주장하지 않는다 — 실측 파생값(터치 슬롭 문턱)과 부류가 다르다.
+  - **왜 준비 신호 폴링이 아니라 재시도인가**: `ime list -a`를 등록 준비 신호로 쓸 수 있는지 탐침했으나 **간헐 실패 창을 잡지 못했고, 따라서 실패 중의 `ime list -a` 값을 한 번도 관측하지 못했다**(§C.3-⑭). 관측하지 않은 신호 위에 수정을 세우는 것은 §C.3-⑩이 이미 경고한 바로 그 오류다. **`ime enable`의 권위 있는 준비 판정은 `ime enable` 자신의 성공이며**, 재시도가 안전한 근거는 **실측된 멱등성**이다(§C.3-⑮).
+  - **심각도(정확히 기술한다)**: 이 실패는 **소리 내어 실패한다** — `ok:false` + 구체적 메시지를 반환하고 브로드캐스트를 보내지 않는다. M10·M11이 죽인 **`ok:true`-무효과(무음)** 부류가 **아니며**, 그보다 심각도가 낮다. 그럼에도 결함인 이유는 `doctor` 직후 또는 `reset` 이후 **첫 한글/이모지 입력이 사용자에게 보이는 이유 없이 실패**하기 때문이다.
 - **REQ-INPUT-004** (While 상태 — **개정 0.3.0**): **While** 비-ASCII `text` 입력이 IME 전환을 요구하는 경우, the `text` command **shall** 기기의 **현재 활성 IME를 조회(live source of truth)** 하여 아직 ADBKeyBoard가 아니면 ADBKeyBoard로 **한 번만 전환**하고, 전환 직전의 원래 IME를 **`serial`별로 디스크에 영속화**한다(별도 CLI 프로세스 간 생존 — `~/.cache/explore-mobile/ime-sessions.json`). the `text` command **shall not** 매 호출마다 원래 IME를 복원한다(세션 유지 — 실기기에서 매 입력 후 복원 시 소프트키보드 깜빡임/레이아웃 재트리거 발생). 원래 IME 복원은 오직 **`reset` / `doctor --clean`** 실행 시 수행된다(디스크에 영속된 원본을 읽어 `ime set`으로 복원하고 항목을 삭제; 복원 실패 시 REQ-ERR-001로 원래 IME id 보고). 추가로, **When** `text` 전송이 완료되면, the CLI **shall** 기본적으로 소프트키보드를 숨기며(`KEYCODE_ESCAPE`), **Where** `--keep-keyboard`가 지정된 경우 숨김을 생략한다.
 
   **추가(개정 0.3.0 — IME 바인딩 경쟁 조건)**: **While** ADBKeyBoard IME가 아직 **바인딩되지 않은(not bound)** 상태일 때, the Android backend **shall not** base64 브로드캐스트를 전송한다. `ime set`은 *설정 값이 기록되는 즉시* 반환하지만 IME 서비스는 그 시점에 아직 바인딩되지 않았고, 그 창에서 발사된 브로드캐스트는 **조용히 유실된다** — 명령은 `{"ok":true}`를 반환하는데 포커스된 입력란에는 아무것도 들어가지 않는다(§C.3-⑤/⑧ 실측). 따라서 the Android backend **shall** 전송 전에 기기의 **바인딩 준비 신호**(§C.3-⑥)를 확인하고, 준비될 때까지 **상한이 있는(bounded) 대기**를 수행한다.
@@ -235,9 +245,11 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
 
 ### C.3 실측 메커니즘 사실 (개정 0.3.0) — 수정을 다시 결함으로 되돌리지 않기 위한 고정
 
-> **출처**: `.moai/reports/android-verification/remaining-commands-android-2026-07-29.md` (2026-07-29). **기기**: Galaxy S25 Ultra(SM-S938N), Android 16, 1440×3120, 무선 ADB. 전문을 여기 옮기지 않는다 — 아래는 REQ와 AC가 딛고 서는 **메커니즘 사실만** 추린 것이다.
+> **출처 ①~⑪**: `.moai/reports/android-verification/remaining-commands-android-2026-07-29.md` (2026-07-29). 전문을 여기 옮기지 않는다 — 아래는 REQ와 AC가 딛고 서는 **메커니즘 사실만** 추린 것이다.
+> **출처 ⑫~⑯**: M10(`f6e0724`) 실기기 검증 세션 실측(2026-07-29, **동일 기기**). 별도 보고서 파일이 없으므로 **이 표가 그 관측의 1차 기록**이다.
+> **기기(공통)**: Galaxy S25 Ultra(SM-S938N), Android 16, 1440×3120, 무선 ADB(`adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp`).
 >
-> 이 절이 존재하는 이유: 두 결함 모두 "그 명령이 왜 그렇게 생겼는지"가 문서에 없어서 발생했다. **여기 적힌 것을 모르는 사람은 수정을 "단순화"하다가 결함을 그대로 복원한다.**
+> 이 절이 존재하는 이유: 세 결함 모두 "그 명령이 왜 그렇게 생겼는지"가 문서에 없어서 발생했다. **여기 적힌 것을 모르는 사람은 수정을 "단순화"하다가 결함을 그대로 복원한다.** 검증 수준 칸의 **미측정(명시)** 은 빈칸이 아니라 **주장 경계**다 — 그 행의 내용을 확립된 사실처럼 쓰면 안 된다.
 
 | # | 관측 사실 | 근거 (관측한 것) | 검증 수준 |
 |---|-----------|------------------|-----------|
@@ -250,8 +262,13 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
 | ⑦ | **cold 사이클에서 `ime set` 직후에는 `mBoundToMethod=false`이며, 대략 adb 왕복 1회 안에 `true`로 뒤집힌다** | 직접 관측. 대기 상한(REQ-INPUT-004 개정)의 권고값이 넉넉해도 되는 근거다 — **다만 이 관측이 상한 값을 정하지는 않는다**(상한은 설계 선택) | **실측(Android)** |
 | ⑧ | **결정 실험 — 가르는 변수는 "바인딩 여부"다.** 같은 cold 사이클, 입력란 포커스 확보, 오라클은 스크린샷: `mBoundToMethod=false`에서 발사 → **텍스트 유실 + `ok:true`**; `mBoundToMethod=true`에서 발사 → **텍스트 착지** | 5회 분리 실험 보강: 같은 호출 안에서 **설치** → 실패(#1 `doctor` 설치 직후 / #4 `reset` 직후 미설치 상태에서 자가치유) · IME **전환만** → 성공(#2, `알림` 착지) · **이미 바인딩** → 성공(#3 `알림알림`, #5 `카메라`). 즉 **IME 전환은 원인이 아니다.** 실패 직후 포그라운드가 원래 액티비티에서 되돌아가 있는 현상도 함께 관측됐다 | **실측(Android)** |
 | ⑨ | **폐기된 가설과 무효 오라클(재수행 금지)** | (i) 최초 가설 **"IME 전환이 입력 연결을 끊는다"는 틀렸다** — ⑧의 #2가 전환을 포함하고도 성공해 반증했다. (ii) `dumpsys input_method`의 **`mServedView`는 오라클로 무효다** — 성공한 경우에도 `null`로 나왔다. **유효한 오라클은 스크린샷뿐이었다.** 같은 판정 수단을 다시 시도하는 것은 이미 소진된 길이다 | **실측(Android, 반증)** |
-| ⑩ | **주장 경계 — `mCurId`는 미바인딩 창에서 측정되지 않았다** | `mBoundToMethod`의 `false → true` 전환은 **직접 실측**했다. 그러나 `false`인 창에서 `mCurId`가 무슨 값이었는지는 **별도로 측정하지 않았다**. 두 필드를 결합한 준비 술어를 쓰는 구현은 그 거동을 **실기기에서 확인해야 하며**(AC-ANDROID-032), 확립된 사실로 제시해서는 안 된다 | **미측정(명시)** |
+| ⑩ | **주장 경계 — `mCurId`는 미바인딩 창에서 측정되지 않았다** *(→ ⑯에서 해소됨; 이 행은 2026-07-29 최초 검증 시점의 기록으로 보존한다)* | `mBoundToMethod`의 `false → true` 전환은 **직접 실측**했다. 그러나 `false`인 창에서 `mCurId`가 무슨 값이었는지는 **별도로 측정하지 않았다**. 두 필드를 결합한 준비 술어를 쓰는 구현은 그 거동을 **실기기에서 확인해야 하며**(AC-ANDROID-032), 확립된 사실로 제시해서는 안 된다 | **미측정(명시) → ⑯에서 측정됨** |
 | ⑪ | **Secure Folder 확증 — 현재 `pm list packages` 판정 방식이 옳다(되돌리지 말 것)** | 이 기기는 Secure Folder(유저 150)가 실행 중이라 `pm list packages`가 stderr에 `SecurityException: Shell does not have permission to access user 150`을 출력한다. 그러나 **종료 코드는 0이고 stdout은 user 0의 686개 패키지를 정상 반환**한다. `ensureAdbKeyboardInstalled`(`adbkeyboard-installer.ts`)는 `exitCode`와 `stdout`만 보므로 영향받지 않는다 — **"stderr가 비어 있어야 성공"으로 "개선"하면 여기서 오탐이 난다.** 결함이 아니라 기존 구현이 옳다는 실기기 확증이다 | **실측(Android)** |
+| ⑫ | **`ime enable` 등록 경쟁 — 설치는 성공했는데 IMMS가 아직 IME를 모른다.** 실패는 **소리 내어(loud)** 난다 — `ok:false` + 특정 메시지 + 브로드캐스트 미전송 | CLI 출력 그대로: `{"ok":false,"command":"text","error":{"code":"BACKEND_COMMAND_FAILED","message":"adb shell ime enable (ADBKeyBoard) failed (exit 255): Unknown input method com.android.adbkeyboard/.AdbIME cannot be enabled for user #0"}}`. **같은 호출에서 패키지 설치는 방금 성공했다**(`pm list packages` 계수 0 → 1). 즉 "미설치"가 아니라 **"설치됐는데 아직 등록 안 됨"** 이다. **이 부류는 M10·M11이 죽인 `ok:true`-무효과(무음) 부류가 아니다** — 봉투가 거짓말하지 않으므로 심각도가 더 낮다. 그럼에도 결함인 이유는 `doctor` 직후·`reset` 이후 **첫 비-ASCII 입력이 이유 없이 실패**하기 때문이다 | **실측(Android)** |
+| ⑬ | **포커스된 입력란과의 상관 — 상관이지 원인이 아니다(claim boundary)** | 실측 빈도: cold + **포커스된 입력란**(소프트키보드 올라온 상태) → **3/8 실패**; cold, 포커스 없음(CLI 경유) → **0/5**; cold, 포커스 없음(raw adb) → **0/6**. 상관은 강하지만 **표본이 작고 메커니즘은 확립되지 않았다** — **원인으로 서술하지 말 것**. 이 상관이 중요한 이유는 별개다: **포커스된 입력란은 `text`가 실제로 쓰이는 바로 그 조건**이므로, 실사용 빈도가 위 3/8에 가깝다 | **실측(Android) — 상관만, 인과 미확립** |
+| ⑭ | **`ime list -a`는 준비 신호로 검증되지 않았다 — 미관측 창(재수행 시 이 경계를 먼저 읽을 것)** | `ime list -a`를 등록 준비 신호로 쓸 수 있는지 탐침했으나 **간헐 실패 창을 잡는 데 실패했고, 따라서 실패가 일어나는 동안의 `ime list -a` 값을 한 번도 관측하지 못했다**. 이 신호 위에 수정을 세우면 **측정되지 않은 것을 단정**하게 되며, 그것은 ⑩이 이미 경고한 오류다. 결론: **`ime enable`의 권위 있는 준비 판정은 `ime enable` 자신의 성공**이다 → 그래서 M12는 신호 폴링이 아니라 **재시도**를 택한다 | **미측정(명시)** |
+| ⑮ | **`ime enable`은 멱등이다 — 그래서 재시도가 안전하다** | 이미 활성화된 IME에 `ime enable`을 다시 실행: **종료 코드 0** + `Input method com.android.adbkeyboard/.AdbIME: already enabled for user #0`. `ime list -s`에 **중복 항목이 생기지 않는다**. 재시도가 기기 상태를 누적 변경하지 않음을 실측으로 확인한 것이며, M12 재시도 계약의 안전 근거다 | **실측(Android)** |
+| ⑯ | **`mCurId` 결합항 관측 해소 — 결합항은 판별력이 0이므로 `bound` 단독이 옳다(관측으로 확증)** | ⑩이 남겨 둔 미측정 항목을 실기기에서 관측했다: **미바인딩 창(`mBoundToMethod=false`)에서 `mCurId`는 이미 `com.android.adbkeyboard/.AdbIME`였다.** 즉 `bound && mCurId == ADBKeyBoard` 결합 술어는 **`bound` 단독과 같은 시점에 참이 되며, 판별력이 전혀 없다**(zero discriminating power). 구현이 `bound` 단독을 택한 것은 이제 **논증이 아니라 관측으로 확증된다**. AC-ANDROID-032가 요구한 산출물(관측 기록)이 이 행이다 | **실측(Android)** |
 
 ---
 
@@ -301,7 +318,8 @@ Android(uiautomator) 매핑: `class → role`, `resource-id → id`, `text`/`con
 | 디스크 영속 IME 세션 저장소(`backend/ime-session-store.ts`) | `@MX:NOTE` | 프로세스 간 IME 세션 영속(REQ-INPUT-004 개정). read-modify-write 비원자성(동시 다른-serial 쓰기 경합) 한계 문서화. |
 | 런타임 APK 다운로드(`backend/apk-downloader.ts`) | `@MX:WARN` + `@MX:REASON` | 유일한 런타임 네트워크 페치 경로: 고정 참조에서 GPL-2.0 APK 다운로드→매직바이트 검증→`adb install`(REQ-DOCTOR-003 개정). |
 | 요소 셀렉터 매칭(`normalize/element-query.ts`) | `@MX:NOTE` | `id`+`text` 동시 지정 시 AND 의미(더 좁은 매칭) — 신규 역량(REQ-SELECT). |
-| IME 바인딩 준비 대기(`AdbBackend.inputText` 전송 직전 — 개정 0.3.0) | `@MX:WARN` + `@MX:REASON` | 위험 구역: 이 대기를 제거하거나 술어를 느슨하게 하면 `ok:true`-무효과 결함이 그대로 복원된다(§C.3-⑤/⑧). 대기 상한은 **설계 선택이지 실측값이 아니다**(§C.3-⑦, `MAX_DURATION_MS` 선례). |
+| IME 바인딩 준비 대기(`AdbBackend.inputText` 전송 직전 — 개정 0.3.0) | `@MX:WARN` + `@MX:REASON` | 위험 구역: 이 대기를 제거하거나 술어를 느슨하게 하면 `ok:true`-무효과 결함이 그대로 복원된다(§C.3-⑤/⑧). 대기 상한은 **설계 선택이지 실측값이 아니다**(§C.3-⑦, `MAX_DURATION_MS` 선례). 준비 술어가 `bound` 단독인 것은 §C.3-⑯ 관측으로 확증됐다 — `mCurId` 결합항은 판별력이 0이다. |
+| `ime enable` 등록 경쟁 재시도(자가치유 설치 직후 — 개정 0.3.0 M12) | `@MX:WARN` + `@MX:REASON` | 위험 구역: 재시도 조건을 **실패 형태에 한정하지 않고 넓히면** 모든 `ime enable` 실패를 삼키는 루프가 되어, 실제 결함이 상한만큼 지연된 뒤 같은 오류로 나오면서 원인만 흐려진다(§C.3-⑫). 재시도가 안전한 근거는 **실측된 멱등성**(§C.3-⑮)이며, 상한·백오프는 **설계 선택이지 실측값이 아니다**. 준비 신호 폴링(`ime list -a`)으로 "개선"하지 말 것 — 그 신호는 실패 창에서 **관측된 적이 없다**(§C.3-⑭). |
 | 런처 컴포넌트 조회 후 명시적 시작(`AdbBackend.launchApp` — 개정 0.3.0) | `@MX:WARN` + `@MX:REASON` | 위험 구역: 암시적 인텐트(`-p`)로 "단순화"하면 DEFAULT 미선언 앱이 다시 열리지 않는다(§C.3-①). 조회 실패 판정을 종료 코드로 바꾸면 실패가 성공으로 오판된다(§C.3-②). |
 | 다중 기기 serial 격리 / 임시 리소스 네임스페이스 | `@MX:WARN` + `@MX:REASON` | 동시 실행 경합(concurrency) 위험(REQ-MULTIDEV-003/004). |
 | `doctor` 자동 설치(호스트/기기 환경 변경, `backend/doctor.ts`) | `@MX:WARN` + `@MX:REASON` | 호스트·기기 환경을 변경하는 부작용(`brew install`/APK 설치/uninstall). |
