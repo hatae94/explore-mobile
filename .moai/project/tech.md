@@ -1,6 +1,6 @@
 # explore-mobile — 기술 문서
 
-> 최종 갱신: 2026-07-29 · HEAD `79231f0` (branch `master`)
+> 최종 갱신: 2026-07-29 · branch `master` (HEAD SHA는 기록하지 않음 — 이 문서 자체를 만드는 커밋이 그 SHA를 즉시 진부하게 만들기 때문. 이 문서가 서술하는 코드 트리 상태는 이 문서 3종을 생성/갱신하는 커밋의 부모 트리다.)
 > 아래 수치는 실행 결과("실행 확인")와 문서 기록("문서 기준")을 구분해 표기한다.
 
 ## 1. 스택 개요와 근거
@@ -57,7 +57,7 @@ vitest              ^4.1.10
 
 | 명령 | 스크립트 | 실행 결과 |
 |---|---|---|
-| `pnpm test` | `vitest run` | exit 0 — `Test Files 32 passed (32)`, `Tests 702 passed (702)`, Duration 550ms |
+| `pnpm test` | `vitest run` | exit 0 — `Test Files 32 passed (32)`, `Tests 702 passed (702)` (Duration은 실행마다 달라지는 벽시계 시간이라 표에서 제외 — 재감사 시 778ms 관측) |
 | `pnpm typecheck` | `tsc --noEmit -p tsconfig.json` | exit 0, 출력 없음 |
 | `pnpm build` | `tsc -p tsconfig.build.json` | exit 0, 출력 없음 |
 | `pnpm test:coverage` | `vitest run --coverage` | exit 0 — 아래 §6 |
@@ -72,7 +72,7 @@ vitest              ^4.1.10
 |---|---|---|---|---|
 | 전체 | 93.79% | 90.2% | 90.03% | 95.57% |
 
-`vitest.config.ts`의 `coverage.exclude`가 다음 3개 패턴을 제외한다 — 이유는 파일 내 주석에 명시:
+`vitest.config.ts`의 `coverage.exclude`가 다음 **4개** 패턴을 제외한다 — 이유는 `src/**/*.test.ts`(테스트 파일 자체)를 제외한 나머지 3건에 대해서만 파일 내 주석에 명시(테스트 파일 자체를 제외하는 이유는 자명하므로 별도 주석이 없다):
 
 ```
 src/**/*.test.ts          # 테스트 파일 자체
@@ -89,7 +89,7 @@ src/backend/process-executor.ts # 위와 동일한 이유
 
 - `.github/workflows/`에는 `label-sync.yml` **하나만** 있다(실측: `find .github/workflows -type f`). 테스트·타입체크·빌드를 돌리는 워크플로는 없다.
 - `label-sync.yml`은 `main` 브랜치 push에 트리거되지만, 이 저장소의 기본 브랜치는 `master`다(실측: `git remote show origin` → `HEAD branch: master`). 게다가 그 소스 오브 트루스인 `.github/labels.yml` 자체가 존재하지 않는다(실측: 파일 없음).
-- `.git_hooks/pre-push`는 `Makefile`이 존재할 때만 `make -C <repo> -s ci-local`을 실행한다. 이 저장소에는 `Makefile`이 없으므로(실측: 파일 없음) **항상 "skip (no Makefile)" 분기를 탄다** — 이 훅은 실제로 `.git/hooks/pre-push`에 설치되어 있음을 확인했지만(실측), 매번 아무 것도 실행하지 않고 통과한다.
+- `.git_hooks/pre-push`는 `Makefile`이 존재할 때만 `make -C <repo> -s ci-local`을 실행한다. 이 저장소에는 `Makefile`이 없으므로(실측: 파일 없음) **항상 "skip (no Makefile)" 분기를 탄다** — 이 훅은 실제로 `.git/hooks/pre-push`에 설치되어 있음을 확인했지만(실측), `make ci-local`은 실행하지 않는다(테스트·타입체크·빌드 게이트 없음). 다만 완전히 아무 것도 하지 않는 것은 아니다 — `command -v moai`가 성공하면 push 대상 커밋 제목을 `moai hook pre-push`로 넘겨 커밋 메시지 컨벤션 검증을 실행한다(실측: 이 머신에서 `moai`는 `/Users/hatae/.local/bin/moai`로 PATH에 있다).
 - 린터·포매터가 전혀 없다 — ESLint/Prettier/Biome/EditorConfig 설정 파일 모두 없음(실측). 유일한 정적 게이트는 `tsc --noEmit`(strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`, §2)뿐이다.
 - 85% 커버리지 기준은 문서에만 있다(§6).
 
@@ -101,14 +101,18 @@ src/backend/process-executor.ts # 위와 동일한 이유
 
 ### 8.1 조용한 성공 금지 (`ok:true`인데 기기 효과 없음 = 결함)
 
-2026-07-29 하루에 고친 실기기 결함 5건 중 4건이 이 부류였다(CHANGELOG.md Notes 절, 문서 기준):
+2026-07-29 하루에 고친 실기기 결함은 5건이다(CHANGELOG.md Notes 절, 문서 기준). 이 중 이 제약이 직접 겨냥하는 **조용한 성공**(`ok:true`인데 관측 가능한 효과가 없음) 부류는 **2건**이다:
 
-- `launch`가 암시적 인텐트를 써서 `category.DEFAULT`를 선언하지 않은 앱을 못 여는데도 `ok:true`를 반환
 - IME 바인딩 준비 전에 텍스트를 보내 아무 입력도 안 되는데 `ok:true`
 - 소프트 키보드 숨김이 자신이 방금 보낸 웹 입력을 지우는데 `ok:true`
-- 미연결 기기를 연결로 계수해 `AMBIGUOUS_DEVICE` 메시지의 기기 수 자체가 틀림
 
-**따르는 규율**: mock 테스트는 구성된 argv까지만 검증하고, 기기가 그 argv를 어떻게 해석하는지는 검증하지 못한다. 이 저장소의 702개 단위 테스트는 전부 이 한계 안에 있으며, 효과·타이밍·화면 변화의 최종 판정은 실기기/실시뮬레이터 실행으로만 이루어진다(`README.md` Status 절 각 항목이 "확인 방법"까지 기록).
+나머지 3건은 소리 내어 실패했다(`ok:false`)는 점에서 조용한 성공은 아니지만, 잘못되거나 오도하는 사유로 실패했다는 점에서 같은 신뢰 문제를 드러낸다:
+
+- `launch`가 암시적 인텐트를 써서, 손으로 실행하면 정상적으로 열리는 설치된 앱을 `BACKEND_COMMAND_FAILED`("해석 불가")로 잘못 보고
+- `ime enable` 등록 경쟁으로, 사용자에게 보이는 원인 없이 유효한 입력-준비 동작이 실패
+- 미연결 기기를 연결로 계수해 `AMBIGUOUS_DEVICE` 메시지가 실제와 다른 기기 수를 주장(envelope의 `ok:false` 자체는 정직했다 — 거짓인 것은 메시지가 인용한 수치였다)
+
+**따르는 규율**: mock 테스트는 구성된 argv까지만 검증하고, 기기가 그 argv를 어떻게 해석하는지는 검증하지 못한다. 이 저장소의 702개 단위 테스트는 전부 이 한계 안에 있으며, 효과·타이밍·화면 변화의 최종 판정은 실기기/실시뮬레이터 실행으로만 이루어진다(`README.md` Status 절 각 항목이 "확인 방법"까지 기록). 조용한 성공 2건이야말로 이 한계를 뚫고 모든 mock 테스트와 이전 검증 라운드를 통과해 살아남았던 사례이며, 나머지 3건이 소리 내어 실패했다는 사실은 이 규율의 중요성을 약화시키지 않는다 — 실패의 유무가 아니라 실패의 원인과 메시지가 신뢰할 수 있는가가 이 규율의 핵심이기 때문이다.
 
 ### 8.2 의존성 최소화
 
@@ -127,4 +131,4 @@ src/backend/process-executor.ts # 위와 동일한 이유
 - `.claude/skills/explore-mobile/SKILL.md`가 여전히 존재하지 않는 에러 코드 `ADB_COMMAND_FAILED`/`APK_NOT_BUNDLED`를 `error.code` 예시 목록에 나열한다. 실제 코드베이스에는 이 두 코드가 존재하지 않는다(§8.3의 실측 목록에 없음; `ADB_COMMAND_FAILED`는 `src/backend/ime-errors.ts` 주석 안에 "generic ADB_COMMAND_FAILED로의 성급한 강등을 피한다"는 **비교 대상**으로만 남아 있고 실제로 던져지지 않음).
 - 같은 파일의 명령 참조 표는 12개 명령 중 10개만 문서화한다 — `swipe`/`scroll`과 `--web` 플래그가 빠져 있다(실측: SKILL.md 본문에 두 명령 섹션 없음).
 
-이 문서(`tech.md`)는 이 불일치를 고치지 않는다(작업 지시에 따라 스코프 밖) — 대신 이 응답의 `findings` 절에 다시 정리한다.
+이 문서(`tech.md`)는 `SKILL.md` 자체를 고치지 않는다(작업 지시에 따라 스코프 밖) — 위 두 항목이 이 발견 사항의 전체 기록이며, 별도로 참조해야 할 응답 전용 절은 없다.

@@ -1,6 +1,6 @@
 # explore-mobile — 구조 문서
 
-> 최종 갱신: 2026-07-29 · HEAD `79231f0` (branch `master`)
+> 최종 갱신: 2026-07-29 · branch `master` (HEAD SHA는 기록하지 않음 — 이 문서 자체를 만드는 커밋이 그 SHA를 즉시 진부하게 만들기 때문. 이 문서가 서술하는 코드 트리 상태는 이 문서 3종을 생성/갱신하는 커밋의 부모 트리다.)
 > 아키텍처는 정직하게 이름 붙인다: MVC도 아니고, 교과서적 Clean/Hexagonal도 아니고, 마이크로서비스는 더더욱 아니다. **하나의 교체 가능한 드라이버 인터페이스(`DeviceBackend`)를 중심으로 한, 단일 프로세스 단발성(single-shot) CLI 레이어드 파이프라인**이다. 모든 I/O 경계에 의존성 주입이 있어(이것이 기기 없이 테스트 가능한 이유), 순수 함수 정규화 코어를 갖는다.
 
 ## 1. 디렉터리 트리 (목적 포함)
@@ -17,11 +17,11 @@ tests/
   fixtures/     # 데이터만 존재 — 테스트 코드는 없다(uiautomator XML, idb JSON 픽스처).
 vendor/
   adbkeyboard/  # ADBKeyBoard(GPL-2.0) 관련 문서 — APK 자체는 번들되지 않는다(tech.md §의존성 참조).
-dist/           # tsc -p tsconfig.build.json 산출물 (gitignore 대상 아님, 커밋에는 포함 여부는 build 시점 결정)
+dist/           # tsc -p tsconfig.build.json 산출물 (.gitignore 대상 — dist/, 저장소에 커밋되지 않음)
 .moai/specs/    # SPEC-ANDROID-001 / SPEC-IOS-001 / SPEC-WEBVIEW-001 / SPEC-GESTURE-001 (전부 status: completed, 실측)
 ```
 
-`src/` 하위 5개 디렉터리 + barrel 파일 1개 구성을 `find src -type d`로 실측 확인.
+`src/` 최상위는 디렉터리 5개 + 파일 2개(`index.ts` barrel, `skill-wrapper.test.ts` — §7 참조)로 구성된다(`find src -maxdepth 1`로 실측 확인).
 
 ## 2. 레이어 의존 방향 (순환 없음)
 
@@ -94,4 +94,4 @@ grep으로 확인한 결과, "명령 핸들러는 adb/idb 문자열을 전혀 �
 
 ## 8. `src/index.ts` barrel의 현재 상태 (발견 사항)
 
-`src/index.ts`의 문서 주석은 여전히 "Public library entry point for SPEC-ANDROID-001... All 8 milestones are implemented"라고 서술하며 iOS/레지스트리/제스처 관련 언급이 없다. 실제 export 목록을 확인한 결과, 이 문서 주석뿐 아니라 **export 자체도** `IdbBackend`, `BackendRegistry`, `swipe`/제스처 관련 타입, `src/webview/` 어떤 것도 포함하지 않는다 — `AdbBackend`, `AdbDoctor`, ADBKeyBoard 관련 export만 있다. 이는 이 문서(`structure.md`)가 수정할 대상이 아니라(코드 파일), `findings` 절에 기록해 둔다.
+`src/index.ts`의 문서 주석은 여전히 "Public library entry point for SPEC-ANDROID-001... All 8 milestones are implemented"라고 서술하며 iOS/레지스트리/제스처 관련 언급이 없다. 실제 export 목록을 확인한 결과, 이 문서 주석뿐 아니라 **export 자체도** `IdbBackend`, `BackendRegistry`, `swipe`/제스처 관련 타입, `src/webview/` 중 어느 것도 포함하지 않는다(SPEC-ANDROID-001 시절 표면 그대로). 실제로는 `CommonElement`/`DeviceBackend`/`KEY_ALIASES`/`normalizeUiAutomatorXml`/`AdbBackend`/`parseAdbDevicesList`/`PerSerialState`/`ImeSessionStore` 계열/`AdbKeyboard*` 에러·상수/`ApkAcquirer`/`AdbDoctor`/`ProcessExecutor`/envelope 헬퍼(`success`/`failure`/`CommandResult`)/`runCli`까지 폭넓게 export하지만, 그 목록 안에 iOS·레지스트리·제스처·webview 관련 항목은 하나도 없다는 것이 핵심 발견이다. 이는 이 문서(`structure.md`)가 수정할 대상이 아니라(코드 파일 `src/index.ts` 자체가 대상), 이 절(§8)에 발견 사항으로만 기록해 둔다.
