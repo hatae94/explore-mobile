@@ -15,7 +15,7 @@ author: hatae
 ```
 plan_status: audit-ready (0.3.0 — 2차 감사 반영 완료. 최종 감사는 /moai run Phase 1 Plan Audit Gate)
 plan_complete_at: 2026-07-30
-plan_commit_sha: pending-backfill-plan-0.3.0
+plan_commit_sha: c313f0c (0.3.0) / 924cae2 (0.1.0~0.2.0 최초 커밋)
 tier: M (3 artifacts — spec.md / plan.md / acceptance.md)
 REQ: 8   AC: 27   추적성: 100% (미커버 0)
 ```
