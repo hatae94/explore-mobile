@@ -57,7 +57,7 @@ vitest              ^4.1.10
 
 | 명령 | 스크립트 | 실행 결과 |
 |---|---|---|
-| `pnpm test` | `vitest run` | exit 0 — `Test Files 32 passed (32)`, `Tests 702 passed (702)` (Duration은 실행마다 달라지는 벽시계 시간이라 표에서 제외 — 재감사 시 778ms 관측) |
+| `pnpm test` | `vitest run` | exit 0 — `Test Files 32 passed (32)`, `Tests 702 passed (702)` (Duration은 실행마다 달라지는 벽시계 시간이라 표에서 제외) |
 | `pnpm typecheck` | `tsc --noEmit -p tsconfig.json` | exit 0, 출력 없음 |
 | `pnpm build` | `tsc -p tsconfig.build.json` | exit 0, 출력 없음 |
 | `pnpm test:coverage` | `vitest run --coverage` | exit 0 — 아래 §6 |
@@ -76,7 +76,7 @@ vitest              ^4.1.10
 
 ```
 src/**/*.test.ts          # 테스트 파일 자체
-src/cli/bin.ts            # 프로세스 진입점 접착 코드(실제 process.argv/stdout/exitCode) — 로직(router.ts + commands/*)은 완전히 단위 테스트됨, 이 파일 자체는 의도적으로 제외
+src/cli/bin.ts            # 프로세스 진입점 접착 코드(실제 process.argv/stdout/exitCode) — 그 로직(router.ts + commands/*)은 완전히 단위 테스트되어 있어 의도적으로 제외 목록에서 뺐다(반대로 이 파일 자체는 제외 목록에 포함된다)
 src/backend/adb-executor.ts     # 실제 child_process.spawn 배선 — AdbBackend/AdbDoctor의 injected-mock 단위 테스트를 통해 간접 검증되며, 실제 adb 바이너리가 필요해 직접 테스트하지 않음
 src/backend/process-executor.ts # 위와 동일한 이유
 ```

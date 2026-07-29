@@ -78,7 +78,7 @@
 - 나머지 Android 명령 전부(`tap`/`text`/`key`/`stop`/`doctor`/`reset`/`screenshot`/`dump`) + ADBKeyBoard 런타임 다운로드(2026-07-29)
 
 **검증했으나 PASS로 승격하지 않음**
-- AC-GEST-020(`--duration` 생략 경로의 신뢰성) — 실기기에서 실제로 10회 시행해 측정함(8/10, 80% 성공). 본질적으로 간헐적이라는 결론은 이 측정에 근거하지만, PASS 기준을 충족하지 못해 PARTIAL로 남긴다 — "미검증"이 아니라 "측정했지만 기준 미달"이다.
+- AC-GEST-020(`--duration` 생략 경로의 신뢰성) — 두 독립 세션 합산 8/10(3/5 + 5/5). `progress.md:780`·`CHANGELOG.md:368-369`("measured 3/5 and 5/5 movement across two separate sessions — session-variable, not a fixed rate")가 명시하듯 세션 간 편차 자체가 이 경로의 간헐성을 뒷받침하는 증거이며, 5회(또는 10회 합산) 시행으로는 고정된 성공률을 확정할 수 없다 — 본질적으로 간헐적이라는 결론은 이 측정에 근거하지만, PASS 기준을 충족하지 못해 PARTIAL로 남긴다("미검증"이 아니라 "측정했지만 기준 미달").
 
 **의도적으로 검증하지 않음(이유 포함)**
 - `power`/`volume_up`/`volume_down` 키 별칭 — 화면을 끄거나 볼륨을 바꾸는 것은 얻는 커버리지 대비 나쁜 트레이드오프로 판단
@@ -108,4 +108,8 @@ Android 쪽에도 열린 항목이 있다: 3개 키 별칭(`power`/`volume_up`/`
 
 ## 8. 발견 사항 (SPEC 생성 없이 기록만)
 
-문서 작성 중 코드/문서 대조에서 발견한, 이 문서(`product.md`)의 범위를 벗어나는 사실은 두 곳에 직접 기록해 두었다 — `structure.md` §8(`src/index.ts` barrel의 문서 주석·export 목록이 SPEC-ANDROID-001 시절 표면 그대로 남아 있다는 발견)과 `tech.md` §9(`.claude/skills/explore-mobile/SKILL.md`가 존재하지 않는 에러 코드를 나열하고 `swipe`/`scroll`/`--web`를 문서화하지 않는다는 발견). `product.md` 자체에 추가로 기록할 발견 사항은 없다. `.moai/specs/`에는 어떤 파일도 쓰지 않았다.
+문서 작성 중 코드/문서 대조에서 발견한, 이 문서(`product.md`)의 범위를 벗어나는 사실은 세 건이다. 두 건은 다른 문서에 직접 기록해 두었다 — `structure.md` §8(`src/index.ts` barrel의 문서 주석·export 목록이 SPEC-ANDROID-001 시절 표면 그대로 남아 있다는 발견)과 `tech.md` §9(`.claude/skills/explore-mobile/SKILL.md`가 존재하지 않는 에러 코드를 나열하고 `swipe`/`scroll`/`--web`를 문서화하지 않는다는 발견).
+
+세 번째는 `.moai/specs/SPEC-ANDROID-001/spec.md:35`(SPEC 본문)에 있다. `spec.md`의 0.3.0 Amendments 행은 실기기 검증이 드러낸 결함 2건을 "둘 다 `ok:true`인데 관측 가능한 효과가 없는 부류"로 분류하지만, 그중 `launch` 결함은 실제로는 `BACKEND_COMMAND_FAILED`(`ok:false`)로 실패했다 — 근거: `CHANGELOG.md:573-576` "Samsung's Calculator and Clock (neither declares it) both failed with `BACKEND_COMMAND_FAILED`, even though both are installed, resolve a launcher activity fine, and open when tapped by hand." SPEC 본문은 이 워크플로의 스코프 밖이라 `spec.md` 자체는 고치지 않는다 — 기록만 남기는 것이 올바른 처리다.
+
+`product.md`에 추가로 기록할 발견 사항은 위 세 건이 전부다. `.moai/specs/`에는 어떤 파일도 쓰지 않았다.

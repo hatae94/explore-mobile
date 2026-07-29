@@ -7,7 +7,7 @@
 
 ```
 src/
-  schema/       # 계약. 아무것도 import하지 않는다 — 계층의 바닥.
+  schema/       # 계약. schema/ 바깥 계층을 import하지 않는다 — 계층의 바닥.
   normalize/    # 순수 함수. 원시 플랫폼 포맷 -> schema/ 형태.
   backend/      # 서브프로세스 래퍼 + 환경 서비스(doctor/reset). adb/idb를 직접 다루는 유일한 층.
   cli/          # 인자 파싱, 라우터, envelope, 12개 명령 핸들러(cli/commands/).
@@ -30,11 +30,11 @@ src/schema/  ←  src/normalize/  ←  src/backend/  ←  src/cli/
    (계약)         (순수 정규화)      (서브프로세스)     (인자·라우팅·명령)
 ```
 
-- `schema/`는 아무것도 import하지 않는다(예: `device-backend.ts`는 `common-element.ts`의 타입만 재수출).
+- `schema/`는 schema/ 바깥의 어떤 계층도 import하지 않는다(내부적으로 `device-backend.ts:24`가 `common-element.ts`의 타입 1건만 import·재수출).
 - `normalize/`는 `schema/`의 타입만 참조하는 순수 함수 모음(예: `normalizeUiAutomatorXml`, `normalizeIdbAccessibility`).
 - `backend/`는 `schema/`를 구현하고(`AdbBackend`, `IdbBackend`가 `DeviceBackend` 인터페이스를 구현), 자신의 정규화는 내부에서 `normalize/`를 호출한다.
-- `cli/`는 `DeviceBackend` 인터페이스만 보고, `backend/`의 구체 클래스나 raw adb/idb를 직접 알지 못한다(예외는 §5 참조).
-- `webview/`는 iOS `--web` 경로 전용 보조 계층으로, `cli/commands/web-support.ts`에서만 소비된다.
+- `cli/`의 **명령 핸들러**(`src/cli/commands/*.ts`)는 `DeviceBackend` 인터페이스만 보고, `backend/`의 구체 클래스나 raw adb/idb를 직접 알지 못한다(합성 루트 `bin.ts:18-22`와 `router.ts:12-13`은 구체 클래스·백엔드 구현체를 직접 조립하는 자리라 이 범위 밖의 예외이며, 명령 핸들러 쪽 실제 예외는 **§6** 참조).
+- `webview/`는 iOS `--web` 경로 전용 보조 계층으로, `cli/commands/web-support.ts`(주 소비자)와 `cli/commands/doctor.ts`(`checkWebInspectorProxy` 진단 호출, `doctor.ts:27`)에서 소비된다.
 
 이 방향 덕분에 iOS 백엔드(SPEC-IOS-001)는 CLI/정규화 계층을 재설계하지 않고 `DeviceBackend`의 새 구현체(`IdbBackend`)를 추가하는 것만으로 들어왔다 — `src/schema/device-backend.ts`의 문서 주석이 이를 직접 서술한다.
 
