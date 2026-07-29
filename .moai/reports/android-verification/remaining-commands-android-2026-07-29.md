@@ -97,7 +97,9 @@ README "Still pending before this is production-ready" #1·#2 + AC-WEB-019 실�
 
 세 앱 모두 user 0에 설치돼 있고 런처 액티비티가 정상 조회되며 손으로 누르면 열린다. 즉 **앱이 없어서가 아니라 실행 방식이 틀려서** 실패한다. 삼성 기본앱 상당수가 여기 걸린다.
 
-**제안**: `cmd package resolve-activity --brief --user 0 -a MAIN -c LAUNCHER <pkg>`로 컴포넌트를 구한 뒤 `am start -n <pkg>/<activity>`.
+**제안**: `cmd package resolve-activity --brief -a MAIN -c LAUNCHER <pkg>`로 컴포넌트를 구한 뒤 `am start -n <pkg>/<activity>`.
+
+> 초판은 이 줄에 `--user 0`을 달았는데, 바로 위 §[A] 측정이 "`--user` 불필요"였으므로 **같은 절 안에서 제안이 측정과 어긋났다**. 측정을 따라 정정한다. 기기의 현재 유저가 0이 아닌 경우까지 `--user 0`을 박으면 오히려 틀린다.
 
 **mock이 못 잡은 이유**: 단위 테스트는 argv 모양(`am start -a … -p …`)만 검사한다. 그 argv가 실제 기기에서 해석되는지는 mock의 사정거리 밖이다.
 
