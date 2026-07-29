@@ -2,7 +2,7 @@
 id: SPEC-ANDROID-001
 title: "Android(adb) 기기 제어 기본기 + 자동 환경 세팅 CLI 코어 — 진행"
 version: "0.4.0"
-status: in-progress
+status: completed
 created: 2026-07-22
 updated: 2026-07-29
 author: manager-spec
@@ -613,3 +613,30 @@ $ pnpm build
 
 - **`mInputShown` 출현 횟수 — 사실은 맞았고, 내가 작성 중이던 코드 주석이 틀려 있었다.** 프롬프트는 "mInputShown appears EXACTLY ONCE ... measured in both states"라고 전제했고, 이 세션에서 독립 재확인해 사실임을 확인했다(위 실측 근거). 문제는 spec.md §C.4-⑱의 "미측정" 문구 자체가 아니라(그 문서 수정은 manager-spec 소유이므로 건드리지 않았다), 내가 새로 작성한 `ime-binding-parser.ts`의 `parseSoftKeyboardShown` doc comment가 처음에는 이 "미측정" 주장 경계를 그대로 반복해 썼다는 점이다(프롬프트가 명시적으로 경고한 실수: "documents are otherwise manager-spec's, but a now-false claim-boundary note in a doc comment you write must not repeat it"). 실측 확인 직후 그 주석을 "양쪽 상태에서 정확히 1회 확인됨"으로 정정했다.
 - 그 외: Chrome이 마지막 탭을 복원한다는 전제, 좌표 대신 `mInputShown` 폴링으로 포커스를 확인하라는 절차, 오라클은 스크린샷뿐이라는 규율, BACK이 두 표면 모두에서 텍스트를 보존한다는 사실 — 전부 프롬프트 기술과 정확히 일치했다.
+
+### §E.4-d 개정(0.4.0) sync 마감 (2026-07-29)
+
+위 §E.4-c는 0.3.0 마감(2026-07-29) 시점의 기록이다. 그 이후 같은 날 실기기 검증(Chrome 웹 구동 + 2기기 운용)이 결함 2건을 드러냈고, 개정 0.4.0(`c0132cd`)이 SPEC 아티팩트 4개를 다시 `in-progress`로 열어 M13(§E.2-M13)·M14(§E.2-M14)로 정정했다. 본 기록이 그 개정을 닫는다.
+
+- **sync_complete_at**: 2026-07-29
+- **sync_commit_sha**: `pending-backfill-single-sync-commit`(자기참조 해시 — `spec-frontmatter-schema.md`의 SHA placeholder backfill exemption에 따른 표준 placeholder. 이번 sync 커밋은 단일 커밋이라 별도 backfill 커밋을 만들지 않음 — 실제 SHA는 `git log`로 확인 가능)
+- **sync_status**: complete — 4개 SPEC artifact frontmatter `in-progress → completed` 전이 + CHANGELOG.md/README.md에 0.4.0 결함 2건(발견 + 수정) 반영 완료
+- **b12_self_test_a** (CHANGELOG 중복 방지, pre-emission grep): PASS — 항목 추가 전 `grep -c 'SPEC-ANDROID-001' CHANGELOG.md` = 8(전부 0.2.0/0.3.0/최초 릴리스 시점 기존 항목). `DEVICE_NOT_CONNECTED`/`KEYCODE_HIDE_KEYBOARD`/`mInputShown`/`connectedOnly`/`disconnectedCount` 사전 검색으로 0.4.0 전용 항목이 아직 없음을 확인한 뒤 신규 항목 1건을 추가했다(중복 없음). 추가 후 `grep -c` = 10(신규 항목 자체의 헤더 1회 + 진행 근거 경로 인용 1회 — 새 결함 없음)
+- **b12_self_test_b** (AC count match, acceptance.md SSOT 대조): PASS(해당 없음) — 본 CHANGELOG 항목은 특정 AC 개수를 인용하지 않는다(acceptance.md SSOT `grep -cE '^\| AC-ANDROID-[0-9]+ \|' acceptance.md` = 45건, §D.3 DoD 참조). 인용하지 않은 숫자는 대조 대상이 없다
+- **b12_self_test_c** (CHANGELOG/README에서 참조한 파일 경로 실존 확인): PASS — `src/cli/device-targeting.ts`, `src/cli/device-targeting.test.ts`, `src/backend/adb-backend.ts`, `src/backend/adb-backend.test.ts`, `src/backend/keycodes.ts`, `src/backend/ime-binding-parser.ts`, `.moai/specs/SPEC-ANDROID-001/progress.md` 전부 `ls` 확인됨
+- **changelog_entry_position**: `CHANGELOG.md` `## [Unreleased]` → `### Fixed` 섹션, 0.3.0 항목(SPEC-ANDROID-001 amendment 0.3.0) 바로 다음 · `### Changed` 헤더 앞 — SPEC-ANDROID-001 0.4.0 신규 항목 1건
+- **frontmatter_status_transitions**:
+  - spec.md: `in-progress → completed` (updated: 2026-07-29)
+  - plan.md: `in-progress → completed` (updated: 2026-07-29)
+  - acceptance.md: `in-progress → completed` (updated: 2026-07-29)
+  - progress.md: `in-progress → completed` (updated: 2026-07-29)
+- **canary_compliance_check**: n/a — 본 SPEC은 forward-looking policy(자체 sync 시점에 검증하는 정책)를 정의하지 않음
+- **README 정정 내역** (모든 수치는 본 sync 세션에서 직접 실행해 확인 — 눈대중 대조 금지 지시 준수, `pnpm test` → 702 passed / 32 files, `pnpm typecheck`/`pnpm build` exit 0):
+  - 헤더 배너(~11행): 테스트 수 690→702 정정 + "0.3.0 amendment" 서술 뒤에 0.4.0의 결함 2건(자기 입력을 지우는 `text`·거짓 기기 수 오류 메시지) 요약 추가, "All three"→"All five defects" 정정
+  - Commands 절 `--device`/자동 선택 설명(~120~137행): M13이 이미 "연결"의 정의(`connectionState === "device"`)와 `DEVICE_NOT_CONNECTED`를 문서화 완료한 상태였음을 확인 — 추가 수정 불필요(변경 없음, 검증만)
+  - `text` 절(~237~254행): 숨김 메커니즘이 `KEYCODE_BACK`으로 바뀌었고 페이지 입력을 더 이상 파괴하지 않는다는 사실 + 옛 `KEYCODE_ESCAPE` 결함 서술 추가, `--keep-keyboard`가 가시성 확인 단계까지 생략함을 명시
+  - Status 절 첫 문단(~882~886행): "0.2.0 and 0.3.0 amendments" → "0.2.0, 0.3.0, and 0.4.0 amendments", 690→702 정정
+  - Status 절 M12 문단 뒤(~1132행): 0.4.0의 두 결함(발견 + 수정)을 0.3.0과 같은 "찾고 고쳤다" 어조로 신설 — 메커니즘 서술(ESCAPE가 페이지로 전달됨·`connectionState` 미참조) 보존
+  - Roadmap 표 SPEC-ANDROID-001 행(~1214행): "0.3.0 found and fixed 3 real-device defects" → "0.3.0 and 0.4.0 together found and fixed 5 real-device defects"
+- **honesty note**: M14 가드(`mInputShown` 확인 후에만 BACK 전송)는 **예방적이며 실측 강제가 아님**을 CHANGELOG/README 양쪽에서 정확히 서술했다(반대 관측 1건, §C.4-⑲) — "측정으로 확립됨"으로 과장하지 않았다. "Chrome이 ESCAPE를 페이지로 전달한다"는 관례적 설명이지 측정이 아니라는 구분도 유지했다(측정된 것은 "ESCAPE만으로 입력란이 지워졌다"는 사실뿐). `power`/`volume_up`/`volume_down`은 이번에도 README "Still pending" 목록에 그대로 남겨 의도적 미검증 상태를 유지했다. 결함 5 수정은 CHANGELOG/README 어디에서도 응답 봉투(`ok`) 변경으로 서술하지 않았다(바뀐 것은 오류 코드·실패 지점·`details` 구성뿐).
+- **body-level defect 발견 (수정하지 않고 보고)**: spec.md §C.4-⑱ 실측 메커니즘 사실 표는 `mInputShown` 마커의 덤프 내 출현 횟수를 여전히 **"미측정(명시)"** 로 기록하고 있다. 그러나 M14 실기기 검증(commit `15276a4`, progress.md §E.2-M14 "실측 근거" 절)이 이를 **양쪽 상태(`false`/`true`) 모두 정확히 1회로 측정 완료**했다 — M14는 자신이 작성한 `ime-binding-parser.ts`의 doc comment는 이 사실에 맞게 정정했으나(§E.2-M14 "프롬프트 사전 기술 중 틀린 것으로 확인된 항목" 절 참고), spec.md 본문 자체는 manager-spec 소유이므로 건드리지 않았다. 이 sync-phase도 같은 소유 경계를 지켜 spec.md §C.4-⑱을 **수정하지 않았다** — 대신 이 sync-phase 산출물(progress.md §E.4-d, 본 항목)로 보고한다. 후속 조치: manager-spec이 spec.md §C.4-⑱의 검증 수준 칸을 "미측정(명시)"에서 "실측(Android, 양 표면) — M14 세션에서 양쪽 상태 각 1회 확인(§E.2-M14)"로 갱신하는 편집이 필요하다.

@@ -8,7 +8,7 @@ including multi-device interaction testing.
 
 > **Status**: core Android/adb primitives + environment bootstrap, the
 > iOS Simulator/idb backend, gesture primitives (`swipe`/`scroll`), and
-> the iOS **web content** path are implemented and unit/mock-tested (690
+> the iOS **web content** path are implemented and unit/mock-tested (702
 > tests, all green). The **iOS backend has been verified end-to-end
 > against a booted simulator** (2026-07-26, iPhone 17 Pro / iOS 26.0):
 > launch Safari, dump the element tree, tap by selector, type, send
@@ -37,10 +37,19 @@ including multi-device interaction testing.
 > while verifying that second fix — `ime enable` can itself fail right
 > after a fresh install because the input-method service hasn't
 > registered it yet — and is fixed the same amendment with a bounded
-> retry. All three are described under [Status](#status). The
-> Unicode-IME APK (ADBKeyBoard, GPL-2.0) is never bundled — `doctor`
-> downloads it from its official release on first use, now confirmed
-> end-to-end against real hardware.
+> retry. **Two more real defects surfaced the same day, found by
+> changing the venue rather than repeating it** — driving a Chrome web
+> page instead of the Settings app, and running with two connected
+> devices instead of one: non-ASCII `text` erased the very string it had
+> just typed on a Chrome page input (its own keyboard-hide keystroke was
+> delivered to the page as a cancel action), and an unconnected iOS
+> simulator was counted as connected, so error messages named a false
+> device count and the documented auto-select path could never fire.
+> Both are **found and fixed in the 0.4.0 amendment**. All five defects
+> are described under [Status](#status). The Unicode-IME APK
+> (ADBKeyBoard, GPL-2.0) is never bundled — `doctor` downloads it from
+> its official release on first use, now confirmed end-to-end against
+> real hardware.
 
 ## Why
 
@@ -235,7 +244,15 @@ selector matches nothing, the text is **not** sent at all: the caller gets
 be focused already.
 
 After sending, the soft keyboard is dismissed by default so it does not
-cover the next element you want to tap. Pass `--keep-keyboard` to opt out.
+cover the next element you want to tap, by sending `KEYCODE_BACK` only
+after confirming the keyboard is actually shown. This dismisses the
+keyboard without disturbing what was just typed, on both a native field
+and a web page input reached via [`--web`](#web-content-on-the-ios-simulator)
+— an earlier version sent `KEYCODE_ESCAPE` instead, which a web page
+receives as its own input-cancel key and silently erases the text `text`
+had just sent, while still returning `{"ok":true}` (see
+[Status](#status)). Pass `--keep-keyboard` to skip the dismissal (and the
+keyboard-visibility check) entirely.
 
 See [Korean / emoji / Unicode text input](#korean--emoji--unicode-text-input)
 below for how non-ASCII strings are handled.
@@ -862,11 +879,11 @@ contaminate either device's input-method state.
 
 ## Status
 
-Android (SPEC-ANDROID-001, all 8 milestones plus the 0.2.0 and 0.3.0
-amendments), the iOS Simulator backend (SPEC-IOS-001), the iOS web
+Android (SPEC-ANDROID-001, all 8 milestones plus the 0.2.0, 0.3.0, and
+0.4.0 amendments), the iOS Simulator backend (SPEC-IOS-001), the iOS web
 content path (SPEC-WEBVIEW-001), and gesture primitives
 (SPEC-GESTURE-001, including its 0.4.0, 0.5.0, 0.6.0, 0.7.0, 0.8.0, and
-0.9.0 amendments) are implemented, with 690 unit/mock tests green.
+0.9.0 amendments) are implemented, with 702 unit/mock tests green.
 
 **iOS: verified against a real simulator** (2026-07-26, iPhone 17 Pro /
 iOS 26.0, fb-idb 1.1.7). A full Safari journey — `doctor` → `devices` →
@@ -1112,6 +1129,60 @@ resolves or times it. Full evidence as originally found (pre-fix):
   evidence the frequency dropped below a calculable level, not proof
   the race is gone.
 
+Two more real-device defects were found the same day, this time by
+changing the venue rather than repeating it — driving a Chrome web page
+instead of the Settings app, and running with two connected devices (an
+Android phone plus a booted iOS simulator) instead of one. Both were
+**found and fixed in the 0.4.0 amendment**.
+
+- **`text` erased the very string it had just typed, on a Chrome web
+  page input.** After sending, `text` dismissed the soft keyboard by
+  sending `KEYCODE_ESCAPE` (111); on a native `EditText` this only hides
+  the keyboard, which is why every prior real-device check (all against
+  the Settings app) had passed. On a Chrome page, ESCAPE is delivered to
+  the page itself, where it is the browser's own input-cancel key. A
+  three-step isolation confirmed ESCAPE alone was responsible: text
+  landed and stayed after typing, then vanished back to the placeholder
+  the moment a bare `keyevent 111` was sent with nothing else happening.
+  **Fix (0.4.0)**: `hideKeyboard` now sends `KEYCODE_BACK` (4) instead,
+  which dismisses the keyboard on both a web input and a native
+  `EditText` while preserving the typed text on both surfaces, and only
+  after confirming `dumpsys input_method` reports `mInputShown=true` —
+  a precautionary guard, not one forced by measurement: the one
+  real-device trial with the keyboard already hidden did not observe
+  navigation, but a single trial doesn't establish that it never would.
+  Best-effort semantics are unchanged — a failed visibility probe or a
+  failed hide keycode still leaves `text` at `ok:true`, and
+  `--keep-keyboard` still skips the probe entirely.
+- **An unconnected device counted as connected, so error messages named
+  a false device count and the documented auto-select path could never
+  fire.** `resolveTargetDevice` never read `connectionState`, so
+  counting, auto-selection, and error messages all used the raw device
+  list length. On a Mac with Xcode installed, that list includes every
+  registered-but-not-booted iOS simulator — on the machine this was
+  found on, 23 entries total, only 2 actually connected. The
+  `AMBIGUOUS_DEVICE` message read `23 devices connected`, which was
+  false — the envelope's `ok:false` was honest, but the message's own
+  claim wasn't — and auto-select (see [Commands](#commands) above) was
+  unreachable on any such machine, since the raw list length is never 1.
+  **Fix (0.4.0)**: a device now counts as connected only when its
+  `connectionState` is `"device"`; counting, auto-select, and error
+  `details.availableDevices` all use that filtered set, disconnected
+  entries are summarized only by count, and naming a serial that exists
+  but isn't connected now returns a dedicated `DEVICE_NOT_CONNECTED`
+  before any backend command runs, instead of failing one layer later
+  with a generic backend error. `devices` itself is untouched and still
+  lists every entry, connected or not.
+- 702 tests now pass (up from 690). Unlike the three 0.3.0 defects
+  above, the device-targeting fix is judged entirely by unit tests —
+  `resolveTargetDevice` is a pure function over the device list, with no
+  device interpretation, timing, or screen effect involved — while the
+  keyboard-erasure fix needed real-hardware confirmation on both a
+  Chrome web input (`m.naver.com`) and a native Settings search field
+  (Galaxy S25 Ultra SM-S938N). See
+  `.moai/specs/SPEC-ANDROID-001/progress.md` for the verbatim device
+  evidence.
+
 Still pending before this is production-ready:
 
 - Real-device verification of the remaining Android commands: `tap`,
@@ -1140,7 +1211,7 @@ Still pending before this is production-ready:
 
 | SPEC | Title | Status |
 |---|---|---|
-| SPEC-ANDROID-001 | Android/adb device-control primitives + environment bootstrap | Completed — core primitives verified on a real Android device; 0.3.0 found and fixed 3 real-device defects (see [Status](#status)). 3 key aliases, multi-device dual-connect, and npm publish remain open |
+| SPEC-ANDROID-001 | Android/adb device-control primitives + environment bootstrap | Completed — core primitives verified on a real Android device; 0.3.0 and 0.4.0 together found and fixed 5 real-device defects (see [Status](#status)). 3 key aliases, multi-device dual-connect, and npm publish remain open |
 | SPEC-IOS-001 | iOS Simulator backend (`idb`) — common schema + registry extension | Completed, verified on a real simulator |
 | SPEC-WEBVIEW-001 | iOS Simulator web content — DOM recognition + interaction (`ios-webkit-debug-proxy`) | Completed, verified on a real simulator |
 | SPEC-GESTURE-001 | `swipe`/`scroll` gesture primitives + off-viewport web element reach | Completed — verified on a real iOS simulator and a real Android device (one device/density each) |

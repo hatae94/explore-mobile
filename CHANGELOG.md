@@ -633,6 +633,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `.moai/specs/SPEC-ANDROID-001/progress.md` for the verbatim device
     evidence and `.moai/reports/android-verification/remaining-commands-android-2026-07-29.md`
     for the original defect report.
+- **A defect that erased its own input, and an error message that named a
+  false device count** (SPEC-ANDROID-001 amendment 0.4.0). Closing out the
+  0.3.0 amendment the same day, changing the venue rather than repeating
+  it — a Chrome web page instead of the Settings app, and two connected
+  devices (an Android phone plus a booted iOS simulator) instead of one —
+  surfaced two more real-device defects:
+  - **`text` erased the very string it had just typed, on a Chrome web
+    page input.** After sending, `text` dismisses the soft keyboard by
+    sending `KEYCODE_ESCAPE` (111); on a native `EditText` this only hides
+    the keyboard, which is why every prior real-device check (all against
+    the Settings app) had passed. On a Chrome page, ESCAPE is delivered to
+    the page itself, where it is the browser's own input-cancel key — a
+    three-step isolation confirmed ESCAPE alone was responsible: text
+    landed and stayed after typing, then vanished back to the placeholder
+    the moment a bare `keyevent 111` was sent with nothing else happening.
+    `hideKeyboard` now sends `KEYCODE_BACK` (4) instead, which dismisses
+    the keyboard on both a web input and a native `EditText` while
+    preserving the typed text on both surfaces. Because an unconsumed BACK
+    could plausibly be read as real navigation when no keyboard is up, the
+    keycode is now sent only after confirming `dumpsys input_method`
+    reports `mInputShown=true` — a precautionary guard, not one forced by
+    measurement: the one real-device trial with the keyboard already
+    hidden did not observe navigation, but a single trial doesn't
+    establish that it never would either. Best-effort semantics are
+    unchanged either way — a failed visibility probe or a failed hide
+    keycode still leaves `text` at `ok:true`, and `--keep-keyboard` still
+    skips the probe entirely.
+  - **An unconnected device counted as connected, so error messages named
+    a false device count and a documented auto-select path could never
+    fire.** `resolveTargetDevice` never read `connectionState`, so
+    counting, auto-selection, and error messages all used the raw device
+    list length. On a Mac with Xcode installed, that list includes every
+    registered-but-not-booted iOS simulator — on the machine this was
+    found on, 23 entries total, only 2 actually connected. The
+    `AMBIGUOUS_DEVICE` message read `23 devices connected`, which was
+    false — the envelope's `ok:false` was honest, but the message's own
+    claim wasn't. Auto-select ("omit `--device` when exactly one device is
+    connected") was likewise unreachable on any such machine, since the
+    raw list length is never 1. A device now counts as connected only when
+    its `connectionState` is `"device"`; counting, auto-select, and error
+    `details.availableDevices` all use that filtered set, and disconnected
+    entries are summarized only by count (`disconnectedCount`), never
+    dumped in full. Naming a serial that exists in the list but isn't
+    connected now returns a dedicated `DEVICE_NOT_CONNECTED` — distinct
+    from `DEVICE_NOT_FOUND` (absent from the list entirely) — before any
+    backend command runs; naming a serial genuinely absent from the list
+    still returns `DEVICE_NOT_FOUND` unchanged. `devices` itself is
+    untouched and still lists every entry, connected or not — the fix
+    narrows only the targeting layer, not the inventory command.
+  - 702 tests now pass (up from 690), including new pure-function coverage
+    for the device-targeting filter (`src/cli/device-targeting.test.ts`)
+    and the keyboard-hide/visibility-guard paths
+    (`src/backend/adb-backend.test.ts`). Unlike the 0.3.0 defects above,
+    the device-targeting fix is judged entirely by unit tests —
+    `resolveTargetDevice` is a pure function over `DeviceInfo[]`, so no
+    device interpretation, timing, or screen effect is involved; only the
+    keyboard-erasure fix needed real-hardware confirmation (Galaxy S25
+    Ultra SM-S938N, against both a Chrome web input on `m.naver.com` and a
+    native Settings search field). See
+    `.moai/specs/SPEC-ANDROID-001/progress.md` for the verbatim device
+    evidence.
 
 ### Changed
 
