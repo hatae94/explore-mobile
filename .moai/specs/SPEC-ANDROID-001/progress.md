@@ -1,8 +1,8 @@
 ---
 id: SPEC-ANDROID-001
 title: "Android(adb) 기기 제어 기본기 + 자동 환경 세팅 CLI 코어 — 진행"
-version: "0.3.0"
-status: completed
+version: "0.4.0"
+status: in-progress
 created: 2026-07-22
 updated: 2026-07-29
 author: manager-spec
@@ -417,3 +417,74 @@ $ pnpm build
 ### 프롬프트 사전 기술 중 틀린 것으로 확인된 항목
 
 없음. 재시도 상한 4(최초 1회+재시도 3회)/간격 500ms은 이번에 새로 설계 선택한 값이며 프롬프트가 특정 수치를 지정하지 않았으므로 "틀림"의 대상이 아니다. `ime list -a` 미관측 근거(§C.3-⑭), `ime enable` 멱등성(§C.3-⑮), `mCurId` 결합항 무용(§C.3-⑯) 등 프롬프트가 인용한 사실들은 spec.md 본문과 정확히 일치했다.
+
+## §E.2-M13 개정(0.4.0) M13 — 대상 기기 해석의 "연결" 정의 (2026-07-29)
+
+> §E.4-c(0.3.0 sync 마감) 이후 같은 날 실기기 검증(Chrome 웹 구동 + 2기기 운용)이 결함 2건을 드러냈고, 개정 0.4.0(`c0132cd`)이 spec.md/plan.md/acceptance.md를 다시 `in-progress`로 열어 정정했다. 본 절은 그 개정의 **M13만** 마감한다(M14 — 소프트키보드 숨김이 자기 입력을 파괴하는 결함 — 은 별도 마일스톤·별도 커밋이며, `hideKeyboard`/`text` 경로를 전혀 건드리지 않았다). M13은 M10·M11·M12(0.3.0)와 완전히 독립이다 — `cli/device-targeting.ts`는 `adb-backend.ts`와 공유 코드가 0이다(plan.md §F.10).
+
+### 산출물
+
+- **`src/cli/device-targeting.ts` `resolveTargetDevice`**(수정) — 신설 내부 헬퍼 `connectedOnly(devices)`가 `connectionState === "device"`로 먼저 거른다(REQ-MULTIDEV-001 개정 0.4.0의 "연결" 정의). 계수·자동 선택·`AMBIGUOUS_DEVICE`/`NO_DEVICE` 메시지가 전부 이 필터링된 배열을 쓴다.
+  - **명시 지정 미연결 기기**: `requestedSerial`이 목록에 **있으나** `connectionState !== "device"`이면 새 코드 `DEVICE_NOT_CONNECTED`를 반환(`details.connectionState`에 관측값 포함) — 목록에 아예 없는 경우의 `DEVICE_NOT_FOUND`와 구분된다. 순수 함수가 이미 구조화된 오류를 반환하므로 plan.md §A.6이 명시한 대로 별도 오류 클래스/`instanceof` 왕복을 두지 않았다(구현 재량 선택).
+  - **`NO_DEVICE`**: 연결 0대일 때, 원시 목록에 미연결 항목이 있으면(`devices.length > 0`) 메시지에 그 개수를 포함한다(`No connected device (N device(s) listed, but none are connected — run 'devices' for the full list).`) — "있는데 부팅 안 됨"과 "아무것도 없음"을 구분.
+  - **`AMBIGUOUS_DEVICE`**: 메시지는 연결된 기기 수만 말한다(`${connected.length} devices connected; ...`). `details.availableDevices`는 연결된 기기만 담고, 미연결 개수는 `details.disconnectedCount`로 요약한다(0이면 필드 자체를 생략 — 필드명은 구현 재량이나 전체 덤프 금지는 규범).
+  - **`DEVICE_NOT_FOUND`**: `details.availableDevices`도 동일하게 연결된 기기만 담도록 정정(개정 전에는 전체 원시 목록).
+  - **`unauthorized`도 미연결로 취급**됨을 `connectedOnly` 필터가 자동으로 보장한다(REQ-MULTIDEV-001의 정의 그대로 — 별도 분기 불필요).
+  - **`devices` 명령(`cli/commands/devices.ts`)은 전혀 건드리지 않았다**(PRESERVE) — 자체 필터 로직(`--device`로 좁히는 자신만의 `DEVICE_NOT_FOUND` 경로)이 `resolveTargetDevice`와 무관하게 남아 있고, 인벤토리는 여전히 미연결 항목을 포함해 전부 나열한다(AC-045).
+- **`README.md`**(수정, ~120행) + **`.claude/skills/explore-mobile/SKILL.md`**(수정) — 자동 선택 설명에 "연결된"의 정의(`connectionState === "device"`)를 추가하고, offline/unauthorized 항목이 `devices` 목록에 섞일 수 있다는 사실 및 `DEVICE_NOT_CONNECTED` 코드를 문서화했다. 기존 문구("정확히 1대가 연결되면 자동 선택")는 약속으로는 옳았고 동작만 틀렸으므로, 문구를 약화시키지 않고 정의만 보강했다(plan.md §F 산출물4의 지시대로).
+- 테스트: `src/cli/device-targeting.test.ts`(신규 7건) — `device()` 픽스처 헬퍼에 `connectionState` 3번째 선택 인자를 추가(기존 호출부 전부 하위호환, 기본값 `"device"`)하고, 실측 관측된 23건(연결 2 + offline 21, spec.md §C.4-⑳) 분포를 그대로 재현하는 `withOfflineSimulators()` 헬퍼를 신설했다.
+
+### AC 판정 매트릭스 (AC-ANDROID-041~045)
+
+| AC ID | 요약 | 검증 방식 | Status | Actual Output |
+|-------|------|-----------|--------|----------------|
+| AC-ANDROID-041 | 계수·오류 메시지가 미연결 항목을 제외 | unit(mock) + 실측 보강 | **PASS (unit)** | `device-targeting.test.ts` "counts and messages only connected devices, excluding offline entries" — 연결 2건(Android 실기기 serial + iOS 시뮬레이터 UDID, 실측 값 그대로 사용) + offline 21건(23건 총합) 픽스처에서 `AMBIGUOUS_DEVICE` 메시지가 정확히 `"2 devices connected; specify --device <serial>."`이고 `"23"`을 포함하지 않음을 단언. **실측 보강은 수행하지 않았다** — 이 AC는 acceptance.md §D.4.2-b가 명시한 대로 순수 함수 unit만으로 완전히 판정되며, 기기 부재가 미충족 사유가 아니다 |
+| AC-ANDROID-042 | 연결 1대 + 미연결 다수 → 자동 선택 발동 | unit(mock) + 실측 보강 | **PASS (unit)** | "auto-selects the sole connected device regardless of how many disconnected entries are also listed" — 연결 1건 + offline 22건(23건 총합) 픽스처에서 `resolveTargetDevice`가 `{ok:true, serial:"adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp"}`를 반환함을 단언(개정 전에는 원시 목록 길이가 23이라 이 분기가 도달 불가였다). **실측 보강 미수행** — 사유 동일 |
+| AC-ANDROID-043 | 명시 지정한 미연결 기기 → `DEVICE_NOT_CONNECTED`, 백엔드 미실행 | unit(mock) + 실측 보강 | **PASS (unit)** | "returns DEVICE_NOT_CONNECTED (not DEVICE_NOT_FOUND) when the requested serial exists in the list but is not connected" — offline 항목을 명시 지정하면 `code:"DEVICE_NOT_CONNECTED"` + `details.connectionState:"offline"` 반환을 단언. 대조군("still returns DEVICE_NOT_FOUND ... for a serial absent entirely")과 `unauthorized` 취급 테스트("treats connectionState 'unauthorized' as not connected")로 세 코드 경로(`DEVICE_NOT_FOUND`/`DEVICE_NOT_CONNECTED`/`ok:true`)가 서로 겹치지 않음을 확인. `resolveTargetDevice`는 순수 함수이므로 "백엔드 미실행"은 함수가 어떤 `backend.*` 메서드도 호출하지 않는다는 것으로 구조적으로 보장됨 — grep으로 `resolveTargetDevice`를 호출하는 12개 커맨드 파일 전부를 확인했고, 그중 11개(`dump`/`key`/`launch`/`reset`/`screenshot`/`scroll`/`stop`/`swipe`/`tap`×2/`text`/`web-support`)는 `if (!target.ok) return failure(...)` 조기 반환 패턴을, 나머지 1개(`doctor.ts`)는 `target.ok`가 거짓이어도 여전히 `ok:true`를 반환하되 `target.message`를 `adbKeyboard.skipped.reason`에 그대로 embed하는 다른 패턴을 쓴다 — 두 패턴 모두에서 백엔드 메서드는 호출되지 않으므로 "백엔드 미실행" 자체는 두 패턴 공통으로 보장되나, `doctor` 명령의 최종 JSON 봉투(`ok:true`)는 다른 커맨드와 다르다는 점을 정확히 기록한다(이 차이는 M13이 만든 것이 아니라 기존 `doctor.ts` 설계이며, `doctor.ts`는 본 M13에서 수정하지 않았다) |
+| AC-ANDROID-044 | `details.availableDevices`는 연결된 기기만 + 미연결은 개수 요약 | unit(mock) | **PASS** | "lists only connected devices in details.availableDevices and never dumps disconnected entries wholesale" — 연결 2 + offline 21 픽스처에서 `availableDevices.length === 2`, 전항목이 `connectionState === "device"`, 그리고 `JSON.stringify(details)`에 offline 시리얼(`"sim-offline-"`)이 전혀 나타나지 않음을 단언(전체 덤프 금지 확인) |
+| AC-ANDROID-045 | `devices` 출력 불변 [비회귀] | unit(mock) + 실측 | **PASS (비회귀, 무변경 확인)** | `src/cli/commands/devices.ts`를 전혀 수정하지 않았음을 `git diff`로 확인 — 기존 `devices.test.ts`/`router.test.ts`의 `devices` 커맨드 테스트가 그대로 green임이 전체 회귀 스위트로 확인됨(아래 "회귀 없음 확인"). 실측(기기 구성 A/B에서 실제 23건 반환)은 미수행 — 코드 변경이 없으므로 회귀 위험도 없다 |
+
+### mock 레그가 실제로 단언하는 것
+
+- **연결 정의 적용**: `connectionState === "device"`가 아닌 모든 항목(offline·unauthorized 둘 다)이 계수·자동 선택·`details.availableDevices`에서 배제됨.
+- **자동 선택 도달 가능성**: 원시 목록 길이가 23이어도 연결 1건이면 자동 선택이 발동함(길이가 아니라 연결 수로 판단).
+- **오류 코드 3-way 분기**: 목록에 없음(`DEVICE_NOT_FOUND`) / 목록에 있으나 미연결(`DEVICE_NOT_CONNECTED`) / 연결됨(`ok:true`)이 서로 겹치지 않음.
+- **`details` 구성**: 연결된 기기만 나열, 미연결은 개수만(`disconnectedCount`), 전체 덤프 없음.
+- **기존 테스트 무변경 통과**: 기존 5건(전부 `connectionState:"device"` 기본값 픽스처)이 필터링 도입 후에도 동일한 값으로 통과 — 필터가 "이미 전부 연결된" 경우 항등 함수처럼 동작함을 재확인.
+
+### 실측 보강 — 수행하지 않음 (판정 조건 아님)
+
+acceptance.md §D.4.2-b가 명시한 대로, `resolveTargetDevice`는 `DeviceInfo[]` → 결과인 순수 함수이며 기기의 해석·시점·화면 효과가 개입하지 않는다. AC-041~045 **다섯 모두 unit으로 완전히 판정되고, 기기 부재가 미충족 사유가 아니다.** 그러므로 plan.md §C.2가 요구하는 기기 구성 A(연결 2대)/B(연결 1대) 배선 확인은 **이번 커밋에서 수행하지 않았다** — 이는 프롬프트가 명시한 대로 "이 SPEC 실행에는 기기가 필요 없다"는 전제와 acceptance.md §D.4.2-b의 규율("실측 필수로 적지 않는 것이 규율")을 그대로 따른 것이며, 누락이 아니라 의도된 생략이다. 실측 레그가 필요해지면 `devices` 명령을 구성 A/B에서 실행해 메시지를 대조하는 것으로 충분하다(코드 변경 없이 보강 가능).
+
+### 회귀 없음 확인
+
+```
+$ pnpm typecheck
+(no output; exit=0)
+
+$ pnpm test
+ Test Files  32 passed (32)
+      Tests  697 passed (697)          # 690(0.3.0 마감 기준선) + 7(M13 신규: device-targeting 7)
+
+$ pnpm build
+(exit=0)
+
+$ pnpm test:coverage (발췌)
+ device-targeting.ts   100% stmt / 100% branch / 100% funcs / 100% lines
+   (v8 text reporter는 4개 지표 전부 100%인 파일을 목록에서 생략한다 —
+    coverage-summary.json으로 직접 확인: lines 16/16, functions 4/4,
+    statements 18/18, branches 14/14)
+```
+
+### 기기 상태 (device etiquette)
+
+**본 M13 구현·검증은 기기에 어떤 adb/idb 명령도 전송하지 않았다** — 위 "실측 보강 — 수행하지 않음" 절이 밝힌 대로 전부 순수 함수 unit test다. 기기 기준선은 이번 세션에서 전혀 건드리지 않았다.
+
+### Residual-risk (§verification-claim-integrity 5-섹션 형식)
+
+- **Gap**: plan.md §C.2가 명시한 실측 보강 레그(구성 A — 연결 2대에서 메시지가 2를 말하는지, 구성 B — 연결 1대에서 자동 선택이 실제로 발동하는지) 둘 다 수행하지 않았다. 이는 §D.4.2-b가 명시적으로 "판정 조건이 아니다"라고 규정한 배선 확인이므로 AC 미충족이 아니지만, 실제 `listDevices()` 구현이 offline 시뮬레이터를 정확히 `connectionState:"offline"`으로 보고하는지는 spec.md §C.4-⑳의 기존 관측(0.4.0 개정 근거 자체)에 의존한다 — 이번 세션에서 재관측하지 않았다.
+- **Residual**: `disconnectedCount` 필드명은 구현 재량으로 정한 것이며 spec.md/acceptance.md 어디에도 특정 이름이 요구되지 않는다 — 이후 CHANGELOG/API 문서화 시 이 이름이 최종 계약이 되는지는 sync-phase(manager-docs)의 판단에 달려 있다.
+
+### 프롬프트 사전 기술 중 틀린 것으로 확인된 항목
+
+없음. "이 마일스톤은 기기가 필요 없다", "논리 판정은 전부 순수 함수 unit", "23건 중 2건 연결"이라는 실측 분포, `unauthorized`를 미연결로 취급하라는 지시, `devices` 명령 출력 불변 요구 등 프롬프트가 인용한 사실·지시는 plan.md/spec.md/acceptance.md 본문과 정확히 일치했다. 유일하게 프롬프트가 재량으로 남긴 것("오류 클래스/`instanceof` 왕복이 필요한지는 구현 재량")은 plan.md §A.6/§F가 이미 예견한 대로 불필요하다고 판단했다 — `resolveTargetDevice`가 순수 함수로 이미 구조화된 `CommandErrorInfo`를 반환하므로 M10/M12의 `ime-errors.ts` 같은 별도 Error 클래스 계층이 필요 없었다.

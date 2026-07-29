@@ -118,10 +118,23 @@ text — the JSON body is the only contract:
 on the iOS Simulator, which the native accessibility tree does not expose.
 
 Every device-facing command accepts `--device <serial>`. Omit it when
-exactly one device is connected — it is auto-selected. With 2+ devices
-connected and `--device` omitted, the command returns an
+exactly one device is **connected** — it is auto-selected. With 2+
+connected devices and `--device` omitted, the command returns an
 `AMBIGUOUS_DEVICE` error listing all connected serials instead of
 silently guessing.
+
+A device is **connected** iff `devices` reports its `connectionState` as
+`"device"` — `offline`/`unauthorized` entries do not count toward the
+auto-select/ambiguity check, even though `devices` still lists them (see
+below). On any Mac with Xcode installed, `devices` can list dozens of
+un-booted iOS simulator entries alongside the devices you actually
+intend to target; those entries are excluded from counting, auto-select,
+and error messages, but they are never hidden from `devices` itself —
+compare against its output to see the full picture. `--device
+<serial>` against an entry that exists but is not connected returns a
+dedicated `DEVICE_NOT_CONNECTED` error (distinct from `DEVICE_NOT_FOUND`,
+which means the serial isn't in the list at all) without sending any
+command to the device.
 
 ### `devices`
 

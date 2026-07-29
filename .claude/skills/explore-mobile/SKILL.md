@@ -59,16 +59,27 @@ free-text output — the JSON body is the only contract.
 ```
 
 Read `error.code` to branch programmatically (e.g. `AMBIGUOUS_DEVICE`,
-`NO_DEVICE`, `DEVICE_NOT_FOUND`, `IME_RESTORE_FAILED`,
-`APK_NOT_BUNDLED`, `ADB_COMMAND_FAILED`, `NOT_IMPLEMENTED`).
+`NO_DEVICE`, `DEVICE_NOT_FOUND`, `DEVICE_NOT_CONNECTED`,
+`IME_RESTORE_FAILED`, `APK_NOT_BUNDLED`, `ADB_COMMAND_FAILED`,
+`NOT_IMPLEMENTED`).
 
 ## Device targeting
 
 Every device-facing command accepts `--device <serial>`. Omit it when
-exactly one device is connected — it is auto-selected. When 2+ devices
-are connected and `--device` is omitted, the command returns a graceful
-`AMBIGUOUS_DEVICE` error with the full device list in `error.details`;
-run `devices` first to discover serials.
+exactly one device is **connected** — it is auto-selected. When 2+
+connected devices exist and `--device` is omitted, the command returns a
+graceful `AMBIGUOUS_DEVICE` error with the connected device list in
+`error.details`; run `devices` first to discover serials.
+
+A device counts as **connected** only when its `connectionState` is
+`"device"` — `offline`/`unauthorized` entries reported by `devices` are
+excluded from counting, auto-select, and error messages (though
+`devices` itself still lists them; on a macOS host with Xcode this can
+include many un-booted iOS simulator entries alongside the devices you
+actually care about). Passing `--device <serial>` for an entry that
+exists but is not connected returns `DEVICE_NOT_CONNECTED` (distinct
+from `DEVICE_NOT_FOUND`, which means the serial isn't in the list at
+all) — the backend never receives a command for it.
 
 ```bash
 node dist/cli/bin.js devices
