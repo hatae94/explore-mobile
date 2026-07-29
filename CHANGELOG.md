@@ -558,6 +558,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     device's density) supplied by a query at call time. The response
     field, its two values, and their meaning are all unchanged; only the
     prose describing the `"device-query"` value is corrected.
+- **Two `ok:true`-with-no-observable-effect defects found finishing the
+  Android real-device round, plus a third exposed while fixing the
+  second** (SPEC-ANDROID-001 amendment 0.3.0). The 2026-07-29 pass that
+  verified every remaining Android command against a real Samsung
+  SM-S938N (Android 16) found both defects; neither was reachable by the
+  unit/mock suite, which can only assert the shape of the `adb` command
+  line, not how the device resolves or times it:
+  - **`launch <package>` failed for apps whose launcher activity does
+    not declare `android.intent.category.DEFAULT`.** `launchApp` sent
+    `am start -a MAIN -c LAUNCHER -p <package>`, and `-p` is *implicit*
+    intent resolution, which only matches an activity declaring
+    `DEFAULT`. Measured: `com.android.settings` (`isDefault=true`)
+    opened; Samsung's Calculator and Clock (neither declares it) both
+    failed with `BACKEND_COMMAND_FAILED`, even though both are
+    installed, resolve a launcher activity fine, and open when tapped by
+    hand. `launchApp` now resolves the package's launcher component
+    first (judged by stdout — `No activity found` on failure, exit code
+    0 either way, so exit-code-based judging would have misread success)
+    and starts that component *explicitly* (`am start -n <component>`),
+    the same way the real launcher does. A resolve failure now returns a
+    dedicated `LAUNCHER_ACTIVITY_NOT_FOUND` code, distinct from the
+    generic `BACKEND_COMMAND_FAILED`, with no start intent sent; because
+    "no launcher activity" and "package not installed" produce
+    byte-identical resolve output, the message states both possibilities
+    rather than guessing which one occurred. Task-resume semantics are
+    unchanged — launching an already-foreground app still brings its
+    existing task forward (a warning line, exit 0, `ok:true`) instead of
+    starting a new instance.
+  - **Non-ASCII `text` silently sent nothing when ADBKeyBoard had to be
+    installed in the same call.** `ime set` returns as soon as the
+    setting is *recorded*, not once the IME service is actually bound,
+    and a base64 broadcast fired into that window was dropped —
+    the command still returned `ok:true` with nothing landing in the
+    focused field. This hit the first Korean/emoji input after `doctor`
+    and every self-heal install after a `reset` (which uninstalls
+    ADBKeyBoard), so it was not a rare state. `text` now polls
+    `dumpsys input_method` for `mBoundToMethod=true` before
+    broadcasting, with a bounded 5-second wait (a design ceiling, not a
+    measurement); on timeout it now sends nothing and returns
+    `ok:false` with a new `IME_BIND_TIMEOUT` code — **a deliberate
+    response-contract change**: a call that previously returned
+    `ok:true` on this path now returns `ok:false`, chosen because the
+    old behavior was already broken and a loud failure is preferable to
+    a silent one. The already-tracked original-IME disk persistence for
+    `reset`/`doctor --clean` is unaffected either way, including on the
+    timeout path. The warm path (IME already ADBKeyBoard and bound) is
+    unchanged — it still sends immediately with no wait.
+  - **A third, quieter defect surfaced one step earlier while verifying
+    the fix above**: right after a fresh ADBKeyBoard install, `ime
+    enable` could itself fail with `Unknown input method
+    com.android.adbkeyboard/.AdbIME cannot be enabled for user #0`,
+    because the input-method service had not yet registered the
+    just-installed IME — a transient registration race, not a
+    missing-package error (the package had, in fact, just finished
+    installing, confirmed by `pm list packages` going 0 → 1). Unlike the
+    two defects above, this failure was never silent — it already
+    returned `ok:false` with a clear message — so the fix is a narrower,
+    bounded retry (up to 4 attempts, 500ms apart) scoped to that exact
+    failure shape only; any other `ime enable` failure (permissions, API
+    level, device state) still surfaces immediately with zero retries,
+    so a real failure is never masked behind a retry loop, and no new
+    error code was introduced. Measured baseline before the fix: 3
+    failures in 8 consecutive cold attempts with a focused input field
+    (0 failures in 11 attempts without focus); after the fix, 8
+    consecutive cold-with-focus attempts all landed their text with zero
+    natural `ime enable` failures — evidence the frequency dropped
+    below a calculable level, not proof the race is gone.
+  - 690 tests now pass (up from 653), including mock coverage for the
+    two new pure-function parsers (launcher-resolve output, IME-binding
+    readiness) and the retry predicate, plus the explicit-launch,
+    bind-wait, and bounded-retry code paths. All three defects above
+    were reachable only on real hardware; see
+    `.moai/specs/SPEC-ANDROID-001/progress.md` for the verbatim device
+    evidence and `.moai/reports/android-verification/remaining-commands-android-2026-07-29.md`
+    for the original defect report.
 
 ### Changed
 

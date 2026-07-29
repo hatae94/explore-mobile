@@ -2,7 +2,7 @@
 id: SPEC-ANDROID-001
 title: "Android(adb) 기기 제어 기본기 + 자동 환경 세팅 CLI 코어 — 진행"
 version: "0.3.0"
-status: in-progress
+status: completed
 created: 2026-07-22
 updated: 2026-07-29
 author: manager-spec
@@ -142,6 +142,31 @@ _<pending run-phase — manager-develop 소유>_
 - **실기기 e2e 상태 — 보수적 기재 (사용자 승인, 2026-07-27)**: 개정 근거(`spec.md` §Amendments)가 "실기기 검증 과정에서 구현이 진화했다"고 기술하고 `§C.2 알려진 한계`에 실기기 관찰(resource-id 미설정 앱은 `--text` 필요, 이모지가 HTML 엔티티로 정규화됨)이 남아 있으므로 **실기기 하드닝 자체는 실제로 있었다**. 그러나 **AC별 e2e PASS 증거는 어디에도 기록되지 않았다**. 본 sync 시점에 안드로이드 기기가 연결돼 있지 않아(`adb devices` 결과 없음) 재관측도 불가능했다. 따라서 8건(AC-001/002/003/004/005/007/011/017)은 **PARTIAL을 유지**하고, 관측하지 않은 것을 PASS로 승격하지 않았다(`verification-claim-integrity.md` §1.1 준수). 최종: 24건 중 PASS 16(기존 11 + 신설 5) / PARTIAL 8 / FAIL 0.
 - **검증**: 303 tests PASS (20 files), `pnpm typecheck` exit 0, `pnpm build` exit 0 — 본 sync는 문서 전용이라 코드 변경 없음.
 - **남은 후속(마감과 무관)**: 실기기 e2e 증거 기록(기기 연결 시), APK 조달 체크리스트(`vendor/adbkeyboard/README.md`), npm 게시.
+
+### §E.4-c 개정(0.3.0) sync 마감 (2026-07-29)
+
+위 §E.4-b는 0.2.0 마감(2026-07-27) 시점의 기록이다. 그 이후 2026-07-29 실기기 검증에서 결함 2건(M11 `launch` 암시적 인텐트, M10 IME 바인딩 경쟁)이 드러나 개정 0.3.0(`ba3b563`)이 SPEC을 다시 `in-progress`로 열었고, M10 검증 도중 세 번째 결함(M12 `ime enable` 등록 경쟁)이 추가로 발견돼 같은 0.3.0 개정으로 연장됐다(§E.2-M11/§E.2-M10/§E.2-M12). 본 기록이 그 개정을 닫는다.
+
+- **sync_complete_at**: 2026-07-29
+- **sync_commit_sha**: `pending-backfill-single-sync-commit` (자기참조 해시 — `spec-frontmatter-schema.md`의 SHA placeholder backfill exemption에 따른 표준 placeholder. 이번 sync 커밋은 단일 커밋이라 별도 backfill 커밋을 만들지 않음 — 실제 SHA는 `git log`로 확인 가능)
+- **sync_status**: complete — 4개 SPEC artifact frontmatter `in-progress → completed` 전이 + CHANGELOG.md/README.md에 0.3.0 결함 3건(발견 + 수정) 반영 완료
+- **b12_self_test_a** (CHANGELOG 중복 방지, pre-emission grep): PASS — `grep -c 'SPEC-ANDROID-001' CHANGELOG.md` = 6(전부 0.2.0/최초 릴리스 시점 기존 항목). `LAUNCHER_ACTIVITY_NOT_FOUND`/`IME_BIND_TIMEOUT`/`ime enable`/`registration race`/`category.DEFAULT` 사전 검색으로 0.3.0 전용 항목이 아직 없음을 확인한 뒤 신규 항목을 추가했다(중복 없음)
+- **b12_self_test_b** (AC count match, acceptance.md SSOT 대조): PASS(해당 없음) — 본 CHANGELOG 항목은 특정 AC 개수를 인용하지 않는다(acceptance.md SSOT `grep -cE '^\| AC-ANDROID-[0-9]+ \|' acceptance.md` = 35건, §D.3 DoD 참조). 인용하지 않은 숫자는 대조 대상이 없다
+- **b12_self_test_c** (CHANGELOG/README에서 참조한 파일 경로 실존 확인): PASS — `.moai/specs/SPEC-ANDROID-001/progress.md`, `.moai/reports/android-verification/remaining-commands-android-2026-07-29.md` 전부 `ls` 확인됨. CHANGELOG가 인용하는 소스 파일(`src/backend/launcher-resolve-parser.ts`, `src/backend/launch-errors.ts`, `src/backend/ime-binding-parser.ts`, `src/backend/ime-enable-retry-predicate.ts`, `src/backend/adb-backend.ts`, `src/backend/ime-errors.ts`, `src/cli/commands/launch.ts`, `src/cli/commands/text.ts`) 전부 실존 확인됨
+- **changelog_entry_position**: `CHANGELOG.md` `## [Unreleased]` → `### Fixed` 섹션 마지막 항목(0.8.0 GESTURE 항목 뒤, `### Changed` 헤더 앞) — SPEC-ANDROID-001 0.3.0 신규 항목 1건
+- **frontmatter_status_transitions**:
+  - spec.md: `in-progress → completed` (updated: 2026-07-29)
+  - plan.md: `in-progress → completed` (updated: 2026-07-29)
+  - acceptance.md: `in-progress → completed` (updated: 2026-07-29)
+  - progress.md: `in-progress → completed` (updated: 2026-07-29)
+- **canary_compliance_check**: n/a — 본 SPEC은 forward-looking policy(자체 sync 시점에 검증하는 정책)를 정의하지 않음
+- **README 정정 내역** (모든 수치는 본 sync 세션에서 직접 실행해 확인 — 눈대중 대조 금지 지시 준수, `pnpm test` → 690 passed/32 files, `pnpm typecheck`/`pnpm build` exit 0):
+  - 헤더 배너(~9-43행): 테스트 수 653→690 정정 + "두 결함을 발견"만 서술하던 것을 "발견하고 0.3.0에서 수정" + 세 번째 결함(M12) 서술 추가
+  - Status 섹션 첫 문단(~846행): 653→690, "all 8 milestones"에 "plus the 0.2.0 and 0.3.0 amendments" 추가
+  - "Two real-device defects are open" 블록(~1041행): open→found-and-fixed로 재구성하되 메커니즘 서술은 보존, 각 항목에 "Fix (0.3.0)" 절 추가, 세 번째 결함(M12 등록 경쟁) 항목 신설
+  - "Still pending" 첫 항목(~1104행): "`launch` is verified only insofar as the defect above was found" → `launch` 완전 검증(DEFAULT 선언/미선언 양쪽 + 태스크 재개)으로 정정
+  - Roadmap 표 SPEC-ANDROID-001 행(~1130행): "Implemented, e2e pending" → "Completed" + 잔여 미검증 항목(키 별칭 3종·다중 기기·npm 게시) 명시
+- **honesty note**: 결함 3건 모두 실기기(SM-S938N)에서 실측 완료(AC-025~035 전부 PASS, acceptance.md §D.3 DoD). M12의 8/8 연속 성공은 결함 소멸의 증명이 아니라 빈도가 계산 가능한 수준(baseline 3/8 대비 우연 통과 확률 약 `(5/8)^8 ≈ 2.3%`) 아래로 내려갔다는 증거로만 CHANGELOG/README 양쪽에 정확히 서술했다(과장 금지). 포커스된 입력란 상관(3/8 대 0/11)은 상관으로만 서술하고 원인으로 서술하지 않았다. `power`/`volume_up`/`volume_down` 3개 키 별칭과 다중 기기 동시 연결 검증, npm 게시는 README "Still pending" 목록에 그대로 보존했다(의도적 미검증 상태 유지, 과장 없음).
 
 ## §E.2-M11 개정(0.3.0) M11 — `launch` 명시적 컴포넌트 시작 (2026-07-29)
 

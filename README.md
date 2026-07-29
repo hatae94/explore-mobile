@@ -8,7 +8,7 @@ including multi-device interaction testing.
 
 > **Status**: core Android/adb primitives + environment bootstrap, the
 > iOS Simulator/idb backend, gesture primitives (`swipe`/`scroll`), and
-> the iOS **web content** path are implemented and unit/mock-tested (653
+> the iOS **web content** path are implemented and unit/mock-tested (690
 > tests, all green). The **iOS backend has been verified end-to-end
 > against a booted simulator** (2026-07-26, iPhone 17 Pro / iOS 26.0):
 > launch Safari, dump the element tree, tap by selector, type, send
@@ -30,11 +30,17 @@ including multi-device interaction testing.
 > `reset`, `screenshot`, and `dump` all behave as specified — and the
 > round found **two real defects** (`launch` cannot open apps whose
 > launcher activity omits `category.DEFAULT`; non-ASCII `text` silently
-> inputs nothing when it has to install ADBKeyBoard in the same call).
-> Both are described under [Status](#status). The Unicode-IME APK
-> (ADBKeyBoard, GPL-2.0) is never bundled — `doctor` downloads it from
-> its official release on first use, now confirmed end-to-end against
-> real hardware.
+> inputs nothing when it has to install ADBKeyBoard in the same call),
+> both **found and fixed in the 0.3.0 amendment** (`launch` now resolves
+> and starts the launcher component explicitly; `text` now waits for the
+> IME to actually bind before sending). A third, quieter defect surfaced
+> while verifying that second fix — `ime enable` can itself fail right
+> after a fresh install because the input-method service hasn't
+> registered it yet — and is fixed the same amendment with a bounded
+> retry. All three are described under [Status](#status). The
+> Unicode-IME APK (ADBKeyBoard, GPL-2.0) is never bundled — `doctor`
+> downloads it from its official release on first use, now confirmed
+> end-to-end against real hardware.
 
 ## Why
 
@@ -843,10 +849,11 @@ contaminate either device's input-method state.
 
 ## Status
 
-Android (SPEC-ANDROID-001, all 8 milestones), the iOS Simulator backend
-(SPEC-IOS-001), the iOS web content path (SPEC-WEBVIEW-001), and gesture
-primitives (SPEC-GESTURE-001, including its 0.4.0, 0.5.0, 0.6.0, 0.7.0,
-0.8.0, and 0.9.0 amendments) are implemented, with 653 unit/mock tests green.
+Android (SPEC-ANDROID-001, all 8 milestones plus the 0.2.0 and 0.3.0
+amendments), the iOS Simulator backend (SPEC-IOS-001), the iOS web
+content path (SPEC-WEBVIEW-001), and gesture primitives
+(SPEC-GESTURE-001, including its 0.4.0, 0.5.0, 0.6.0, 0.7.0, 0.8.0, and
+0.9.0 amendments) are implemented, with 690 unit/mock tests green.
 
 **iOS: verified against a real simulator** (2026-07-26, iPhone 17 Pro /
 iOS 26.0, fb-idb 1.1.7). A full Safari journey — `doctor` → `devices` →
@@ -1031,41 +1038,82 @@ between success, `AMBIGUOUS_PAGE`, and `NO_WEB_PAGE` even against a
 single browser tab. Spacing calls a few seconds apart was the only
 reliable mitigation found; a real fix is out of scope here.
 
-Two real-device defects are open — both return `{"ok":true}` (or a
-package-not-found error) while doing nothing useful, and neither is
-reachable by the unit/mock suite, which asserts the shape of the `adb`
-command line rather than how a device resolves it. Full evidence:
+Two real-device defects were found finishing this verification round,
+and both were **fixed in the 0.3.0 amendment** — before the fix, both
+returned `{"ok":true}` (or a package-not-found-shaped error) while doing
+nothing useful, and neither was reachable by the unit/mock suite, which
+asserts the shape of the `adb` command line rather than how a device
+resolves or times it. Full evidence as originally found (pre-fix):
 `.moai/reports/android-verification/remaining-commands-android-2026-07-29.md`.
 
-- **`launch <package>` fails for apps whose launcher activity does not
-  declare `android.intent.category.DEFAULT`.** `launchApp` sends
+- **`launch <package>` failed for apps whose launcher activity does not
+  declare `android.intent.category.DEFAULT`.** `launchApp` sent
   `am start -a MAIN -c LAUNCHER -p <package>`, and `-p` is *implicit*
   intent resolution, which requires `DEFAULT`. A real launcher uses the
-  explicit component instead. Measured: `com.android.settings` succeeds
-  (`isDefault=true`); Samsung Calculator and Clock both fail, though
+  explicit component instead. Measured: `com.android.settings` succeeded
+  (`isDefault=true`); Samsung Calculator and Clock both failed, though
   their launcher activities resolve fine and open when tapped by hand —
   and both start correctly via `am start -n <package>/<activity>`.
-- **Non-ASCII `text` silently inputs nothing when ADBKeyBoard has to be
+  **Fix (0.3.0)**: `launch` now resolves the launcher component first —
+  judged by the resolve command's stdout, not its exit code, since a
+  resolve failure still exits 0 — and starts that component explicitly,
+  the same way the real launcher does. A resolve failure now returns a
+  dedicated `LAUNCHER_ACTIVITY_NOT_FOUND` code with no start intent
+  sent (the message states both possible causes, since "no launcher
+  activity" and "package not installed" produce identical resolve
+  output), and task-resume semantics — bringing an already-running
+  app's task forward instead of starting a new instance — are
+  unchanged.
+- **Non-ASCII `text` silently input nothing when ADBKeyBoard had to be
   installed during that same call.** The install and the IME switch both
-  succeed, the command returns `ok:true`, and no text reaches the focused
-  field. The IME *switch* is not the cause — a call that only switches
-  works. This hits the first Korean/emoji input after `doctor`, and the
-  self-heal path after any `reset` (which uninstalls ADBKeyBoard), so it
-  is not a rare state. A second call then works.
+  succeeded, the command returned `ok:true`, and no text reached the
+  focused field. The IME *switch* was not the cause — a call that only
+  switches worked. This hit the first Korean/emoji input after `doctor`,
+  and the self-heal path after any `reset` (which uninstalls
+  ADBKeyBoard), so it was not a rare state. A second call then worked.
+  **Fix (0.3.0)**: `text` now waits for the IME to actually *bind*
+  before broadcasting — polling `dumpsys input_method` for
+  `mBoundToMethod=true`, bounded at 5 seconds (a design ceiling, not a
+  measurement). On timeout it now sends nothing and returns `ok:false`
+  with a new `IME_BIND_TIMEOUT` code — **a deliberate response-contract
+  change**: this exact path used to return `ok:true` and no longer
+  does, chosen because a loud failure beats a silent one. The warm path
+  (IME already switched and bound) is unchanged — it still sends
+  immediately with no wait.
+- **A third, quieter defect surfaced while verifying the fix above**:
+  right after a fresh ADBKeyBoard install, `ime enable` could itself
+  fail with `Unknown input method com.android.adbkeyboard/.AdbIME
+  cannot be enabled for user #0`, because the input-method service had
+  not yet registered the just-installed IME — a transient registration
+  race, not a missing-package error (the package had, in fact, just
+  finished installing). Unlike the two defects above, this one was
+  never silent — it already returned `ok:false` with a clear message —
+  so **the fix (0.3.0)** is a narrower bounded retry (up to 4 attempts,
+  500ms apart) scoped to that exact failure shape only; any other `ime
+  enable` failure (permissions, API level, device state) still surfaces
+  immediately with zero retries, and no new error code was added.
+  Measured baseline before the fix: 3 failures in 8 consecutive cold
+  attempts with a focused input field (0 failures in 11 attempts
+  without focus); after the fix, 8 consecutive cold-with-focus attempts
+  all landed their text with zero natural `ime enable` failures —
+  evidence the frequency dropped below a calculable level, not proof
+  the race is gone.
 
 Still pending before this is production-ready:
 
 - Real-device verification of the remaining Android commands: `tap`,
-  `text` (ASCII and Korean), `key`, `stop`, `doctor`, and `reset` are
-  **now verified against a real device**, as are `screenshot` PNG
-  validity and `dump` — joining `swipe`/`scroll` from the previous
-  round. `launch` is verified only insofar as the defect above was
-  found. Three key aliases (`power`, `volume_up`, `volume_down`) were
-  deliberately not exercised — turning off the screen or changing the
-  volume is a poor trade for the coverage — and multi-device isolation
-  still needs two physically connected devices. `adb` itself turned out
-  to be installed on the build machine, just not on `PATH`, so it is no
-  longer the blocker it was previously recorded as.
+  `text` (ASCII and Korean), `key`, `stop`, `doctor`, `reset`, and
+  `launch` are **now verified against a real device**, as are
+  `screenshot` PNG validity and `dump` — joining `swipe`/`scroll` from
+  the previous round. `launch` verification now covers both the
+  DEFAULT-declaring and non-declaring cases from the defect above (fixed
+  in 0.3.0), plus task-resume semantics. Three key aliases (`power`,
+  `volume_up`, `volume_down`) were deliberately not exercised — turning
+  off the screen or changing the volume is a poor trade for the
+  coverage — and multi-device isolation still needs two physically
+  connected devices. `adb` itself turned out to be installed on the
+  build machine, just not on `PATH`, so it is no longer the blocker it
+  was previously recorded as.
 - ~~Verifying the runtime ADBKeyBoard download end-to-end against a real
   device~~ — **done.** With the local cache moved aside, `doctor`
   downloaded the APK from its pinned tag
@@ -1079,7 +1127,7 @@ Still pending before this is production-ready:
 
 | SPEC | Title | Status |
 |---|---|---|
-| SPEC-ANDROID-001 | Android/adb device-control primitives + environment bootstrap | Implemented, e2e pending |
+| SPEC-ANDROID-001 | Android/adb device-control primitives + environment bootstrap | Completed — core primitives verified on a real Android device; 0.3.0 found and fixed 3 real-device defects (see [Status](#status)). 3 key aliases, multi-device dual-connect, and npm publish remain open |
 | SPEC-IOS-001 | iOS Simulator backend (`idb`) — common schema + registry extension | Completed, verified on a real simulator |
 | SPEC-WEBVIEW-001 | iOS Simulator web content — DOM recognition + interaction (`ios-webkit-debug-proxy`) | Completed, verified on a real simulator |
 | SPEC-GESTURE-001 | `swipe`/`scroll` gesture primitives + off-viewport web element reach | Completed — verified on a real iOS simulator and a real Android device (one device/density each) |
