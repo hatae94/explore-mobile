@@ -14,12 +14,16 @@
  * extracted here for completeness/diagnostics.
  *
  * @MX:NOTE — `currentImeId`'s value DURING the unbound window
- * (`bound: false`) was never measured on a real device (spec.md §C.3-⑩,
- * AC-ANDROID-032 — an explicitly open, not-yet-verified item). Do NOT
- * treat `currentImeId` as an established readiness signal without a
- * real-device observation backing that use — see `adb-backend.ts`'s
- * `waitForImeBindingReady` doc comment for the design decision this
- * parser's caller made pending that verification.
+ * (`bound: false`) WAS measured on a real device in the M10 verification
+ * session (spec.md §C.3-⑯, AC-ANDROID-032 — resolved): `mCurId` was
+ * ALREADY `com.android.adbkeyboard/.AdbIME` in that unbound window, i.e.
+ * before the bind actually completed. A combined predicate (`bound &&
+ * currentImeId === ADBKEYBOARD_IME_ID`) would therefore have been TRUE
+ * during the failure window too — it has ZERO discriminating power over
+ * `bound` alone. Do NOT add this conjunct later because it "looks
+ * stricter" — it discriminates nothing and only adds a new failure mode;
+ * see `adb-backend.ts`'s `waitForImeBindingReady` doc comment for the
+ * readiness predicate this observation confirms.
  */
 
 export interface InputMethodBindingState {

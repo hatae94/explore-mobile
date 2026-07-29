@@ -247,14 +247,16 @@ $ pnpm build       → exit 0
 
 이 결정은 기기 관측이 아니라 §C.3-⑧ 실험 설계의 재검토에 근거한다. 실기기 재검증(AC-032, 기기 잠김으로 이번 커밋에서 미수행)이 이 전제를 반증하면 정정 대상이다.
 
+> **소급 반영(§E.2-M12)**: 위 실기기 재검증은 이후 기기 잠금 해제 후 실행되었다 — 미바인딩 창에서 `mCurId`가 이미 ADBKeyBoard였음이 관측되어, 결합항이 판별력 0임이 반증이 아니라 **확증**되었다(전제를 반증하지 않았다). 결과는 위 AC-032 표 행과 spec.md §C.3-⑯에 기록되어 있다.
+
 ### AC 판정 매트릭스 (AC-ANDROID-029~032)
 
 | AC ID | 요약 | 검증 방식 | Status | Actual Output |
 |-------|------|-----------|--------|----------------|
-| AC-ANDROID-029 | cold 경로 비-ASCII `text` 착지 [결함 회귀 증명] | 실측 필수 | **NOT YET VERIFIED — 기기 잠김** | mock 레그만 완료(아래 "mock 레그가 실제로 단언하는 것" 참고). 필요한 관측: `reset` 직후 미설치 상태에서 `node dist/cli/bin.js text "알림" --device <serial>` 실행 → 스크린샷으로 입력란에 "알림"이 착지했는지 확인(유효 오라클은 스크린샷뿐 — `mServedView`는 성공 시에도 `null`이라 무효, spec.md §C.3-⑨). `doctor` 직후 첫 입력 경로도 별도로 확인 필요(spec.md §C.3-⑧이 두 영향 경로를 구분함). |
-| AC-ANDROID-030 | warm 경로 불변 | unit(mock) + 실측 | **PASS (unit/mock) — 실측 미검증** | mock: `adb-backend.test.ts` "warm path performs NO dumpsys poll at all" — `dumpsys` 호출 0회, `ime enable`/`set` 호출 0회, 총 3회 호출(settings get + broadcast + hide)만 발생함을 확인. 실측(이미 바인딩된 ADBKeyBoard 상태에서 문자열이 실제로 착지하는지)은 기기 잠김으로 미실행. |
+| AC-ANDROID-029 | cold 경로 비-ASCII `text` 착지 [결함 회귀 증명] | 실측 필수 | **PASS (실측) — §E.2-M12에서 소급 반영** | 기기 잠금 해제 후 실기기(Galaxy S25 Ultra SM-S938N)에서 관측 완료: `reset` 직후 ADBKeyBoard 미설치 상태에서 `node dist/cli/bin.js text "알림" --device <serial>`(같은 호출 안에서 자가치유 설치 → IME 전환 → 바인딩 대기 → 브로드캐스트) 실행 후 스크린샷으로 "알림"이 검색창에 착지함을 **2/2회** 관측(유효 오라클은 스크린샷뿐 — `mServedView`는 재사용하지 않음, spec.md §C.3-⑨). CLI 응답은 매회 `ok:true`. M12 세션(§E.2-M12)의 AC-033 8회 반복 cold 시행에서도 매회 동일 경로("알림" 대신 "검사일"~"검사팔")가 착지 확인되어 재확인됨. mock 레그(아래 "mock 레그가 실제로 단언하는 것")는 기존과 동일 |
+| AC-ANDROID-030 | warm 경로 불변 | unit(mock) + 실측 | **PASS (unit/mock + 실측) — §E.2-M12에서 소급 반영** | mock: `adb-backend.test.ts` "warm path performs NO dumpsys poll at all" — `dumpsys` 호출 0회, `ime enable`/`set` 호출 0회, 총 3회 호출(settings get + broadcast + hide)만 발생함을 확인(무변경). 실측: 기기 잠금 해제 후, 이미 바인딩된 ADBKeyBoard 상태(warm)에서 한글 문자열("카메라", "배터리")이 대기 없이 즉시 검색창에 착지함을 스크린샷으로 확인 |
 | AC-ANDROID-031 | 바인딩 대기 타임아웃 → 미전송 + `ok:false` [응답 계약 변경] | unit(mock) | **PASS** | `adb-backend.test.ts` "throws ImeBindTimeoutError and sends NO broadcast..." — `am broadcast` argv가 mock exec에 **0회** 도달함을 직접 단언, `ImeBindTimeoutError` throw 확인(`.serial` 필드 포함), 원래 IME의 디스크 영속이 타임아웃 후에도 유지됨을 확인(`getTrackedOriginalIme`, REQ-IDEMP-004 불변). `router.test.ts` "surfaces an ImeBindTimeoutError as a dedicated IME_BIND_TIMEOUT envelope..." — CLI 봉투 `ok:false` + `IME_BIND_TIMEOUT` 코드 + `details.serial` 확인. acceptance.md §D.4가 이 AC를 mock 단독으로 완전히 충족 가능하다고 명시하므로 실측이 필요 없다. |
-| AC-ANDROID-032 | 준비 술어의 IME-id 결합항 실기기 확인 [미측정 항목] | 실측 필수 | **NOT YET VERIFIED — 기기 잠김** | 위 "준비 술어" 절에 결정(`bound` 단독, 결합항 미사용)과 근거를 기록했다 — acceptance.md가 명시한 "산출물은 코드가 아니라 관측 기록" 대안 중 결정-기록 경로를 택했다. 완전한 PASS는 여전히 실기기 관측을 요구한다: cold 사이클의 미바인딩 창(`mBoundToMethod=false`)에서 `adb shell dumpsys input_method`의 `mCurId` 값을 직접 관측·기록해야 한다. |
+| AC-ANDROID-032 | 준비 술어의 IME-id 결합항 실기기 확인 [미측정 항목] | 실측 필수 | **PASS (실측 — 관측 완료) — §E.2-M12에서 소급 반영** | cold 사이클의 미바인딩 창(`mBoundToMethod=false`)에서 `adb shell dumpsys input_method` 관측값을 verbatim으로 기록한다: `mSelectedMethodId=com.android.adbkeyboard/.AdbIME`, `mCurId=com.android.adbkeyboard/.AdbIME`(이미 ADBKeyBoard), `mBoundToMethod=false`(유일한 판별 필드), 1초 후 `mBoundToMethod=true`로 전환. 관측 결과는 결합 술어(`bound && currentImeId===ADBKEYBOARD`)의 전제와 다르다 — 미바인딩 창에서도 `mCurId`가 이미 ADBKeyBoard였으므로 결합항은 **판별력이 0**이다(spec.md §C.3-⑯). 술어는 관측에 맞게 **`bound` 단독을 유지**한다(정정 불필요 — 기존 선택이 이제 관측으로 확증됨). `ime-binding-parser.ts`의 `@MX:NOTE`와 `adb-backend.ts`의 `waitForImeBindingReady` 주석을 본 M12 커밋에서 이 관측을 반영하도록 정정했다(과거엔 "미측정"이라고 서술했던 것을 "관측 완료 — 결합항 무용"으로 수정) |
 
 ### mock 레그가 실제로 단언하는 것
 
@@ -286,7 +288,7 @@ $ pnpm test:coverage (발췌)
 
 ### Residual-risk (§verification-claim-integrity 5-섹션 형식)
 
-- **Gap**: AC-029(cold 착지 실측)와 AC-032(`mCurId` 결합항 실기기 확인)는 기기 잠김으로 완전히 미검증이다. mock 레그는 "구성된 argv의 순서·시점이 옳다"만 증명하고, "기기가 실제로 그렇게 반응한다"는 증명하지 못한다 — acceptance.md §D.4가 이미 명시한 mock의 사정거리 한계이며, 결함 2 자체가 이 한계 때문에 발생했었다(같은 함정을 mock으로 "다 검증됐다"고 주장하지 않도록 주의했다).
+- **Gap**: AC-029(cold 착지 실측)와 AC-032(`mCurId` 결합항 실기기 확인)는 기기 잠김으로 완전히 미검증이다. mock 레그는 "구성된 argv의 순서·시점이 옳다"만 증명하고, "기기가 실제로 그렇게 반응한다"는 증명하지 못한다 — acceptance.md §D.4가 이미 명시한 mock의 사정거리 한계이며, 결함 2 자체가 이 한계 때문에 발생했었다(같은 함정을 mock으로 "다 검증됐다"고 주장하지 않도록 주의했다). **[소급 반영 — §E.2-M12]** 이 Gap은 이후 기기 잠금 해제 후 해소되었다 — AC-029/030/032 모두 실측 완료(위 AC 표 참고). 이 Gap 기록 자체는 M10 세션 당시의 정직한 상태 기록으로 보존한다.
 - **Residual**: `waitForImeBindingReady`의 준비 술어(`bound` 단독)가 §C.3-⑧의 5회 실험 범위를 벗어난 실기기 조건(예: 훨씬 느린 기기, 다른 Android 버전의 `dumpsys` 출력 형식 차이)에서도 유효한지는 미확인이다. `IME_BIND_TIMEOUT_MS=5000`이 실제로 "충분히 넉넉한지"도 이번 세션에서 실측되지 않았다 — §C.3-⑦의 "대략 1회 왕복" 관측이 유일한 간접 근거다.
 
 ### 프롬프트 사전 기술 중 틀린 것으로 확인된 항목
@@ -294,3 +296,99 @@ $ pnpm test:coverage (발췌)
 - **"warm 경로는 준비 신호 조회가 최대 1회"라는 acceptance.md AC-030 문구**: 실제 구현은 warm 경로에서 `dumpsys` 조회를 **0회** 수행한다 — "1회 이하"이므로 문구와 모순되지는 않지만, 같은 AC의 앞 문장("IME 전환도 대기도 수행하지 않고 즉시")과 더 정확히 일치하는 "0회" 해석을 택했다. 코드나 실측이 틀렸다는 의미는 아니고, AC 문구의 여지를 어떻게 해석했는지 기록해 둔다.
 - 그 외 프롬프트 서술(측정된 사실, claim boundary, mock leg의 사정거리, "N일선 없이 넣지 말라"는 지시)은 코드로 확인해 틀린 것이 없었다.
 - 프롬프트가 예상한 대로: 기기가 잠겨 있어 실측 3건(AC-029/030 실측 레그·AC-032)을 완료하지 못했다 — 예상된 제약이며 새로 발견된 사실은 아니다.
+
+## §E.2-M12 개정(0.3.0 연장) M12 — `ime enable` 등록 경쟁 상한 재시도 (2026-07-29)
+
+> §E.2-M10이 마감한 뒤 기기 잠금이 해제되어, M10이 미기록으로 남긴 실측 3건(AC-029/030/032)이 이 세션 안에서 해소되었다(위 §E.2-M10 AC 표에 소급 반영함). 같은 세션에서 M12(§F M12, 결함 3 — `ime enable` 등록 경쟁) 구현·검증도 완료한다. M10(`f6e0724`)이 바꾼 같은 `inputText` cold 시퀀스의 **한 단계 앞**(`adb install` → `ime enable`)을 건드리므로 M10 위에 서는 연장이며, `launchApp`/런처 파서(M11, `994b881`)는 전혀 건드리지 않았다.
+
+### 산출물
+
+- **`src/backend/ime-enable-retry-predicate.ts`**(신규, 순수 함수) — `ime enable` 실패의 stdout/stderr/종료 코드 → "등록 경쟁(재시도 가능)" 또는 "그 외(즉시 표면화)". 대표 픽스처는 spec.md §C.3-⑫의 실측 문자열(`Unknown input method com.android.adbkeyboard/.AdbIME cannot be enabled for user #0`, exit 255) 정규식 매칭. 기기 없이 단위 테스트 가능(`ime-enable-retry-predicate.test.ts`, 신규 8건).
+- **`src/backend/adb-backend.ts` `AdbBackend.setImeToAdbKeyboard`**(수정) — `enableAdbKeyboardWithRetry` 신설: `ime enable`이 위 술어에 매칭되는 실패일 때만 최대 `IME_ENABLE_MAX_ATTEMPTS=4`회(최초 1회 + 재시도 3회)까지 `IME_ENABLE_RETRY_DELAY_MS=500`ms 간격으로 재시도. 비매칭 실패는 재시도 없이 즉시 기존 `assertSuccess` 경로로 전파(새 오류 코드 0건). 재시도 상한·간격은 `IME_BIND_TIMEOUT_MS`/`MAX_DURATION_MS`(`src/cli/validators.ts:47-64`)와 같은 형태의 독블록으로 "설계 선택, 측정 의무 없음" 근거를 남겼다. 재시도가 안전한 근거(실측된 멱등성, spec.md §C.3-⑮)와 "왜 `ime list -a` 폴링이 아닌 재시도인가"(§C.3-⑭, 실패 창의 값을 한 번도 관측하지 못했다는 주장 경계)를 doc comment에 명시적으로 기록했다.
+- **`src/backend/ime-binding-parser.ts`의 `@MX:NOTE`** 및 **`src/backend/adb-backend.ts`의 `waitForImeBindingReady` doc comment**(정정) — "`currentImeId`는 미측정"이라던 서술을 "M10 세션에서 실측 완료 — 미바인딩 창에서도 이미 ADBKeyBoard였고 결합항은 판별력 0"으로 정정. 술어(`bound` 단독)는 변경하지 않았다 — 결합항을 넣지 않는 편이 이제 관측으로 확증됐을 뿐이다. 두 주석 모두에 "이 결합항을 '더 엄밀해 보인다'는 이유로 나중에 추가하지 말 것" forward guard를 추가했다.
+- 테스트: `src/backend/ime-enable-retry-predicate.test.ts`(신규 8건 — 대표 픽스처 매칭/스트림 무관/user 번호 일반화/비매칭 3종/exit 0 비매칭/빈 메시지 비매칭) + `src/backend/adb-backend.test.ts`(신규 `describe` 블록 3건 — 재시도 1회 후 성공, 비매칭 실패 정확히 1회, 상한 소진 유한 종료).
+
+### AC 판정 매트릭스 (AC-ANDROID-033~035)
+
+| AC ID | 요약 | 검증 방식 | Status | Actual Output |
+|-------|------|-----------|--------|----------------|
+| AC-ANDROID-033 | cold 반복 시행에서 `ime enable` 등록 경쟁 회복 + 착지 [결함 회귀 증명 · 시행 횟수 규정] | 실측 필수(mock 단독 불가, 시행 횟수 명시) | **PASS** | mock: `adb-backend.test.ts` "retries 'ime enable' once after a registration-race failure..." — 재시도 1회 후 성공 + 전체 cold 시퀀스 완주(8회 exec 호출) 확인. 실측: Galaxy S25 Ultra(SM-S938N)에서 **포커스된 입력란(설정 검색창)에서 8회 연속** `reset` → `text "검사일"`~`"검사팔"` cold 사이클 수행 — **8/8 `ok:true` + 스크린샷 오라클로 매회 착지 확인**(trial-by-trial 근거는 아래 "실측 근거" 참고). `ime enable` 자연 실패(사용자에게 보이는 미회복 실패) **0회**. 매 회 직전 `reset`이 `adbKeyboardUninstalled:true`(trial 1 제외 — 최초 기준선이 이미 미설치)를 반환해 진짜 cold 사이클임을 확인 |
+| AC-ANDROID-034 | 비매칭 `ime enable` 실패는 재시도 없이 즉시 표면화 | unit(mock) | **PASS** | `adb-backend.test.ts` "does NOT retry a non-matching 'ime enable' failure..." — `ime enable` 호출이 **정확히 1회**임을 필터링으로 직접 단언, 브로드캐스트 argv 0회 도달, 원래 실패 메시지("adb: ime enable rejected")가 그대로 전파됨을 `.rejects.toThrow`로 확인(지연·대체 없음) |
+| AC-ANDROID-035 | `ime enable` 재시도 상한 — 유한 종료 | unit(mock) | **PASS** | `adb-backend.test.ts` "exhausts the retry ceiling on a PERSISTENT registration-race failure..." — `ime enable` 호출 횟수가 상한(4) 이하의 유한 값임을 확인, 브로드캐스트 argv 0회 도달, `ime set` 호출 0회(assertSuccess가 먼저 throw) 확인. 새 오류 코드 없이 기존 일반 오류 경로(`assertSuccess` → `Error`)를 그대로 사용함을 확인(응답 계약 불변) |
+
+### mock 레그가 실제로 단언하는 것
+
+- **재시도 성공**: 등록 경쟁 실패 1회 후 재시도가 성공하면 곧바로 `ime set` → 바인딩 대기 → 브로드캐스트로 진행(전체 cold 시퀀스 완주).
+- **비매칭 실패는 재시도 0회**: `ime enable` 호출이 정확히 1회이며, 브로드캐스트가 mock exec에 전혀 도달하지 않음.
+- **상한 소진 시 유한 종료**: `ime enable` 호출 횟수가 4(설계 선택) 이하이며, 무한 루프가 없음. `ime set`은 전혀 호출되지 않음(assertSuccess가 소진된 실패를 그대로 throw).
+- **새 오류 코드 없음**: 소진 시에도 `ImeBindTimeoutError` 같은 신규 타입이 아니라 기존 `assertSuccess`의 일반 `Error` 경로를 그대로 사용함(AC-035 "응답 계약 불변").
+
+### 실측 근거 (verbatim, 기기: Galaxy S25 Ultra SM-S938N, 무선 ADB `adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp`)
+
+**AC-033 — 8회 연속 cold 시행 (매 회 `reset` → `stop` → `launch com.android.settings` → `tap 400 2928`(검색창, 검색 아이콘 내부 — voice-search 버튼은 x≥988이라 벗어남) → `text "<단어>"` → `screenshot`, 매 회 스크린샷으로 판정):**
+
+| 시행 | 입력 문자열 | 포커스 확인 | `text` 응답 | 스크린샷 판정 |
+|------|-------------|--------------|-------------|----------------|
+| 1 | 검사일 | 포커스됨(`mServedView=...SearchAutoComplete.../search_src_text`, tap 직후 dump로 사전 확인) | `ok:true` | **PASS** — 검색창에 "검사일" 착지, "검색 결과가 없습니다" 표시(실제로 검색이 수행됨) |
+| 2 | 검사이 | 포커스됨(동일 UI 경로) | `ok:true` | **PASS** — "검사이" 착지, "검색 결과가 없습니다" |
+| 3 | 검사삼 | 포커스됨 | `ok:true` | **PASS** — "검사삼" 착지, "결과(2)"(삼성 앱 매칭 — 실제 검색 수행 확인) |
+| 4 | 검사사 | 포커스됨 | `ok:true` | **PASS** — "검사사" 착지, "결과(1)"(개발자 옵션 매칭) |
+| 5 | 검사오 | 포커스됨 | `ok:true` | **PASS** — "검사오" 착지, "결과(1)" |
+| 6 | 검사육 | 포커스됨 | `ok:true` | **PASS** — "검사육" 착지, "검색 결과가 없습니다" |
+| 7 | 검사칠 | 포커스됨 | `ok:true` | **PASS** — "검사칠" 착지, "검색 결과가 없습니다" |
+| 8 | 검사팔 | 포커스됨 | `ok:true` | **PASS** — "검사팔" 착지, "검색 결과가 없습니다" |
+
+**결과: 8/8 PASS.** `ime enable` 자연 실패(사용자에게 보이는 미회복 실패) 0회 — baseline(무수정 상태, cold+포커스 3/8 실패)과 대비하면 우연히 8회 전부 통과할 확률은 `(5/8)^8 ≈ 2.3%`이며, 이는 **결함이 사라졌다는 증명이 아니라 빈도가 계산 가능한 수준 아래로 내려갔다는 증거**다(acceptance.md §D.4.1이 요구하는 정확한 표현). 재시도가 실제로 몇 회 발동했는지(1회 실패 후 회복 vs 매회 1발 성공)는 이 세션에서 별도 계측(logcat 등)하지 않았다 — 관측한 것은 CLI의 최종 결과(`ok:true` + 화면 착지)뿐이며, 이 이상을 주장하지 않는다.
+
+```
+$ export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
+$ SERIAL="adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp"
+$ node dist/cli/bin.js reset --device "$SERIAL"
+{"ok":true,"command":"reset","data":{...,"adbKeyboardUninstalled":true,"originalImeRestored":true}}
+$ node dist/cli/bin.js stop com.android.settings --device "$SERIAL"
+$ node dist/cli/bin.js launch com.android.settings --device "$SERIAL"
+$ node dist/cli/bin.js tap 400 2928 --device "$SERIAL"
+$ node dist/cli/bin.js text "검사일" --device "$SERIAL"
+{"ok":true,"command":"text","data":{"serial":"adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp"}}
+$ node dist/cli/bin.js screenshot --device "$SERIAL"   # decoded pngBase64 → 스크린샷으로 "검사일" 착지 확인
+(... 시행 2~8, 동일 시퀀스, 입력 문자열만 검사이~검사팔로 교체 ...)
+```
+
+**사전 확인(dump, "새로 탭하기 전에 무엇이 있는지 확인")**: `tap 400 2928` 전 `dump`로 좌표가 `com.android.settings:id/search_mag_icon`(bounds `{x:322,y:2883,w:90,h:90}`, 부모 `search_plate` `{x:262,y:2831,w:915,h:195}`) 안에 있음을 확인했고, tap 직후 `dump`/`dumpsys input_method`로 `mServedView`가 `SearchAutoComplete`(`id/search_src_text`)로 바뀌어 실제 입력란이 포커스됨을 확인했다(포커스 확인 용도로만 사용 — 브로드캐스트 성공 오라클로는 재사용하지 않음, spec.md §C.3-⑨).
+
+### 회귀 없음 확인
+
+```
+$ pnpm typecheck
+(no output; exit=0)
+
+$ pnpm test
+ Test Files  32 passed (32)
+      Tests  690 passed (690)          # 679(M10 마감 기준선) + 11(M12 신규: predicate 8 + adb-backend retry describe 3)
+
+$ pnpm build
+(exit=0)
+```
+
+### 기기 최종 상태 (device etiquette)
+
+세션 시작 기준선(기본 IME=HoneyBoard / ADBKeyBoard 미설치 / `~/.cache/explore-mobile/ime-sessions.json={}` / 포그라운드=런처, 화면 잠금 없음)을 8회 시행 동안 반복적으로 흔들었다(설치/제거 사이클 8회). 시행 종료 후 `reset` 1회를 추가 실행하고 4개 항목을 전부 재확인했다 — **모두 기준선과 정확히 일치**:
+
+| 항목 | 기준선 | 세션 종료 시점 |
+|------|--------|----------------|
+| 기본 IME | `com.samsung.android.honeyboard/.service.HoneyBoardService` | `com.samsung.android.honeyboard/.service.HoneyBoardService` (일치) |
+| ADBKeyBoard 설치 여부 | 미설치 | 미설치(`pm list packages` 무매칭, Secure Folder stderr는 spec.md §C.3-⑪ 그대로) (일치) |
+| `ime-sessions.json` | `{}` | `{}` (일치) |
+| 포그라운드 | 런처(홈 화면) | `com.sec.android.app.launcher/.activities.LauncherActivity`(`stop com.android.settings` + `key home`으로 복귀) (일치) |
+
+화면 잠금/PIN/디스플레이 밀도/`power`/`volume_*` 관련 조작은 전혀 수행하지 않았다.
+
+### Residual-risk (§verification-claim-integrity 5-섹션 형식)
+
+- **Gap**: `ime enable` 재시도가 실제로 몇 회 발동했는지(1회 실패 후 회복 vs 최초 시도 성공)는 8회 시행 어느 것에서도 직접 계측하지 않았다 — 계측하려면 logcat 캡처 또는 코드 계측이 필요했고, 프로덕션 코드에 스코프 밖 계측을 추가하지 않기로 했다. 관측한 것은 최종 결과(8/8 `ok:true` + 착지)뿐이다.
+- **Gap**: `IME_ENABLE_MAX_ATTEMPTS=4`, `IME_ENABLE_RETRY_DELAY_MS=500`이 baseline보다 느린 기기(다른 API 레벨/제조사)에서도 충분한지는 미확인이다 — 설계 선택이므로 측정 의무는 없으나(§C.3-⑫/⑮ 문서화), 8회 시행은 SM-S938N 1대에서만 수행됐다.
+- **Residual**: `(5/8)^8 ≈ 2.3%`이라는 우연 통과 확률 자체가 baseline 3/8이 8회 표본이라는 점에서 추정이며 보장이 아니다(acceptance.md §D.4.1이 이미 명시). 8회 전부 통과가 결함이 "완전히 사라졌다"를 증명하지 않는다는 점을 다시 강조한다.
+
+### 프롬프트 사전 기술 중 틀린 것으로 확인된 항목
+
+없음. 재시도 상한 4(최초 1회+재시도 3회)/간격 500ms은 이번에 새로 설계 선택한 값이며 프롬프트가 특정 수치를 지정하지 않았으므로 "틀림"의 대상이 아니다. `ime list -a` 미관측 근거(§C.3-⑭), `ime enable` 멱등성(§C.3-⑮), `mCurId` 결합항 무용(§C.3-⑯) 등 프롬프트가 인용한 사실들은 spec.md 본문과 정확히 일치했다.

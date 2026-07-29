@@ -37,6 +37,7 @@ import { ImeSessionStore } from "./ime-session-store.js";
 import { AdbKeyboardInstallFailedError, ImeBindTimeoutError } from "./ime-errors.js";
 import type { InputMethodBindingState } from "./ime-binding-parser.js";
 import { parseInputMethodBindingState } from "./ime-binding-parser.js";
+import { isImeEnableRegistrationRaceFailure } from "./ime-enable-retry-predicate.js";
 import { LauncherActivityNotFoundError } from "./launch-errors.js";
 import { parseLauncherResolveOutput } from "./launcher-resolve-parser.js";
 import { ANDROID_KEYCODE, KEYCODE_ESCAPE } from "./keycodes.js";
@@ -121,6 +122,32 @@ const IME_BIND_POLL_INTERVAL_MS = 250;
 
 /** `Math.ceil` so a non-divisible timeout/interval pair still allows a final poll at (or just past) the nominal deadline rather than one short of it. */
 const IME_BIND_MAX_POLL_ATTEMPTS = Math.ceil(IME_BIND_TIMEOUT_MS / IME_BIND_POLL_INTERVAL_MS);
+
+/**
+ * Total attempts allowed for `ime enable` when it keeps failing in the
+ * registration-race shape (REQ-INPUT-003 개정 0.3.0 M12, plan.md §F M12
+ * 산출물 2) — the INITIAL call counts as attempt 1, so a value of 4 means
+ * at most 3 retries after the first attempt. This is a DESIGN CHOICE, not
+ * a measured value — same character as `IME_BIND_TIMEOUT_MS` above and
+ * `MAX_DURATION_MS` (`src/cli/validators.ts:47-64`): the sole purpose is
+ * "no infinite retry loop", and this number makes no device-behavior
+ * claim, unlike a measured threshold (e.g. `TOUCH_SLOP_MARGIN_PX` below).
+ * Choosing a different value only requires re-reviewing this rationale,
+ * not a new real-device measurement.
+ *
+ * @MX:NOTE: [AUTO] 4라는 값(최초 1회 + 재시도 3회)은 설계 선택이지 실측값이 아니다 -- 다른 값을 택하려면 spec.md REQ-INPUT-003(개정 0.3.0 M12)의 근거(무한 재시도 방지 목적, ime enable 멱등성 실측은 재시도의 안전성만 뒷받침하고 횟수를 정하지 않음)를 재검토해야 한다
+ */
+const IME_ENABLE_MAX_ATTEMPTS = 4;
+
+/**
+ * Delay between `ime enable` retries, in milliseconds. Polling interval is
+ * explicitly implementer's discretion here too (plan.md §F M12 산출물 2:
+ * "폴링 간격은 구현 재량") — not a device-behavior measurement. Real delay
+ * goes through the same injectable `sleep` constructor parameter
+ * `waitForImeBindingReady` uses, so unit tests never wait out the real
+ * value.
+ */
+const IME_ENABLE_RETRY_DELAY_MS = 500;
 
 /** Real inter-poll delay. Injectable via `AdbBackend`'s constructor `sleep` parameter so unit tests never wait out the real ceiling. */
 function defaultSleep(ms: number): Promise<void> {
@@ -485,11 +512,68 @@ export class AdbBackend implements DeviceBackend {
   }
 
   private async setImeToAdbKeyboard(serial: string): Promise<void> {
-    const enableResult = await this.exec(["-s", serial, "shell", "ime", "enable", ADBKEYBOARD_IME_ID]);
+    const enableResult = await this.enableAdbKeyboardWithRetry(serial);
     assertSuccess(enableResult, "shell ime enable (ADBKeyBoard)");
 
     const setResult = await this.exec(["-s", serial, "shell", "ime", "set", ADBKEYBOARD_IME_ID]);
     assertSuccess(setResult, "shell ime set (ADBKeyBoard)");
+  }
+
+  /**
+   * @MX:WARN — retries `ime enable` up to `IME_ENABLE_MAX_ATTEMPTS` TOTAL
+   * attempts (the first call counts as attempt 1), but ONLY while each
+   * failure matches `isImeEnableRegistrationRaceFailure` — the registration-
+   * race shape measured at spec.md §C.3-⑫ (package install just succeeded,
+   * `ime enable` fails exit 255 "Unknown input method ... cannot be
+   * enabled for user #0"). The FIRST non-matching failure stops the loop
+   * immediately, with NO further `ime enable` call — a genuinely different
+   * failure (permission denied, incompatible API level, device offline)
+   * therefore surfaces after EXACTLY ONE attempt (AC-ANDROID-034), never
+   * delayed behind the retry ceiling. The result (whether it finally
+   * succeeded, or is still the last failure after the ceiling) is handed
+   * back unchanged to `setImeToAdbKeyboard`'s existing `assertSuccess`
+   * call — no new error code is introduced (AC-ANDROID-035): this path was
+   * already `ok:false` before M12, and M12 only reduces how often it is
+   * reached for no real reason.
+   *
+   * Why retry is safe here: `ime enable` is MEASURED idempotent (spec.md
+   * §C.3-⑮) — re-running it on an already-enabled IME returns exit 0 +
+   * "already enabled for user #0" with ZERO duplicate entries in
+   * `ime list -s`. Retrying therefore never accumulates device state; each
+   * attempt is the same safe operation, repeated until IMMS catches up (or
+   * the ceiling is reached).
+   *
+   * Why retry rather than poll a readiness signal: `ime list -a` was
+   * probed as a candidate registration-readiness signal before choosing
+   * this approach, but the intermittent failure window (3/8 on cold +
+   * focused input, spec.md §C.3-⑬) was never actually caught while
+   * probing it — so `ime list -a`'s value DURING a failure was never
+   * observed (spec.md §C.3-⑭). Building a readiness check on a signal
+   * whose value during failure was never measured would repeat the exact
+   * mistake spec.md §C.3-⑩ already flagged once (treating an unmeasured
+   * conjunct as an established fact). The only readiness test this SPEC
+   * can actually stand behind is whether `ime enable` itself succeeds —
+   * so retrying `ime enable` directly IS the readiness check, not a
+   * workaround standing in for a signal that was never confirmed.
+   * @MX:REASON — widening the match to "any `ime enable` failure" turns
+   * this into a swallow-everything loop: a real, non-transient failure
+   * would be retried all the way to the ceiling, delayed by the whole
+   * retry window, and THEN reported with its true cause buried behind an
+   * unrelated retry history (plan.md §F M12 안티패턴, AC-ANDROID-034).
+   */
+  private async enableAdbKeyboardWithRetry(serial: string): Promise<AdbExecResult> {
+    let result = await this.exec(["-s", serial, "shell", "ime", "enable", ADBKEYBOARD_IME_ID]);
+    let attempts = 1;
+    while (
+      result.exitCode !== 0 &&
+      attempts < IME_ENABLE_MAX_ATTEMPTS &&
+      isImeEnableRegistrationRaceFailure(result)
+    ) {
+      await this.sleep(IME_ENABLE_RETRY_DELAY_MS);
+      result = await this.exec(["-s", serial, "shell", "ime", "enable", ADBKEYBOARD_IME_ID]);
+      attempts++;
+    }
+    return result;
   }
 
   /**
@@ -505,13 +589,18 @@ export class AdbBackend implements DeviceBackend {
    * experiment (spec.md §C.3-⑧) varied ONLY the `mBoundToMethod` flag
    * while every other condition (focus, cycle, oracle) stayed constant,
    * and success/failure tracked that flag exactly across 5 separated
-   * trials. `currentImeId`'s value DURING the unbound window was never
-   * observed (spec.md §C.3-⑩) — AC-ANDROID-032 asks a future real-device
-   * pass to confirm or correct this. Adding an unverified conjunct would
-   * assert something never measured; this is the documented decision
-   * AC-ANDROID-032 explicitly permits recording in lieu of a combined
-   * predicate ("결합항 없이 바인딩 플래그만으로 술어를 구성하기로
-   * 결정했다면, 그 결정과 근거를 기록하는 것으로 충족된다").
+   * trials. `currentImeId`'s value DURING the unbound window WAS
+   * subsequently measured in the M10 verification session (spec.md
+   * §C.3-⑯, AC-ANDROID-032 — resolved): it was ALREADY ADBKeyBoard in
+   * that unbound window, so a combined predicate would have been true
+   * during the failure window too — ZERO discriminating power over
+   * `bound` alone. `bound` alone is therefore no longer just the
+   * avoidance argument AC-ANDROID-032 originally permitted recording
+   * ("결합항 없이 바인딩 플래그만으로 술어를 구성하기로 결정했다면, 그
+   * 결정과 근거를 기록하는 것으로 충족된다") — it is now CONFIRMED by
+   * direct observation. Do NOT add the `currentImeId` conjunct later
+   * because it "looks stricter" — it discriminates nothing and only adds
+   * a new failure mode.
    * @MX:REASON — removing this wait, or weakening the predicate to
    * "bound OR a short fixed delay", resurrects the exact `ok:true`-with-no-
    * effect defect this amendment exists to fix (spec.md §C.3-⑤/⑧).

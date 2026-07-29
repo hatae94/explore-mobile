@@ -1024,6 +1024,94 @@ describe("AdbBackend", () => {
     });
   });
 
+  describe("inputText — 'ime enable' registration-race bounded retry (REQ-INPUT-003 개정 0.3.0 M12, AC-ANDROID-033/034/035)", () => {
+    const REGISTRATION_RACE_FAILURE = fail(
+      "Unknown input method com.android.adbkeyboard/.AdbIME cannot be enabled for user #0",
+      255,
+    );
+    const NON_MATCHING_FAILURE = fail("adb: ime enable rejected", 1);
+
+    it("retries 'ime enable' once after a registration-race failure, then succeeds and completes the full cold sequence (AC-ANDROID-033 mock leg)", async () => {
+      const originalIme = "com.google.android.inputmethod.latin/.LatinIME";
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok(`${originalIme}\n`)) // settings get
+        .mockResolvedValueOnce(ok("package:com.android.adbkeyboard\n")) // pm list packages (already installed)
+        .mockResolvedValueOnce(REGISTRATION_RACE_FAILURE) // ime enable attempt 1: IMMS not yet registered
+        .mockResolvedValueOnce(ok("")) // ime enable attempt 2: retry succeeds
+        .mockResolvedValueOnce(ok("")) // ime set ADBKeyBoard
+        .mockResolvedValueOnce(dumpsysBindingState(true)) // dumpsys input_method (bound on first poll)
+        .mockResolvedValueOnce(ok("")) // am broadcast
+        .mockResolvedValueOnce(ok("")); // keyevent hide
+      const backend = new AdbBackend(exec, undefined, new ImeSessionStore(imeStorePath), noRealDelay);
+
+      await expect(backend.inputText("R58N90ABCDE", "알림")).resolves.toBeUndefined();
+
+      const enableCalls = exec.mock.calls.filter(
+        ([callArgs]) => callArgs[3] === "ime" && callArgs[4] === "enable",
+      );
+      expect(enableCalls).toHaveLength(2); // exactly one retry, not more
+      const broadcastCalls = exec.mock.calls.filter(
+        ([callArgs]) => callArgs[3] === "am" && callArgs[4] === "broadcast",
+      );
+      expect(broadcastCalls).toHaveLength(1); // the cold sequence completed, string sent
+      expect(exec).toHaveBeenCalledTimes(8);
+    });
+
+    it("does NOT retry a non-matching 'ime enable' failure — surfaces immediately after EXACTLY ONE attempt (AC-ANDROID-034)", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("com.example/.Original\n")) // settings get
+        .mockResolvedValueOnce(ok("package:com.android.adbkeyboard\n")) // pm list packages (already installed)
+        .mockResolvedValueOnce(NON_MATCHING_FAILURE); // ime enable FAILS in a non-matching shape
+      const backend = new AdbBackend(exec, undefined, new ImeSessionStore(imeStorePath), noRealDelay);
+
+      await expect(backend.inputText("R58N90ABCDE", "안녕")).rejects.toThrow(/ime enable rejected/);
+
+      const enableCalls = exec.mock.calls.filter(
+        ([callArgs]) => callArgs[3] === "ime" && callArgs[4] === "enable",
+      );
+      expect(enableCalls).toHaveLength(1); // no retry at all
+      expect(exec).toHaveBeenCalledTimes(3); // settings get, pm list, ime enable — nothing more
+      const broadcastCalls = exec.mock.calls.filter(
+        ([callArgs]) => callArgs[3] === "am" && callArgs[4] === "broadcast",
+      );
+      expect(broadcastCalls).toHaveLength(0);
+      // The `.rejects.toThrow(/ime enable rejected/)` assertion above
+      // already confirms the ORIGINAL failure message is preserved
+      // unaltered — not delayed or replaced by a different error.
+    });
+
+    it("exhausts the retry ceiling on a PERSISTENT registration-race failure — finite termination, no broadcast sent, response contract unchanged (AC-ANDROID-035)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockImplementation(async (args: string[]) => {
+        if (args[3] === "settings") return ok("com.example/.Original\n");
+        if (args[3] === "pm" && args[4] === "list") return ok("package:com.android.adbkeyboard\n");
+        if (args[3] === "ime" && args[4] === "enable") return REGISTRATION_RACE_FAILURE; // never recovers
+        return ok("");
+      });
+      const backend = new AdbBackend(exec, undefined, new ImeSessionStore(imeStorePath), noRealDelay);
+
+      await expect(backend.inputText("R58N90ABCDE", "알림")).rejects.toThrow(/Unknown input method/);
+
+      const enableCalls = exec.mock.calls.filter(
+        ([callArgs]) => callArgs[3] === "ime" && callArgs[4] === "enable",
+      );
+      // Bounded and finite: never an infinite retry loop.
+      expect(enableCalls.length).toBeGreaterThan(0);
+      expect(enableCalls.length).toBeLessThanOrEqual(4); // IME_ENABLE_MAX_ATTEMPTS
+      const broadcastCalls = exec.mock.calls.filter(
+        ([callArgs]) => callArgs[3] === "am" && callArgs[4] === "broadcast",
+      );
+      expect(broadcastCalls).toHaveLength(0); // no broadcast ever sent
+      // `ime set` is never reached — assertSuccess throws on the exhausted
+      // `ime enable` result first. No new error code / type: this remains
+      // the pre-existing generic failure path (assertSuccess -> Error),
+      // same as before M12.
+      const setCalls = exec.mock.calls.filter(([callArgs]) => callArgs[3] === "ime" && callArgs[4] === "set");
+      expect(setCalls).toHaveLength(0);
+    });
+  });
+
   describe("inputText — ADBKeyBoard self-heal install (REQ-INPUT-003 revised)", () => {
     // `reset` uninstalls ADBKeyBoard as part of restoring the device to its
     // pre-`doctor` state (doctor.test.ts / real-device finding); a
