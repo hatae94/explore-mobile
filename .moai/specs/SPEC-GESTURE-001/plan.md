@@ -2,9 +2,9 @@
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 구현 계획"
 version: "0.9.0"
-status: in-progress
+status: completed
 created: 2026-07-27
-updated: 2026-07-28
+updated: 2026-07-29
 author: hatae
 amendment_of: SPEC-GESTURE-001
 ---

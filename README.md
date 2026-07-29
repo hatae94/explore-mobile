@@ -8,7 +8,7 @@ including multi-device interaction testing.
 
 > **Status**: core Android/adb primitives + environment bootstrap, the
 > iOS Simulator/idb backend, gesture primitives (`swipe`/`scroll`), and
-> the iOS **web content** path are implemented and unit/mock-tested (657
+> the iOS **web content** path are implemented and unit/mock-tested (653
 > tests, all green). The **iOS backend has been verified end-to-end
 > against a booted simulator** (2026-07-26, iPhone 17 Pro / iOS 26.0):
 > launch Safari, dump the element tree, tap by selector, type, send
@@ -841,7 +841,7 @@ contaminate either device's input-method state.
 Android (SPEC-ANDROID-001, all 8 milestones), the iOS Simulator backend
 (SPEC-IOS-001), the iOS web content path (SPEC-WEBVIEW-001), and gesture
 primitives (SPEC-GESTURE-001, including its 0.4.0, 0.5.0, 0.6.0, 0.7.0,
-and 0.8.0 amendments) are implemented, with 657 unit/mock tests green.
+0.8.0, and 0.9.0 amendments) are implemented, with 653 unit/mock tests green.
 
 **iOS: verified against a real simulator** (2026-07-26, iPhone 17 Pro /
 iOS 26.0, fb-idb 1.1.7). A full Safari journey — `doctor` → `devices` →

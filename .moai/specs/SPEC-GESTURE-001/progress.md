@@ -2,9 +2,9 @@
 id: SPEC-GESTURE-001
 title: "제스처 원시 동작 — 진행 기록"
 version: "0.9.0"
-status: in-progress
+status: completed
 created: 2026-07-27
-updated: 2026-07-28
+updated: 2026-07-29
 author: hatae
 amendment_of: SPEC-GESTURE-001
 ---
@@ -1948,3 +1948,75 @@ AC 판정 근거(신규 AC 없음, 기존 AC 재확인):
 |----|------|------|
 | AC-GEST-004(기존 백엔드 메서드 동작 불변) | PASS | `getMinEffectiveSwipeThreshold`가 반환하는 `{minEffectiveSwipePx, basis}` 값이 캐시 제거 전후 바이트 동일(위 회귀 확인) — 다른 9개 메서드는 이 마일스톤에서 아예 건드리지 않음 |
 | AC-GEST-026/027(문턱 공급 계약과 10번째 메서드) | PASS | `DeviceBackend` 인터페이스 멤버 수 10 그대로(위 grep), 시그니처도 미변경(생성자는 클래스 내부 구현이지 인터페이스 계약이 아니다) |
+
+## §E.4 Sync-phase Audit-Ready Signal (0.9.0 amendment)
+
+> 0.8.0 마감 시점의 §E.4(위, "sync_commit_sha: 67e5430")는 그대로 보존한다 — 이 절은 M11(0.9.0 amendment) 코드 수정 이후의 README 정정 + 재마감 sync를 담는 **별도의 새 sync 레코드**다.
+
+```yaml
+sync_status: audit-ready
+sync_complete_at: "2026-07-29"
+sync_commit_sha: "pending-backfill"   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 파일에서 이미 여섯 번 쓰인 패턴 그대로(일곱 번째). 별도 backfill 커밋에서 채운다
+b12_self_test_a: "grep -c 'SPEC-GESTURE-001' CHANGELOG.md (편집 전, HEAD 4172b2b 시점) -> 14. 이번 sync는 CHANGELOG.md를 전혀 편집하지 않는다(아래 CHANGELOG 결정 참조) -- 편집 후에도 14로 불변. 새 항목을 추가하지 않았으므로 중복 방출 위험 자체가 없다"
+b12_self_test_b: "grep -cE '^### AC-GEST-[0-9]+' acceptance.md -> 34. 0.9.0은 신규 AC 0건이므로 CHANGELOG Notes/README Status가 이미 담고 있는 '34 acceptance criteria' 표기와 계속 일치(불변, 정정 불필요)"
+b12_self_test_c: "README.md가 인용하는 모든 수치를 이 sync 세션에서 직접 재실행해 확인 -- pnpm vitest run(29 files/653 tests, exit 0) + pnpm typecheck(exit 0) + pnpm build(exit 0). 문턱값 재계산(node --input-type=module로 dist/cli/commands/scroll-geometry.js의 minNonDegenerateRatio 직접 호출): iOS(402x874, 11) -> 0.013984236866235733, Android 실측 기기(1440x3120, 32) -> 0.011039886623620987 -- M7~M11 §E.2 기록값과 바이트 동일. DeviceBackend 인터페이스 멤버 수 재확인(grep -cE '^  [a-zA-Z]+\\(' src/schema/device-backend.ts) -> 10. src/backend/idb-backend.ts는 git diff --numstat 0줄(M11 대상 아님, 미변경) 확인. 인용한 파일 경로(README.md, src/index.ts, src/schema/device-backend.ts, src/backend/adb-backend.ts)는 전부 ls로 실재 확인"
+changelog_entry_position: "없음 -- 아래 'CHANGELOG 결정 (0.9.0)' 참조. [Unreleased] 섹션에 신규 항목을 추가하지 않기로 결정했다"
+frontmatter_status_transitions:
+  spec_md: "in-progress -> completed"
+  plan_md: "in-progress -> completed"
+  acceptance_md: "in-progress -> completed"
+  progress_md: "in-progress -> completed"
+  updated_date: "2026-07-28 -> 2026-07-29 (0.9.0 amendment 재마감, 4개 아티팩트 전부)"
+canary_compliance_check: not_applicable   # 본 SPEC은 자기 자신의 sync를 테스트하는 전향적 정책을 정의하지 않음
+```
+
+### CHANGELOG 결정 (0.9.0 — 신규 항목 추가 없음)
+
+**독립 검증 결과: `CHANGELOG.md`에 0.9.0용 신규 항목을 추가하지 않는다.** 오케스트레이터의 사전 분석을 그대로 받아들이지 않고 직접 재확인했다 — 근거는 다음과 같다. 이 결정과 근거를 여기 기록해 두는 이유는, 다음 감사가 "빠뜨렸다"와 "검토 후 의도적으로 생략했다"를 구분할 수 있게 하기 위함이다.
+
+1. **`CHANGELOG.md`는 `## [Unreleased]` H2 헤딩이 단 하나뿐이다.** 확인: `grep -n '^## ' CHANGELOG.md` → `8:## [Unreleased]` 한 줄. 이 프로젝트는 지금까지 한 번도 릴리스된 적이 없다.
+2. **M10(0.8.0)이 넣은 per-serial TTL 캐시는 도입도 제거도 전부 이 미출시 창(unreleased window) 안에서 일어났다.** 0.8.0 CHANGELOG 서브블록(`### Fixed` 아래 5개 하위 불릿 — minValidRatio 생략 조건 / `scrollIntoView` try-catch 폴백 / AC-GEST-027 카운트 정정 / Android 지연 기록 / `"device-query"` 서술 정정)을 직접 재읽어 확인했고, 캐시를 언급하는 불릿은 **0개**다. 파일 전체에서 `cache`를 대소문자 무시로 검색(`grep -n -i cache CHANGELOG.md`)해도 걸리는 것은 `ime-sessions.json`(IME 세션 영속) · ADBKeyBoard APK 캐시 · `web-calibration.json`(뷰포트 보정 캐시) 셋뿐이며, 전부 M10/M11과 무관한 기존 캐시다. `progress.md:1804`(0.8.0 §E.4의 "잔여 관찰")가 이미 같은 결론을 그 시점에 독립적으로 기록해 두었다 — *"문턱 캐싱(NN10, `adb-backend.ts`의 5초 TTL)은 이번 sync에서 README/CHANGELOG 어디에도 사용자 대면 성능 특성으로 문서화하지 않았다."*
+3. **따라서 "추가했다가 지운" 사용자 대면 서술이 CHANGELOG 어디에도 없다** — 지울 대상 자체가 없다.
+4. **검토했지만 결론을 바꾸지 않은 뉘앙스**: `AdbBackend`는 `src/index.ts:25`에서 공개 export이므로(패키지 진입점 `./dist/index.js`), 같은 프로세스 안에서 백엔드 인스턴스 하나를 쥐고 `getMinEffectiveSwipeThreshold`를 반복 호출하는 라이브러리 소비자에게는 캐시 제거 전후로 조회 횟수가 1회 → 매회로 바뀐다(반환값 자체는 바이트 동일 — §E.2 회귀 확인). 그러나 이 패키지는 **아직 npm에 배포되지 않았다**(README.md:1037 "today it only runs from a local checkout"). 이 캐시가 존재했던 창(0.8.0~0.9.0, 전부 미출시) 동안 공개 릴리스를 통해 그 동작을 관측할 수 있었던 외부 소비자는 존재할 수 없다 — 순 사용자 대면 영향은 0이다.
+5. **결론**: `[Unreleased]` 섹션의 기존 SPEC-GESTURE-001 블록(Added/Fixed/Notes)은 손대지 않는다. "제거만 하는" 0.9.0 amendment는 CHANGELOG 관점에서 무(無)에서 무로 돌아온 것이다.
+
+### 문서 반영 (0.9.0 amendment)
+
+| 문서 | 반영 내용 |
+|------|-----------|
+| `README.md` | 상단 Status 배너(:11 — 657→653 테스트 수 정정) · Status 절(:843-844 — "0.7.0, and 0.8.0 amendments" → "0.7.0, 0.8.0, and 0.9.0 amendments"로 열거 보완, 657→653 테스트 수 정정). 그 외 서술은 캐시를 전혀 언급하지 않음을 확인했으므로(위 "CHANGELOG 결정" 항목 2와 동일 grep으로 확인) 손대지 않았다 — "정확한 산문을 다시 쓰지 않는다"(지시문 원칙) 준수 |
+| `CHANGELOG.md` | 편집 없음(위 "CHANGELOG 결정" 참조) |
+
+### 잔여 관찰 (다음 세션 참고)
+
+- README의 "Final tally across all five amendments"(:1006)는 **의도적으로 그대로 두었다** — 그 문단은 0.4.0~0.8.0을 서술하는 문단 블록 안에 있고, 0.9.0은 신규 AC 0건이므로 그 문단이 인용하는 집계(34건 중 33 PASS/1 PARTIAL/0 FAIL)를 바꾸지 않는다. 0.9.0에 대한 별도 서사 문단을 새로 쓰는 것은 이번 지시문의 범위(캐시 서술 확인 + 수치 정정)를 넘는 산문 신설이므로 하지 않았다 — 다음 세션이 "다섯"을 "여섯"으로 올바르게 갱신하려면, 0.9.0을 서술하는 문단도 함께 신설해야 한다는 점을 남겨 둔다.
+- spec.md §E 로드맵 표의 자기참조 행이 body 산문에서 `status: draft`로 남아 있는 것(progress.md:708 기록, 지시문이 명시적으로 지적)은 이번 세션에서도 다시 확인했다 — frontmatter가 SSOT이므로 인지만 하고 손대지 않는다(body 편집은 manager-spec 소관 — 이 sync는 신규 body 결함으로 재보고하지 않는다, 지시문이 이미 알고 있는 기존 항목이다).
+- push는 사용자 커밋 규칙("Do not push.")에 따라 이번 세션에서 수행하지 않는다.
+
+### 최종 검증 (실제 명령 출력)
+
+```
+$ pnpm vitest run
+ Test Files  29 passed (29)
+      Tests  653 passed (653)
+$ pnpm typecheck  → exit 0
+$ pnpm build      → exit 0
+$ grep -c "SPEC-GESTURE-001" CHANGELOG.md   → 14 (편집 없음, 불변)
+$ grep -cE '^### AC-GEST-[0-9]+' .moai/specs/SPEC-GESTURE-001/acceptance.md   → 34
+$ grep -n '^## ' CHANGELOG.md   → 8:## [Unreleased] (유일한 H2, 릴리스된 적 없음)
+$ node --input-type=module -e '...minNonDegenerateRatio...'
+0.013984236866235733
+0.011039886623620987
+$ grep -cE '^  [a-zA-Z]+\(' src/schema/device-backend.ts   → 10
+$ git diff --numstat -- src/backend/idb-backend.ts   → (출력 없음, 미변경)
+$ git fetch origin master && git rev-list --count --left-right origin/master...HEAD
+0	8
+```
+
+원격과 분기 없음(로컬 8개 커밋 선행, 충돌 없음). 이 sync 세션 동안 Android 실기기·iOS 시뮬레이터 어디에도 제스처를 전송하지 않았다 — README 수치 재확인은 전부 빌드된 `dist/` 모듈에 대한 순수 함수 재계산이거나 §E.2(M7~M11 run-phase)의 기존 실측 기록 인용이다.
+
+### 커밋
+
+이 sync 커밋은 `README.md` + SPEC 아티팩트 4종(frontmatter — `status`/`updated`만; `progress.md`는 본문도 포함 — 이 §E.4 자체)을 담는다. `CHANGELOG.md`는 편집 없음(위 "CHANGELOG 결정" 참조), `src/`는 이 sync에서 건드리지 않는다. 커밋 직전 `git fetch origin master && git rev-list --count --left-right origin/master...HEAD`로 원격 분기 여부를 확인했다(위 참조, 분기 없음). push는 사용자 커밋 규칙("Do not push.")에 따라 수행하지 않는다.
+
+sync 커밋 SHA: pending-backfill(위 참조). 이 값은 별도의 후속 backfill 커밋(이 문단이 속한 커밋 자체)에 기록한다 — 0.3.0/0.4.0/0.5.0/0.6.0/0.7.0/0.8.0 sync에서 이미 여섯 번 쓰인 패턴 그대로(일곱 번째).
