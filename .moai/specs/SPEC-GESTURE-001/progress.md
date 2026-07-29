@@ -1928,7 +1928,7 @@ M10 §E.2가 기록한 5개(ANCHOR 1 · WARN 1 · NOTE 3)에서 4개(ANCHOR 1 ·
 ```yaml
 run_status: M11-complete
 run_complete_at: "2026-07-28"
-run_commit_sha: "pending-backfill-M11"   # 자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 SPEC에서 이미 여러 번 쓰인 패턴(M10 022e282 등) 그대로. 별도 backfill 커밋에서 채운다.
+run_commit_sha: "0fda3b7"   # backfill 완료(자기참조 해시 문제 -- spec-frontmatter-schema.md § SHA placeholder backfill exemption(D3), 이 SPEC에서 이미 여러 번 쓰인 패턴(M10 022e282 등) 그대로). 이 값을 담은 별도 backfill 커밋 참조.
 ac_pass_count: 0      # 신규 AC 0건 -- M11은 되돌림이며, 판정은 기존 AC-GEST-004/026/027 재확인으로 대신한다(아래 표)
 ac_fail_count: 0
 ac_partial_count: 0
