@@ -1,10 +1,10 @@
 ---
 id: SPEC-ANDROID-001
 title: "Android(adb) 기기 제어 기본기 + 자동 환경 세팅 CLI 코어 — 진행"
-version: "0.2.0"
-status: completed
+version: "0.3.0"
+status: in-progress
 created: 2026-07-22
-updated: 2026-07-27
+updated: 2026-07-29
 author: manager-spec
 amendment_of: SPEC-ANDROID-001
 ---
@@ -142,3 +142,81 @@ _<pending run-phase — manager-develop 소유>_
 - **실기기 e2e 상태 — 보수적 기재 (사용자 승인, 2026-07-27)**: 개정 근거(`spec.md` §Amendments)가 "실기기 검증 과정에서 구현이 진화했다"고 기술하고 `§C.2 알려진 한계`에 실기기 관찰(resource-id 미설정 앱은 `--text` 필요, 이모지가 HTML 엔티티로 정규화됨)이 남아 있으므로 **실기기 하드닝 자체는 실제로 있었다**. 그러나 **AC별 e2e PASS 증거는 어디에도 기록되지 않았다**. 본 sync 시점에 안드로이드 기기가 연결돼 있지 않아(`adb devices` 결과 없음) 재관측도 불가능했다. 따라서 8건(AC-001/002/003/004/005/007/011/017)은 **PARTIAL을 유지**하고, 관측하지 않은 것을 PASS로 승격하지 않았다(`verification-claim-integrity.md` §1.1 준수). 최종: 24건 중 PASS 16(기존 11 + 신설 5) / PARTIAL 8 / FAIL 0.
 - **검증**: 303 tests PASS (20 files), `pnpm typecheck` exit 0, `pnpm build` exit 0 — 본 sync는 문서 전용이라 코드 변경 없음.
 - **남은 후속(마감과 무관)**: 실기기 e2e 증거 기록(기기 연결 시), APK 조달 체크리스트(`vendor/adbkeyboard/README.md`), npm 게시.
+
+## §E.2-M11 개정(0.3.0) M11 — `launch` 명시적 컴포넌트 시작 (2026-07-29)
+
+> §E.4-b 마감 이후 2026-07-29 실기기 검증(`.moai/reports/android-verification/remaining-commands-android-2026-07-29.md`)이 결함 2건을 드러냈고, 개정 0.3.0(`ba3b563`)이 spec.md/plan.md/acceptance.md를 정정했다. 본 절은 그 개정의 **M11만** 마감한다(M10 — IME 바인딩 준비 대기 — 는 별도 마일스톤·별도 커밋이며 아직 미착수). progress.md의 `version`/`status`가 spec.md/plan.md/acceptance.md(0.3.0/in-progress)에서 뒤처져 있던 드리프트도 본 커밋에서 정합화한다.
+
+### 산출물
+
+- **`src/backend/launcher-resolve-parser.ts`**(신규, 순수 함수) — `cmd package resolve-activity --brief -a MAIN -c LAUNCHER <pkg>` stdout → 컴포넌트 또는 미해석. **stdout만 본다, 종료 코드는 보지 않는다**(spec.md §C.3-②). 마지막 비어있지 않은 행을 취하고, `No activity found` 단일 행이면 미해석. 선행 점 상대 액티비티는 정규화·확장 없이 그대로 통과.
+- **`src/backend/launch-errors.ts`**(신규 모듈) — `LauncherActivityNotFoundError`. `ime-errors.ts`는 IME 전용 이름이라 이 오류와 어울리지 않는다는 plan.md §A.6 재량 판단에 따라 별도 파일로 분리. 메시지가 원인을 단정하지 않음("no launcher activity declared OR ... not installed").
+- **`src/backend/adb-backend.ts` `AdbBackend.launchApp`**(재작성) — 조회 → 명시적 `am start -n <component>`. 암시적 `-p` 경로 완전 제거. `--user` 인자 없음(실측 불필요 확인, §C.3-② 재확인). 조회 자체가 비정상 종료(genuine adb 실패)하면 기존 `assertSuccess`로 일반 오류, 조회는 성공(exit 0)했으나 미해석이면 `LauncherActivityNotFoundError`로 인텐트 미전송 거부.
+- **`src/cli/commands/launch.ts`**(수정) — `LauncherActivityNotFoundError` → `LAUNCHER_ACTIVITY_NOT_FOUND` JSON 코드 매핑(기존엔 전부 `BACKEND_COMMAND_FAILED`로 접혔음).
+- 테스트: `src/backend/launcher-resolve-parser.test.ts`(신규, 6건) + `src/backend/adb-backend.test.ts`의 `launchApp / stopApp` describe 블록 재작성(기존 암시적-`-p` 단언 1건 → 명시적 컴포넌트 시작 계약 6건으로 교체, stopApp 테스트는 무변경) + `src/cli/router.test.ts` 1건 추가(`LAUNCHER_ACTIVITY_NOT_FOUND` 봉투 + 원인 미단정 메시지).
+
+### AC 판정 매트릭스 (AC-ANDROID-025~028)
+
+| AC ID | 요약 | 검증 방식 | Status | Actual Output |
+|-------|------|-----------|--------|----------------|
+| AC-ANDROID-025 | DEFAULT 선언 앱을 명시적 컴포넌트로 시작 | unit(mock) + 실측 | **PASS** | mock: `adb-backend.test.ts` "resolves the launcher component then starts it explicitly" — 조회 argv(`cmd package resolve-activity ...`) → `am start -n com.android.settings/.Settings` 순서 단언, 어떤 호출에도 `-p`/`--user` 미포함 확인. 실측: `node dist/cli/bin.js launch com.android.settings --device <serial>` → `{"ok":true,...}`, 직후 `dumpsys activity activities`의 `mFocusedApp=ActivityRecord{... com.android.settings/.Settings t15491}` — 포그라운드 전환 관찰됨 |
+| AC-ANDROID-026 | **DEFAULT 미선언 앱 — 결함 회귀 증명, 실측 필수** | 실측 필수(mock 단독 불가) | **PASS** | 실측(SM-S938N): `launch com.sec.android.app.popupcalculator` → `{"ok":true,...}` 직후 `mFocusedApp=...popupcalculator/.Calculator t15492`(포그라운드 전환 확인); `launch com.sec.android.app.clockpackage` → `{"ok":true,...}` 직후 `mFocusedApp=...clockpackage/.ClockPackage t15493`(포그라운드 전환 확인). **개정 전에는 두 패키지 모두 `BACKEND_COMMAND_FAILED`("unable to resolve Intent")로 실패했음**(결함 근거 보고서 §4) — 본 실측이 그 회귀가 고쳐졌음을 증명한다 |
+| AC-ANDROID-027 | 태스크 재개 의미 보존(경고 행은 실패 아님) | 실측 | **PASS (부분 — 아래 Residual-risk 참고)** | raw `adb shell am start -n com.sec.android.app.popupcalculator/.Calculator`(포그라운드 상태에서 재실행) → stdout `Starting: Intent {...}` + `Warning: Activity not started, intent has been delivered to currently running top-most instance.`, **exit=0**. 태스크 ID 재실행 전후 불변(`Task{4ae2f08 #15492}` → 동일). 이어서 CLI `launch`도 동일 패키지에 대해 `{"ok":true,...}` 반환(경고를 오류로 승격하지 않음 확인) |
+| AC-ANDROID-028 | 런처 컴포넌트 미해석 → 구분된 graceful 오류, 원인 미단정, 인텐트 미전송 | unit(mock) + 실측 | **PASS** | mock: `adb-backend.test.ts` "rejects with LauncherActivityNotFoundError and sends NO start intent..." — `exec`가 조회 1회만 호출됨(`toHaveBeenCalledTimes(1)`) 확인; `router.test.ts`가 `LAUNCHER_ACTIVITY_NOT_FOUND` 봉투 + 메시지에 "no launcher activity"와 "not installed" 둘 다 포함됨을 단언. 실측: 존재하지 않는 패키지(`com.example.doesnotexist`) **및** 설치돼 있으나 런처 액티비티가 없는 실제 패키지(`com.android.providers.settings`, raw 조회로 `No activity found`+exit=0 재확인) 둘 다 `{"ok":false,"error":{"code":"LAUNCHER_ACTIVITY_NOT_FOUND",...}}` 반환 — 원인 단정 없는 동일 메시지 |
+
+### 실측 근거 (verbatim, 기기: Galaxy S25 Ultra SM-S938N, 무선 ADB `adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp`)
+
+```
+$ node dist/cli/bin.js launch com.android.settings --device "$SERIAL"
+{"ok":true,"command":"launch","data":{"serial":"adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp","package":"com.android.settings"}}
+$ adb -s "$SERIAL" shell dumpsys activity activities | grep mFocusedApp
+  mFocusedApp=ActivityRecord{14839129 u0 com.android.settings/.Settings t15491}
+
+$ node dist/cli/bin.js launch com.sec.android.app.popupcalculator --device "$SERIAL"
+{"ok":true,"command":"launch","data":{...,"package":"com.sec.android.app.popupcalculator"}}
+$ adb -s "$SERIAL" shell dumpsys activity activities | grep mFocusedApp
+  mFocusedApp=ActivityRecord{119835819 u0 com.sec.android.app.popupcalculator/.Calculator t15492}
+
+$ node dist/cli/bin.js launch com.sec.android.app.clockpackage --device "$SERIAL"
+{"ok":true,"command":"launch","data":{...,"package":"com.sec.android.app.clockpackage"}}
+$ adb -s "$SERIAL" shell dumpsys activity activities | grep mFocusedApp
+  mFocusedApp=ActivityRecord{99560984 u0 com.sec.android.app.clockpackage/.ClockPackage t15493}
+
+$ adb -s "$SERIAL" shell am start -n com.sec.android.app.popupcalculator/.Calculator   # raw, task already foreground
+Starting: Intent { cmp=com.sec.android.app.popupcalculator/.Calculator }
+Warning: Activity not started, intent has been delivered to currently running top-most instance.
+exit=0
+(task id before/after both Task{4ae2f08 #15492} — unchanged)
+
+$ node dist/cli/bin.js launch com.example.doesnotexist --device "$SERIAL"
+{"ok":false,"command":"launch","error":{"code":"LAUNCHER_ACTIVITY_NOT_FOUND","message":"Could not resolve a launcher activity for package 'com.example.doesnotexist'. This can mean EITHER the package has no launcher activity declared OR the package is not installed — both cases produce identical resolve output and cannot be distinguished from it alone.","details":{"package":"com.example.doesnotexist"}}}
+
+$ adb -s "$SERIAL" shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER com.android.providers.settings
+No activity found
+exit=0
+$ node dist/cli/bin.js launch com.android.providers.settings --device "$SERIAL"
+{"ok":false,"command":"launch","error":{"code":"LAUNCHER_ACTIVITY_NOT_FOUND",...}}
+```
+
+### 회귀 없음 확인
+
+```
+$ pnpm test
+ Test Files  30 passed (30)
+      Tests  665 passed (665)          # 653(기준선) + 12(M11 신규: 파서 6 + launchApp 계약 6 net+5 + router 1)
+$ pnpm typecheck   → exit 0
+$ pnpm build       → exit 0
+```
+
+### 기기 최종 상태 (device etiquette)
+
+세션 시작 기준선(기본 IME=HoneyBoard / ADBKeyBoard 미설치 / `ime-sessions.json={}`/ 포그라운드=런처) 중 **M11이 손댈 여지가 있는 3개 항목(IME/ADBKeyBoard/ime-sessions.json)은 세션 종료 시점에도 기준선과 정확히 일치**함을 재확인했다(`launch`는 IME 상태를 건드리지 않는다). **포그라운드 상태만 기준선과 다르다** — 검증 도중 화면이 잠금(secure keyguard, PIN 필요)으로 전환되었고(디버깅 중 자연 발생한 화면 타임아웃, `launch` 자체의 부작용 아님), PIN 자격 증명이 없어 잠금 해제를 시도하지 않았다. `key home` 전송을 시도했으나 잠금화면이 키 입력을 가로채 활동 관리자의 마지막 포커스는 여전히 계산기(`com.sec.android.app.popupcalculator/.Calculator t15492`)로 남아 있다 — 잠금 해제 전까지는 실제로 아무 액티비티도 조작되지 않으므로 무해하다. 다음 세션 담당자가 기기를 열면 잠금 화면이 보인다.
+
+### Residual-risk (§verification-claim-integrity 5-섹션 형식)
+
+- **Gap**: AC-027의 "앱 내부 상태(예: 계산기 입력란 값)가 보존된다"는 시각적 확인은 화면 잠금으로 수행하지 못했다. 대신 (a) 태스크 ID 불변, (b) `am start -n`의 재개 경고 문구 + exit 0(raw 관측), (c) CLI가 그 경고를 오류로 승격하지 않음(`ok:true`) — 세 가지 기계적 증거로 재개 계약을 확인했다. 이는 spec.md §C.3-④가 이미 실측한 것과 동일한 메커니즘이며, 개정 0.3.0의 `am start -n` 전환이 그 메커니즘을 바꾸지 않았음을 보인다.
+- **Residual**: 위 Gap 때문에 "픽셀 단위로 관찰 가능한 상태가 보존된다"는 조금 더 강한 주장까지는 실측하지 못했다 — 기계적 증거(태스크 ID + 경고 + exit 0)로 대체했다.
+
+### 프롬프트 사전 기술 중 틀린 것으로 확인된 항목
+
+없음. `--user` 불필요, 성공 2행/마지막 비어있지 않은 행, 실패 단일 행 `No activity found`+exit 0, 재개 경고+exit 0은 실기기 값과 정확히 일치했다(재개 경고 문구는 `.moai/reports/.../remaining-commands-android-2026-07-29.md` §4가 인용한 것과 달리 이번 관측에서는 "intent has been delivered to currently running top-most instance." — spec.md §C.3-④가 인용한 "its current task has been brought to the front"와 표현이 다르지만 **둘 다 Android가 문맥에 따라 내는 별개의 재개-경고 변형**이며 재개/exit-0 의미는 동일하다).

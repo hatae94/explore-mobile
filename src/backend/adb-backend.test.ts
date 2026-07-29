@@ -10,6 +10,7 @@ import { ADBKEYBOARD_IME_ID } from "./adbkeyboard.js";
 import type { ApkAcquirer } from "./apk-downloader.js";
 import { AdbKeyboardInstallFailedError } from "./ime-errors.js";
 import { ImeSessionStore } from "./ime-session-store.js";
+import { LauncherActivityNotFoundError } from "./launch-errors.js";
 import { normalizeUiAutomatorXml } from "../normalize/uiautomator.js";
 
 function ok(stdout: string, stderr = ""): AdbExecResult {
@@ -436,26 +437,118 @@ describe("AdbBackend", () => {
     });
   });
 
-  describe("launchApp / stopApp", () => {
-    it("launches a package via 'am start' with MAIN/LAUNCHER intent (REQ-APP-001)", async () => {
-      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok(""));
+  describe("launchApp / stopApp (REQ-APP-001 개정 0.3.0 — 명시적 컴포넌트 시작, M11)", () => {
+    const RESOLVE_ARGV = [
+      "-s",
+      "R58N90ABCDE",
+      "shell",
+      "cmd",
+      "package",
+      "resolve-activity",
+      "--brief",
+      "-a",
+      "android.intent.action.MAIN",
+      "-c",
+      "android.intent.category.LAUNCHER",
+      "com.android.settings",
+    ];
+
+    it("resolves the launcher component then starts it explicitly — no implicit -p argv is ever constructed (AC-ANDROID-025)", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(
+          ok("priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true\ncom.android.settings/.Settings\n"),
+        )
+        .mockResolvedValueOnce(ok(""));
 
       const backend = new AdbBackend(exec);
       await backend.launchApp("R58N90ABCDE", "com.android.settings");
 
-      expect(exec).toHaveBeenCalledWith([
+      expect(exec).toHaveBeenNthCalledWith(1, RESOLVE_ARGV);
+      expect(exec).toHaveBeenNthCalledWith(2, [
         "-s",
         "R58N90ABCDE",
         "shell",
         "am",
         "start",
-        "-a",
-        "android.intent.action.MAIN",
-        "-c",
-        "android.intent.category.LAUNCHER",
-        "-p",
-        "com.android.settings",
+        "-n",
+        "com.android.settings/.Settings",
       ]);
+      // No `--user` argument anywhere (spec.md §C.3-② — measured unnecessary)
+      // and no argv element is the literal implicit-intent flag "-p".
+      for (const call of exec.mock.calls) {
+        expect(call[0]).not.toContain("--user");
+        expect(call[0]).not.toContain("-p");
+      }
+    });
+
+    it("passes a leading-dot relative activity through to 'am start -n' unmodified (spec.md §C.3-①, real-device fixture)", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(
+          ok(
+            "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\ncom.sec.android.app.popupcalculator/.Calculator\n",
+          ),
+        )
+        .mockResolvedValueOnce(ok(""));
+
+      const backend = new AdbBackend(exec);
+      await backend.launchApp("R58N90ABCDE", "com.sec.android.app.popupcalculator");
+
+      expect(exec).toHaveBeenNthCalledWith(2, [
+        "-s",
+        "R58N90ABCDE",
+        "shell",
+        "am",
+        "start",
+        "-n",
+        "com.sec.android.app.popupcalculator/.Calculator",
+      ]);
+    });
+
+    it("rejects with LauncherActivityNotFoundError and sends NO start intent when resolve reports 'No activity found' at exit code 0 (spec.md §C.3-②, AC-ANDROID-028)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("No activity found\n"));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.launchApp("R58N90ABCDE", "com.example.doesnotexist")).rejects.toBeInstanceOf(
+        LauncherActivityNotFoundError,
+      );
+      // Only the resolve query was ever sent — no `am start` argv reached exec.
+      expect(exec).toHaveBeenCalledTimes(1);
+      expect(exec).toHaveBeenCalledWith(RESOLVE_ARGV.map((a) => (a === "com.android.settings" ? "com.example.doesnotexist" : a)));
+    });
+
+    it("does NOT assert a single cause in the rejected error's message (spec.md §C.3-③ — both possibilities)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("No activity found\n"));
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.launchApp("R58N90ABCDE", "com.example.doesnotexist")).rejects.toThrow(
+        /has no launcher activity.*OR.*not installed|not installed.*OR.*no launcher activity/is,
+      );
+    });
+
+    it("preserves task-resume semantics: a resume warning at exit code 0 is NOT a failure (spec.md §C.3-④, AC-ANDROID-027)", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(
+          ok("priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true\ncom.android.settings/.Settings\n"),
+        )
+        .mockResolvedValueOnce(ok("Warning: Activity not started, its current task has been brought to the front"));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.launchApp("R58N90ABCDE", "com.android.settings")).resolves.toBeUndefined();
+    });
+
+    it("still throws a generic failure when the resolve query itself exits non-zero (genuine backend failure, not an unresolved activity)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(fail("error: no devices/emulators found", 1));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.launchApp("R58N90ABCDE", "com.android.settings")).rejects.not.toBeInstanceOf(
+        LauncherActivityNotFoundError,
+      );
     });
 
     it("force-stops a package via 'am force-stop' (REQ-APP-002)", async () => {

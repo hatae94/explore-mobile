@@ -35,6 +35,8 @@ import { createApkAcquirer } from "./apk-downloader.js";
 import { parseAdbDevicesList } from "./device-list-parser.js";
 import { ImeSessionStore } from "./ime-session-store.js";
 import { AdbKeyboardInstallFailedError } from "./ime-errors.js";
+import { LauncherActivityNotFoundError } from "./launch-errors.js";
+import { parseLauncherResolveOutput } from "./launcher-resolve-parser.js";
 import { ANDROID_KEYCODE, KEYCODE_ESCAPE } from "./keycodes.js";
 
 const CONNECTED_STATES = new Set(["device", "offline", "unauthorized"]);
@@ -457,21 +459,52 @@ export class AdbBackend implements DeviceBackend {
     assertSuccess(result, "shell input keyevent");
   }
 
+  /**
+   * @MX:WARN — resolves the package's launcher component (MAIN + LAUNCHER
+   * intent categories) and starts it EXPLICITLY, never via the implicit
+   * `-p <pkg>` form (REQ-APP-001 개정 0.3.0). No `--user` argument is
+   * passed — real-device measurement (spec.md §C.3-②) confirmed it is
+   * unnecessary, and hardcoding `--user 0` would be wrong on a device
+   * whose current user is not 0. Task-resume semantics are unchanged: a
+   * warning line + exit code 0 when the target is already foreground is
+   * NOT a failure (spec.md §C.3-④) — `assertSuccess` only rejects on a
+   * non-zero exit code, so that warning path still resolves normally.
+   * @MX:REASON — implicit `-p` resolution requires the target activity to
+   * declare `android.intent.category.DEFAULT`; many installed, launchable
+   * packages (confirmed: Samsung system apps) do not declare it and
+   * silently fail to open via `-p` even though the real launcher opens
+   * them fine (spec.md §C.3-①). "Simplifying" this back to `-p <pkg>`
+   * resurrects that defect. Equally, the resolve query's success/failure
+   * MUST be read from stdout, never the exit code — a failed resolve
+   * still exits 0 (spec.md §C.3-②) — and a resolve failure MUST send
+   * zero start intents to the device (REQ-APP-001 개정 0.3.0).
+   */
   async launchApp(serial: string, packageId: string): Promise<void> {
-    const result = await this.exec([
+    const resolveResult = await this.exec([
       "-s",
       serial,
       "shell",
-      "am",
-      "start",
+      "cmd",
+      "package",
+      "resolve-activity",
+      "--brief",
       "-a",
       "android.intent.action.MAIN",
       "-c",
       "android.intent.category.LAUNCHER",
-      "-p",
       packageId,
     ]);
-    assertSuccess(result, "shell am start");
+    assertSuccess(resolveResult, "cmd package resolve-activity");
+
+    const resolved = parseLauncherResolveOutput(resolveResult.stdout.toString("utf-8"));
+    if (!resolved.resolved) {
+      // No launcher component could be resolved — send NO start intent at
+      // all (REQ-APP-001 개정 0.3.0 shall-not clause).
+      throw new LauncherActivityNotFoundError(packageId);
+    }
+
+    const startResult = await this.exec(["-s", serial, "shell", "am", "start", "-n", resolved.component]);
+    assertSuccess(startResult, "shell am start -n");
   }
 
   async stopApp(serial: string, packageId: string): Promise<void> {

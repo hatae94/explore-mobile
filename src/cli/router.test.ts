@@ -10,6 +10,7 @@ import { AdbDoctor } from "../backend/doctor.js";
 import { IdbDoctor } from "../backend/idb-doctor.js";
 import { AdbKeyboardInstallFailedError, ImeRestoreFailedError } from "../backend/ime-errors.js";
 import { UnsupportedKeyOnIosError } from "../backend/idb-errors.js";
+import { LauncherActivityNotFoundError } from "../backend/launch-errors.js";
 import { ImeSessionStore } from "../backend/ime-session-store.js";
 import { BackendRegistry } from "../backend/registry.js";
 import type { ProcessExecutor } from "../backend/process-executor.js";
@@ -530,6 +531,25 @@ describe("runCli", () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
+    });
+
+    it("surfaces a LauncherActivityNotFoundError using its own dedicated envelope code, distinct from BACKEND_COMMAND_FAILED (REQ-APP-001 개정 0.3.0, AC-ANDROID-028)", async () => {
+      const backend = createMockBackend();
+      (backend.launchApp as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new LauncherActivityNotFoundError("com.example.doesnotexist"),
+      );
+
+      const result = await runCli(["launch", "com.example.doesnotexist"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("LAUNCHER_ACTIVITY_NOT_FOUND");
+        expect(result.error.code).not.toBe("BACKEND_COMMAND_FAILED");
+        // The message must not assert a single cause — both possibilities
+        // are presented (spec.md §C.3-③).
+        expect(result.error.message).toMatch(/no launcher activity/i);
+        expect(result.error.message).toMatch(/not installed/i);
+      }
     });
 
     it("degrades a stopApp rejection to a graceful BACKEND_COMMAND_FAILED envelope", async () => {
