@@ -2,7 +2,7 @@
 id: SPEC-IMESTATE-001
 title: "기기별 IME 세션 상태 격리 — 진행 기록"
 version: "0.4.0"
-status: draft
+status: in-progress
 created: 2026-07-29
 updated: 2026-07-30
 author: hatae
@@ -178,18 +178,115 @@ MUST-FIX 4건 중 **2건(N3-MF-1·N3-MF-2)이 0.3.0이 추가한 표면**에서 
 
 ## §E.2 Run-phase Evidence
 
-(미착수 — M1 재현 게이트부터 시작한다. `plan.md` §F 참조.)
+### M1 — 재현 게이트 (완료)
+
+**게이트 판정: 두 결함 모두 재현됨 → M1 게이트 통과, M2 진입 가능.** 아래 하네스로 결함 ①(교차 시리얼 유실)과 결함 ②(동일 시리얼 check-then-act 유실)을 모두 재현했다(`plan.md` §F 참조).
 
 ### 기준 SHA (`$BASE`) — AC-018이 사용
 
 `manager-develop`은 M1 착수 **직전에** `git rev-parse HEAD`를 실행해 그 값을 아래에 기록한다. 이 섹션(§E.2 Run-phase Evidence)은 `manager-develop`이 소유하므로 여기 기록하는 것은 소유권 위반이 아니다 — `plan.md` §C에 적으라던 0.3.0 지시는 `manager-develop`의 `plan.md` 본문 수정 금지와 충돌해 실행 불가였다(3차 감사 N3-MF-4).
 
 ```
-BASE_SHA: (미기록 — M1 착수 시 manager-develop이 기록)
-기록 시점: (미기록)
+BASE_SHA: b4fdc6a6c684d02e373f415cf3dedc91780c8352
+기록 시점: 2026-07-30 (M1 착수 직전, git rev-parse HEAD 실측)
 ```
 
-AC-018은 이 값으로 세 명령을 실행한다(양성 대조 → 내용 차이 → 커밋 이력). 명령 형태는 `acceptance.md` AC-018 및 `plan.md` §E를 그대로 따른다.
+AC-018은 이 값으로 세 명령을 실행한다(양성 대조 → 내용 차이 → 커밋 이력). 명령 형태는 `acceptance.md` AC-018 및 `plan.md` §E를 그대로 따른다. M1 시점에는 소스 파일(`ime-session-store.ts`) 자체를 아직 수정하지 않았으므로 양성 대조는 M2 완료 후에야 성립한다 — 아래 §E5 참조.
+
+### 사전 점검 (`plan.md` §C rows 0-9) — 전건 통과
+
+| # | 명령 | 실측 결과 |
+|---|------|-----------|
+| 0 | `git rev-parse HEAD` | `b4fdc6a6c684d02e373f415cf3dedc91780c8352` |
+| 1 | `pnpm test` | `32 files / 702 tests passed`, exit 0 |
+| 2 | `pnpm typecheck` | exit 0 |
+| 3 | `pnpm build` | exit 0 |
+| 4 | `grep -n "NOT atomic" src/backend/ime-session-store.ts` | `22: * @MX:NOTE — read-modify-write is NOT atomic across concurrent writers:` |
+| 5 | `grep -n "existingOriginal" src/backend/adb-backend.ts` | `454:`, `455:` |
+| 6 | `grep -n "resolveApkCacheDir" src/backend/apk-downloader.ts` | `59, 68, 80` |
+| 7 | `grep -rln "ImeSessionStore" src/ \| grep -v test` | `src/index.ts`, `src/webview/calibration.ts`, `src/backend/ime-session-store.ts`, `src/backend/adb-backend.ts` — `reset.ts`/`doctor.ts` 미포함(기대대로) |
+| 8 | `grep -n "ImeSession\|resolveImeSessionStorePath" src/index.ts` | `:30-34`, 5개 심볼 |
+| 9 | `grep -nF 'replace(/[^A-Za-z0-9_-]/g' src/backend/adb-backend.ts`(양성 대조) | `:57` |
+| — | `grep -n "new ImeSessionStore\|imeStorePath = " src/cli/router.test.ts` | `:1061 :1089 :1139 :1183 :1189 :1235` (6줄) |
+
+### E1 — 게이트 판정 (가장 중요)
+
+**결함 ① (교차 시리얼 유실, `ime-session-store.ts:22-27`) — 재현됨.**
+
+하네스: `createInterleavingIO()`(읽기 배리어, `ime-session-store.test.ts` 신설) — 두 `setOriginalIme` 호출(`SERIAL-A` / `SERIAL-B`)의 내부 `readAll()`이 둘 다 끝난 뒤에야 어느 한쪽도 진행하지 못하도록 강제했다.
+
+실측 출력(수정 전 코드, `.fails()` 래핑 이전의 원시 실행 — 아래는 그 원시 assertion 실패):
+```
+AssertionError: expected undefined to be 'com.example/.KeyboardA'
+- Expected: "com.example/.KeyboardA"
++ Received: undefined
+```
+`SERIAL-A`의 기록이 유실되고 `SERIAL-B`만 생존했다 — `ime-session-store.ts:22-27`의 자체 문서화된 한계(@MX:NOTE)가 실측으로 확인됨.
+
+**결함 ② (동일 시리얼 check-then-act 유실, `adb-backend.ts:454-455` 패턴) — 재현됨.**
+
+하네스: 동일한 `createInterleavingIO()`를 재사용해 `getOriginalIme` → (undefined면) `setOriginalIme`라는 `adb-backend.ts:454-455`의 체크-후-액션 패턴을, 스토어 공개 API에 대해 직접 시뮬레이션했다(양쪽의 존재 확인이 모두 끝난 뒤에야 어느 한쪽의 기록도 시작되지 않도록 강제 — `adb-backend.ts` 자체는 PRESERVE 대상이라 수정하지 않았다).
+
+실측 출력(수정 전, 원시 실행):
+```
+AssertionError: expected 'ime.second' to be 'ime.first'
+Expected: "ime.first"
+Received: "ime.second"
+```
+나중에 쓴 값(`"ime.second"`)이 먼저 존재 확인을 통과한 값(`"ime.first"`)을 덮어썼다 — REQ-IMESTATE-007이 요구하는 배타성이 현재 구현에는 없음을 확인. 실사용 의미(`spec.md` §A.1 결함②): 늦게 진입한 프로세스가 이미 ADBKeyBoard로 바뀐 IME를 "원래 IME"로 기록하고, 이후 `reset`이 기기를 ADBKeyBoard 자체로 "복원"한다.
+
+### E2 — AC 매트릭스 (M1 대상)
+
+| AC ID | 판정 | 검증 명령 | 실측 출력 |
+|-------|------|-----------|-----------|
+| AC-IMESTATE-002 | PASS(전후 대조 前半 — 수정 전 FAIL 관측 완료) | 위 §E1 결함① 하네스, 원시 실행 | 위 §E1 인용 |
+| AC-IMESTATE-021 | PASS(전후 대조 前半 — 수정 전 FAIL 관측 완료) | 위 §E1 결함② 하네스, 원시 실행 | 위 §E1 인용 |
+
+두 AC 모두 "수정 후 PASS로 전환"이라는 後半 관측은 M2 완료 후에야 성립한다(`.fails()`를 일반 `it()`으로 전환하고 재실행해 진짜 PASS를 관측). 이는 정확히 M1 게이트의 범위다 — `plan.md` §F: "M1은 게이트이지 변경 확률로 앞에 있는 것이 아니다".
+
+### E3 — 하네스 준수 증명 (`plan.md` §B.4 / `acceptance.md` AC-002 하네스 요건)
+
+1. **경로별 키 저장소** — `createInterleavingIO()`의 `fakeFiles`는 `Map<string, Buffer>`로 경로 문자열을 키로 삼는다(단일 blob 변수가 아니다). M1 시점의 `ImeSessionStore` 생성자는 여전히 단일 파일 경로를 받으므로 실질적으로는 키가 하나뿐이지만, 구조 자체는 임의 개수의 경로를 지원한다 — M2가 생성자 인자의 의미를 디렉터리로 바꿔도 이 테스트 본문은 수정 없이 재사용된다.
+2. **`setOriginalIme` 내부에서 강제된 인터리빙** — `read()`는 두 번째 호출자가 도착(`arrivals >= 2`)해야만 게이트를 해제하며, **첫 번째와 두 번째 호출자 모두** 동일한 게이트를 `await`한 뒤에야 스냅샷을 반환한다 — 어느 쪽도 상대의 쓰기 결과를 우연히 관측할 수 없도록 대칭 설계했다.
+3. **경로가 아니라 IO 주입** — 두 테스트 모두 `new ImeSessionStore("virtual/ime-sessions.json", io)` 형태로 가짜 IO를 주입하며, 생성자 인자가 "파일이냐 디렉터리냐"라는 의미에는 의존하지 않는다.
+
+**거짓 음성 실측 (스크래치 하네스, 스위트에 커밋하지 않음)** — 순차 `await` 형태(`await store.setOriginalIme("SERIAL-A", ...); await store.setOriginalIme("SERIAL-B", ...);`, 배리어 없음)로 결함①을 재현 시도한 결과:
+```
+NAIVE RESULT A/B: com.example/.KeyboardA com.example/.KeyboardB
+```
+두 기록 모두 생존 — 유실이 재현되지 않았다(거짓 음성). `acceptance.md` AC-IMESTATE-002 하네스 요건 2가 경고한 정확히 그 실패 모드가 실측으로 재확인됐다. 이 확인 실험은 evidence로만 기록하고 실제 테스트 스위트에는 커밋하지 않았다 — 결함을 증명하지 못하는 항상-통과 테스트는 스위트에 노이즈만 더한다(Enforce Simplicity / Scope Discipline).
+
+### E4 — 수정 후 기준선 게이트
+
+```
+$ pnpm test      → 32 files / 704 tests (702 passed + 2 expected fail), exit 0
+$ pnpm typecheck → exit 0
+$ pnpm build     → exit 0
+```
+
+### E5 — PRESERVE 증명
+
+```
+$ git diff --name-only b4fdc6a6c684d02e373f415cf3dedc91780c8352 -- \
+    src/backend/adb-backend.ts src/cli/commands/reset.ts src/cli/commands/doctor.ts
+(출력 없음)
+
+$ git diff --name-only b4fdc6a6c684d02e373f415cf3dedc91780c8352 -- src/backend/ime-session-store.ts
+(출력 없음 — M1은 재현 게이트이므로 소스 파일 자체는 아직 수정하지 않았다. AC-018의 양성 대조는 M2가 소스를 수정한 뒤에야 비어있지 않은 출력을 낼 것이다.)
+
+$ git diff --name-only b4fdc6a6c684d02e373f415cf3dedc91780c8352 -- src/backend/ime-session-store.test.ts
+src/backend/ime-session-store.test.ts   (테스트 파일만 수정 — 예상대로 감지됨. diff 명령 자체의 감지 능력을 증명하는 대체 양성 대조)
+```
+
+PRESERVE 대상 3개 파일(`adb-backend.ts` / `reset.ts` / `doctor.ts`) 무수정 확인. `ime-session-store.ts` 소스 자체도 M1에서는 미수정(테스트 파일만 수정) — AC-018 본연의 양성 대조는 M2에서 재확인이 필요하다.
+
+### E6 — 커밋/푸시 상태
+
+M1 커밋의 SHA/push 결과는 이 파일이 그 커밋에 포함되어 자기 참조가 불가능하므로(커밋은 자신의 해시를 미리 알 수 없다), 커밋 직후 오케스트레이터 응답 본문에 `git log -1` / `git push` / `git rev-list --count --left-right` 실측을 인용한다(별도 backfill 커밋 없이).
+
+### E7 — 블로커
+
+없음. 두 결함 모두 재현에 성공했고 사전 점검 10개 항목 전건이 기대대로 통과했으므로 M1 게이트를 통과한다.
 
 ## §F Phase 4 Mode Selection
 

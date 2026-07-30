@@ -2,7 +2,7 @@
 id: SPEC-IMESTATE-001
 title: "기기별 IME 세션 상태 격리 — 병렬 텍스트 입력에서 복원 기록이 유실되지 않는다"
 version: "0.4.0"
-status: draft
+status: in-progress
 created: 2026-07-29
 updated: 2026-07-30
 author: hatae

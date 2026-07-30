@@ -131,3 +131,104 @@ describe("ImeSessionStore (REQ-INPUT-004 disk-persistence fix)", () => {
     await expect(store.getOriginalIme("R58N90ABCDE")).resolves.toBe("com.example/.Original");
   });
 });
+
+describe("cross-process interleaving (M1 reproduction gate — SPEC-IMESTATE-001)", () => {
+  /**
+   * Fake I/O whose `read()` forces two concurrent `ImeSessionStore`
+   * operations to complete their internal `readAll()` BEFORE either can
+   * begin its `writeAll()` — reproducing the read-modify-write race
+   * documented at ime-session-store.ts:22-27 (@MX:NOTE). A sequential-await
+   * harness (call A fully, then call B) CANNOT reproduce this: each
+   * `setOriginalIme` re-reads internally, so two calls awaited one after
+   * another never overlap — verified empirically as a false negative
+   * during M1 (both records survive) and recorded in progress.md §E.2; see
+   * acceptance.md AC-IMESTATE-002 하네스 요건 2.
+   *
+   * Every `read()` call is keyed by `path` (a `Map<string, Buffer>`, not a
+   * single shared variable), so this fake survives M2's constructor-arg1
+   * meaning change (file path -> directory path) without modification —
+   * acceptance.md AC-IMESTATE-002 하네스 요건 1, 3.
+   *
+   * Every reader — including the one that releases the gate — awaits the
+   * SAME gate before returning its snapshot, so neither reader's return
+   * value can ever reflect a write the OTHER reader triggered; both always
+   * observe the pre-write (empty) snapshot.
+   */
+  function createInterleavingIO(): { io: ImeSessionStoreIO; fakeFiles: Map<string, Buffer> } {
+    const fakeFiles = new Map<string, Buffer>();
+    let arrivals = 0;
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+
+    const io: ImeSessionStoreIO = {
+      read: async (path) => {
+        arrivals += 1;
+        if (arrivals >= 2) releaseGate();
+        await gate;
+        return fakeFiles.get(path) ?? null;
+      },
+      write: async (path, data) => {
+        fakeFiles.set(path, data);
+      },
+    };
+
+    return { io, fakeFiles };
+  }
+
+  // `.fails()` (vitest 4.1.10, verified present before use — see
+  // progress.md §E.2) marks a currently-failing assertion as PASS so the
+  // suite stays green pre-fix, while still executing the real assertion on
+  // every run: if M2's fix makes it pass for real, `.fails()` flips this to
+  // a reported FAILURE, forcing the M2 author to remove the modifier. This
+  // is the AC-IMESTATE-002 / AC-IMESTATE-021 전후 대조 의무 (before/after
+  // contrast obligation) expressed as an executable, self-enforcing check.
+  it.fails(
+    "[AC-IMESTATE-002] does not lose a different serial's record when two setOriginalIme calls interleave inside the read-modify-write cycle (defect ①, ime-session-store.ts:22-27)",
+    async () => {
+      const { io } = createInterleavingIO();
+      const store = new ImeSessionStore("virtual/ime-sessions.json", io);
+
+      await Promise.all([
+        store.setOriginalIme("SERIAL-A", "com.example/.KeyboardA"),
+        store.setOriginalIme("SERIAL-B", "com.example/.KeyboardB"),
+      ]);
+
+      await expect(store.getOriginalIme("SERIAL-A")).resolves.toBe("com.example/.KeyboardA");
+      await expect(store.getOriginalIme("SERIAL-B")).resolves.toBe("com.example/.KeyboardB");
+    },
+  );
+
+  it.fails(
+    "[AC-IMESTATE-021] the later of two concurrent check-then-act writers for the SAME serial overwrites the earlier one's value (defect ②, mirrors the adb-backend.ts:454-455 check-then-act pattern against the store's public API)",
+    async () => {
+      const { io } = createInterleavingIO();
+      const store = new ImeSessionStore("virtual/ime-sessions.json", io);
+
+      // Mirrors adb-backend.ts:454-455 exactly: read via `getOriginalIme`,
+      // and only when it is `undefined` does the caller write. PRESERVE
+      // forbids modifying adb-backend.ts, so the pattern is exercised
+      // directly against ImeSessionStore's public API instead of through
+      // the full AdbBackend.text() call (which pulls in unrelated adb-exec
+      // mocking irrelevant to this race).
+      async function checkThenRecordIfAbsent(serial: string, value: string): Promise<void> {
+        const existing = await store.getOriginalIme(serial);
+        if (existing === undefined) {
+          await store.setOriginalIme(serial, value);
+        }
+      }
+
+      await Promise.all([
+        checkThenRecordIfAbsent("SERIAL-X", "ime.first"),
+        checkThenRecordIfAbsent("SERIAL-X", "ime.second"),
+      ]);
+
+      // Post-fix (M2, exclusive create per REQ-IMESTATE-007) expectation:
+      // the FIRST writer's value survives — it must never be silently
+      // overwritten by a later "absent" reader that raced past the
+      // exclusivity check before the first writer's value landed.
+      await expect(store.getOriginalIme("SERIAL-X")).resolves.toBe("ime.first");
+    },
+  );
+});

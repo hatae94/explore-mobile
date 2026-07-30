@@ -2,7 +2,7 @@
 id: SPEC-IMESTATE-001
 title: "기기별 IME 세션 상태 격리 — 구현 계획"
 version: "0.4.0"
-status: draft
+status: in-progress
 created: 2026-07-29
 updated: 2026-07-30
 author: hatae
