@@ -15,7 +15,7 @@ author: hatae
 ```
 plan_status: scope-reduced (0.4.0 — 3차 최종 감사 FAIL 0.76 반영 후 범위 축소. 감사 반복 3/3 소진, 4차 없음)
 plan_complete_at: 2026-07-30
-plan_commit_sha: pending-backfill-0.4.0 / 4e4bd8d (0.3.0 SHA 백필) / c313f0c (0.3.0) / 924cae2 (최초)
+plan_commit_sha: 44ac220 (0.4.0) / 4e4bd8d (0.3.0 SHA 백필) / c313f0c (0.3.0) / 924cae2 (최초)
 tier: M (3 artifacts — spec.md / plan.md / acceptance.md)
 REQ: 8   AC: 25 활성 + 3 폐기(011·013·026)   추적성: 100% (미커버 REQ 0)
 ```
