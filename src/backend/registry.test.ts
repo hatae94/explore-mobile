@@ -40,6 +40,7 @@ function mockBackend(devices: DeviceInfo[]): DeviceBackend {
     stopApp: vi.fn().mockResolvedValue(undefined),
     swipe: vi.fn().mockResolvedValue(undefined),
     getMinEffectiveSwipeThreshold: vi.fn().mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
+    getScreenSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
   };
 }
 
@@ -234,6 +235,18 @@ describe("BackendRegistry", () => {
       expect(ios.backend.getMinEffectiveSwipeThreshold).toHaveBeenCalledWith(iosDevice().serial);
       expect(android.backend.getMinEffectiveSwipeThreshold).not.toHaveBeenCalled();
       expect(threshold).toEqual({ minEffectiveSwipePx: 11, basis: "measured-constant" });
+    });
+
+    it("getScreenSize(serial) routes to the owning backend (SPEC-VISION-001 M1, resolve-then-delegate like getMinEffectiveSwipeThreshold/swipe)", async () => {
+      const android = registeredBackend("android", [androidDevice()]);
+      const ios = registeredBackend("ios", [iosDevice()]);
+      const registry: DeviceBackend = new BackendRegistry([android, ios]);
+
+      const size = await registry.getScreenSize(iosDevice().serial);
+
+      expect(ios.backend.getScreenSize).toHaveBeenCalledWith(iosDevice().serial);
+      expect(android.backend.getScreenSize).not.toHaveBeenCalled();
+      expect(size).toEqual({ width: 1080, height: 1920 });
     });
   });
 });

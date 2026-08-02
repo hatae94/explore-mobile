@@ -31,6 +31,7 @@ import type {
   DeviceBackend,
   DeviceInfo,
   DevicePlatform,
+  ScreenSize,
   SwipeOptions,
   SwipePoint,
   SwipeThreshold,
@@ -192,5 +193,18 @@ export class BackendRegistry implements DeviceBackend {
   async getMinEffectiveSwipeThreshold(serial: string): Promise<SwipeThreshold> {
     const backend = await this.resolveOwningBackend(serial);
     return backend.getMinEffectiveSwipeThreshold(serial);
+  }
+
+  /**
+   * Facade for `DeviceBackend.getScreenSize` (SPEC-VISION-001 M1, additive
+   * 11th method) — resolve-then-delegate, identical shape to
+   * `getMinEffectiveSwipeThreshold`/`swipe` above. Without this facade,
+   * `getScreenSize` would type-check-break `bin.ts` (which passes this
+   * registry to `runCli`) AND never reach a real device in production, since
+   * `bin.ts` only ever holds a `BackendRegistry`.
+   */
+  async getScreenSize(serial: string): Promise<ScreenSize | undefined> {
+    const backend = await this.resolveOwningBackend(serial);
+    return backend.getScreenSize(serial);
   }
 }

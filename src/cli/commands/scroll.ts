@@ -3,33 +3,32 @@
  * M3, REQ-GEST-SCROLL-001~006; AC-GEST-007~010, AC-GEST-016, AC-GEST-017.
  * M8/0.6.0 amendment로 문턱 조회 배선 추가, REQ-GEST-SCROLL-007/008).
  *
- * M3은 새 백엔드 메서드를 추가하지 않았다(spec.md §F, plan.md §F M3) —
- * 화면 크기를 기존 `dumpUiHierarchy()` 결과에서 파생하고
- * (`scroll-geometry.ts` `deriveScreenSize`), 방향·비율을 좌표로 바꿔
- * (`computeScrollSwipe`) M1이 이미 배선한 `backend.swipe()`를 그대로
- * 호출한다. M8은 이 규율을 깨지 않는다 — 화면 크기와 달리 **밀도는
- * 어떤 기존 메서드로도 얻을 수 없어**(§A.3 D3 운용 주석 보강) 문턱 공급
- * 전용 메서드(`backend.getMinEffectiveSwipeThreshold`)가 정말로
- * 필요했다.
+ * SPEC-GESTURE-001 M3은 새 백엔드 메서드를 추가하지 않고 화면 크기를
+ * 기존 UI 계층 덤프 결과에서 파생했다(`scroll-geometry.ts`
+ * `deriveScreenSize`). **SPEC-VISION-001 M1이 그 결정을 뒤집는다**
+ * (REQ-VISION-001): 화면 크기는 이제 백엔드가 직접 공급하며
+ * (`backend.getScreenSize`), `scroll`은 UI 계층 dump를 전혀 호출하지
+ * 않는다. 폭과 높이 두 숫자를 얻자고 화면 전체의 요소 트리를 기기에서
+ * 끌어오던 비용이 사라진다 — dump는 Android에서 명령 지연의 가장 큰
+ * 단일 항목이었다(research.md §1.2).
  *
  * 거부 경로 순서(B-5, `swipe.ts`와 동일한 구조; M8/0.6.0 amendment로
- * 문턱 조회 단계 추가): 방향 파싱 -> `--amount` 파싱/검증 ->
- * `resolveTargetDevice` -> `dumpUiHierarchy`(화면 크기 파생) ->
+ * 문턱 조회 단계 추가, SPEC-VISION-001 M1으로 화면 크기 소스 교체):
+ * 방향 파싱 -> `--amount` 파싱/검증 -> `resolveTargetDevice` ->
+ * `backend.getScreenSize`(화면 크기 조회, REQ-VISION-001) ->
  * `backend.getMinEffectiveSwipeThreshold`(문턱 조회, REQ-GEST-SCROLL-008)
  * -> 기하 판정(`isDegenerateSwipe`) -> `backend.swipe`. 앞의 두 단계에서
  * 거부되면 어떤 백엔드 호출도 일어나지 않는다(무동작 보장) —
- * `SCREEN_SIZE_UNKNOWN` 단계에서는 `dumpUiHierarchy`는 이미 호출됐지만
+ * `SCREEN_SIZE_UNKNOWN` 단계에서는 `getScreenSize`는 이미 호출됐지만
  * `swipe`는 호출되지 않는다.
  */
 
-import type { CommonElement } from "../../schema/common-element.js";
-import type { DeviceBackend, SwipeThreshold } from "../../schema/device-backend.js";
+import type { DeviceBackend, ScreenSize, SwipeThreshold } from "../../schema/device-backend.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { parseRatio } from "../validators.js";
 import {
   computeScrollSwipe,
-  deriveScreenSize,
   isDegenerateSwipe,
   minNonDegenerateRatio,
   type ScrollDirection,
@@ -99,21 +98,26 @@ export const scrollCommand: CommandHandler = async (args, backend: DeviceBackend
   const target = resolveTargetDevice(devices, args.device);
   if (!target.ok) return failure("scroll", target.code, target.message, target.details);
 
-  let elements: CommonElement[];
+  // REQ-VISION-001 (SPEC-VISION-001 M1): 화면 크기는 백엔드가 공급한다.
+  // 조회 자체가 실패하면(기기 끊김, 도구 비정상 종료) BACKEND_COMMAND_FAILED,
+  // 조회는 됐으나 응답을 읽을 수 없으면 SCREEN_SIZE_UNKNOWN — 두 사실은
+  // 다르며, 호출자는 재시도가 의미 있는지 구분할 수 있어야 한다.
+  let screen: ScreenSize | undefined;
   try {
-    elements = await backend.dumpUiHierarchy(target.serial);
+    screen = await backend.getScreenSize(target.serial);
   } catch (err) {
     return failure("scroll", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
 
   // REQ-GEST-SCROLL-004: 화면 크기를 신뢰할 수 없으면 추측하지 않고
-  // 거부한다 — 되돌릴 수 없는 제스처를 보내지 않는다.
-  const screen = deriveScreenSize(elements);
+  // 거부한다 — 되돌릴 수 없는 제스처를 보내지 않는다. 오류 코드는
+  // SPEC-GESTURE-001에서 확립된 계약 그대로 유지된다(AC-VISION-004);
+  // 바뀐 것은 크기의 출처뿐이다.
   if (!screen) {
     return failure(
       "scroll",
       "SCREEN_SIZE_UNKNOWN",
-      "Could not determine screen size from the device's UI hierarchy (no witness element found).",
+      "Could not determine the device's screen size.",
     );
   }
 

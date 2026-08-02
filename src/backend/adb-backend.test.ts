@@ -334,6 +334,64 @@ describe("AdbBackend", () => {
     });
   });
 
+  describe("getScreenSize (AC-VISION-002, AC-VISION-004 — SPEC-VISION-001 M1)", () => {
+    it("queries 'shell wm size' and parses the 'Physical size:' line", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("Physical size: 1440x3120\n"));
+
+      const backend = new AdbBackend(exec);
+      const size = await backend.getScreenSize("R3CY106LKVX");
+
+      expect(exec).toHaveBeenCalledWith(["-s", "R3CY106LKVX", "shell", "wm", "size"]);
+      expect(size).toEqual({ width: 1440, height: 3120 });
+    });
+
+    it.each([
+      ["1080x2340", 1080, 2340],
+      ["1440x3120", 1440, 3120],
+      ["720x1600", 720, 1600],
+    ])("parses %s -- the returned size tracks the mocked output, carrying no hardcoded dimension", async (raw, width, height) => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok(`Physical size: ${raw}\n`));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.getScreenSize("R3CY106LKVX")).resolves.toEqual({ width, height });
+    });
+
+    it("AC-VISION-004: returns undefined -- NOT a guessed size -- when the output carries no parseable 'Physical size:' line", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("unexpected output\n"));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.getScreenSize("R3CY106LKVX")).resolves.toBeUndefined();
+    });
+
+    it("AC-VISION-004: returns undefined for a degenerate 0x0 report rather than handing a zero-sized screen to the gesture layer", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("Physical size: 0x0\n"));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.getScreenSize("R3CY106LKVX")).resolves.toBeUndefined();
+    });
+
+    it("throws -- NOT undefined -- when the underlying 'wm size' invocation exits non-zero, so 'could not answer' stays distinguishable from 'answered unreadably'", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(fail("device offline"));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.getScreenSize("R3CY106LKVX")).rejects.toThrow(/device offline/);
+    });
+
+    it("reads the Physical line even when an Override line is present -- pins the plan.md §B M1 parse target; whether a SIZE override governs the tap coordinate system was NOT observed in this SPEC (unlike density, spec.md §C.1-⑱) and is an M6 real-device item recorded in progress.md §G", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("Physical size: 1440x3120\nOverride size: 1080x2340\n"));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.getScreenSize("R3CY106LKVX")).resolves.toEqual({ width: 1440, height: 3120 });
+    });
+  });
+
   describe("getMinEffectiveSwipeThreshold (AC-GEST-026, AC-GEST-027 — SPEC-GESTURE-001 M8)", () => {
     it.each([
       ["420", 23],

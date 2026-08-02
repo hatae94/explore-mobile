@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CommonElement } from "../../schema/common-element.js";
 import type { DeviceBackend, DeviceInfo } from "../../schema/device-backend.js";
 import { runCli } from "../router.js";
-import { minNonDegenerateRatio } from "./scroll-geometry.js";
+import { deriveScreenSize, minNonDegenerateRatio } from "./scroll-geometry.js";
 
 /**
  * `minNonDegenerateRatio()`가 M10/0.8.0 amendment로 `number | undefined`를
@@ -125,6 +125,13 @@ function createMockBackend(
     // (BOUNDARY_FIXTURES_402X874, minNonDegenerateRatio() call sites) keeps
     // resolving against the SAME threshold it was derived against.
     getMinEffectiveSwipeThreshold: vi.fn().mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
+    // SPEC-VISION-001 M1 (REQ-VISION-001): 화면 크기의 출처가 UI 계층
+    // 덤프에서 `backend.getScreenSize`로 바뀌었다. 이 mock은 기존
+    // 픽스처(`elements`)에 M1 이전과 **같은 파생 규칙**을 적용해 크기를
+    // 만들어 돌려준다 — 그래야 이 파일에 M1 이전에 작성된 모든 화면 크기
+    // 픽스처가 여전히 같은 크기를 의미하고, 바뀐 것이 크기의 출처뿐임을
+    // 기존 테스트들이 그대로 증언한다.
+    getScreenSize: vi.fn().mockResolvedValue(deriveScreenSize(elements)),
   };
 }
 
@@ -477,15 +484,20 @@ describe("scroll", () => {
   });
 
   describe("AC-GEST-026/027 — 문턱 조회 배선 (SPEC-GESTURE-001 M8/0.6.0 amendment, REQ-GEST-SCROLL-007/008)", () => {
-    it("backend.getMinEffectiveSwipeThreshold를 해석된 serial로 호출한다 -- dump 이후, backend.swipe 이전", async () => {
+    it("backend.getMinEffectiveSwipeThreshold를 해석된 serial로 호출한다 -- 화면 크기 조회 이후, backend.swipe 이전", async () => {
       const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
 
       const result = await runCli(["scroll", "down", "--amount", "1"], backend);
 
       expect(result.ok).toBe(true);
       expect(backend.getMinEffectiveSwipeThreshold).toHaveBeenCalledWith("R58N90ABCDE");
-      expect(backend.dumpUiHierarchy).toHaveBeenCalledTimes(1);
       expect(backend.getMinEffectiveSwipeThreshold).toHaveBeenCalledTimes(1);
+      // SPEC-VISION-001 M1(REQ-VISION-001)으로 화면 크기 조회 단계가
+      // UI 계층 덤프에서 `getScreenSize`로 교체됐다. 0.6.0까지 이 자리에
+      // 있던 `dumpUiHierarchy` 호출 횟수 단언을 그대로 두면 이 테스트는
+      // 사라진 계약을 지키게 된다.
+      expect(backend.getScreenSize).toHaveBeenCalledWith("R58N90ABCDE");
+      expect(backend.getScreenSize).toHaveBeenCalledTimes(1);
     });
 
     it("device-query 출처(Android 시뮬레이션)로 응답하는 백엔드를 쓰면 AMOUNT_TOO_SMALL 응답의 출처도 device-query다 -- 한쪽 값이 다른 쪽 경로로 흘러가지 않는다", async () => {
@@ -618,11 +630,37 @@ describe("scroll", () => {
     });
   });
 
-  describe("degrades a thrown backend error gracefully", () => {
-    it("dumpUiHierarchy가 던지면 BACKEND_COMMAND_FAILED를 반환한다", async () => {
+  describe("REQ-VISION-001 — 화면 크기 소스 교체 (SPEC-VISION-001 M1)", () => {
+    it("AC-VISION-001: 성공 경로에서 UI 계층 덤프를 한 번도 호출하지 않는다 -- grep은 코드의 부재를, 이 테스트는 실행의 부재를 증언한다", async () => {
+      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+
+      const result = await runCli(["scroll", "down", "--amount", "1"], backend);
+
+      expect(result.ok).toBe(true);
+      expect(backend.dumpUiHierarchy).not.toHaveBeenCalled();
+      expect(backend.swipe).toHaveBeenCalledTimes(1);
+    });
+
+    it("AC-VISION-004: getScreenSize가 undefined를 주면 SCREEN_SIZE_UNKNOWN, 무동작 -- 크기를 추측하지 않는다", async () => {
       const backend = createMockBackend();
-      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-        new Error("idb: simulator not booted"),
+      // 백엔드가 화면 크기 소스를 읽었으나 해석할 수 없었던 경우
+      // (예: `wm size` 출력에 `Physical size:` 줄이 없음). 명령 자체가
+      // 실패한 것과는 다른 사실이며, 다른 오류 코드로 갈라져야 한다.
+      (backend.getScreenSize as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const result = await runCli(["scroll", "down"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("SCREEN_SIZE_UNKNOWN");
+      expect(backend.swipe).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("degrades a thrown backend error gracefully", () => {
+    it("getScreenSize가 던지면 BACKEND_COMMAND_FAILED를 반환한다", async () => {
+      const backend = createMockBackend();
+      (backend.getScreenSize as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("adb: device offline"),
       );
 
       const result = await runCli(["scroll", "down"], backend);
@@ -630,8 +668,9 @@ describe("scroll", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
-        expect(result.error.message).toMatch(/simulator not booted/);
+        expect(result.error.message).toMatch(/device offline/);
       }
+      expect(backend.swipe).not.toHaveBeenCalled();
     });
 
     it("swipe가 던지면 BACKEND_COMMAND_FAILED를 반환한다", async () => {

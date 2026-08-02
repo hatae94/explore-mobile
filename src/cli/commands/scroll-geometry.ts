@@ -12,14 +12,18 @@
  */
 
 import type { CommonElement } from "../../schema/common-element.js";
-import type { SwipePoint } from "../../schema/device-backend.js";
+import type { ScreenSize, SwipePoint } from "../../schema/device-backend.js";
 
 export type ScrollDirection = "up" | "down" | "left" | "right";
 
-export interface ScreenSize {
-  width: number;
-  height: number;
-}
+/**
+ * SPEC-VISION-001 M1: `ScreenSize`의 정의 자체는 `schema/device-backend.ts`로
+ * 옮겨졌다 — 화면 크기가 더 이상 dump에서 파생되는 값이 아니라 백엔드가
+ * 직접 공급하는 값(`DeviceBackend.getScreenSize`)이 됐으므로, 타입은 그것을
+ * 공급하는 인터페이스 옆에 있어야 한다. 이 모듈의 기존 사용자가 깨지지
+ * 않도록 여기서 그대로 다시 내보낸다.
+ */
+export type { ScreenSize };
 
 export interface SwipeCoordinates {
   from: SwipePoint;

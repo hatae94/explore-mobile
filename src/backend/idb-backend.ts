@@ -31,10 +31,12 @@ import type { CommonElement } from "../schema/common-element.js";
 import type {
   DeviceBackend,
   DeviceInfo,
+  ScreenSize,
   SwipeOptions,
   SwipePoint,
   SwipeThreshold,
 } from "../schema/device-backend.js";
+import { deriveScreenSize } from "../cli/commands/scroll-geometry.js";
 import { isKeyAlias, type KeyAlias } from "../schema/key-alias.js";
 import type { IdbExecResult, IdbExecutor } from "./idb-executor.js";
 import { spawnIdb } from "./idb-executor.js";
@@ -357,5 +359,25 @@ export class IdbBackend implements DeviceBackend {
    */
   async getMinEffectiveSwipeThreshold(_serial: string): Promise<SwipeThreshold> {
     return { minEffectiveSwipePx: MEASURED_MIN_EFFECTIVE_SWIPE_PX, basis: "measured-constant" };
+  }
+
+  /**
+   * REQ-VISION-001 (SPEC-VISION-001 M1, additive 11th method) — TEMPORARY.
+   * Wraps the EXACT path `scroll` used to run inline before M1
+   * (`dumpUiHierarchy` -> `deriveScreenSize`), so M1 changes only WHERE the
+   * derivation happens, not WHAT iOS returns. That keeps M1's Android-side
+   * change (a real `wm size` query) from silently altering iOS behaviour in
+   * the same commit.
+   *
+   * `undefined` propagates unchanged from `deriveScreenSize` (empty tree,
+   * degenerate bounds, or no origin witness), preserving the
+   * `SCREEN_SIZE_UNKNOWN` contract exactly as it behaved pre-M1.
+   *
+   * @MX:DEBT: iOS는 여전히 dump에서 화면 크기를 파생한다 -- M1의 목표(dump 의존 제거)는 이 시점에 Android 경로에서만 달성된다
+   * @MX:CEILING: idb `describe-all`이 원점 witness 요소를 반환하는 화면에서만 유효(deriveScreenSize의 witness 요건)
+   * @MX:UPGRADE: M3에서 WDA 백엔드의 getScreenSize로 교체(plan.md §B M3 item 3) -- 그때 이 메서드와 cli 계층 import가 함께 사라진다
+   */
+  async getScreenSize(serial: string): Promise<ScreenSize | undefined> {
+    return deriveScreenSize(await this.dumpUiHierarchy(serial));
   }
 }

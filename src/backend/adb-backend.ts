@@ -21,6 +21,7 @@ import { ensureAdbKeyboardInstalled } from "./adbkeyboard-installer.js";
 import type {
   DeviceBackend,
   DeviceInfo,
+  ScreenSize,
   SwipeOptions,
   SwipePoint,
   SwipeThreshold,
@@ -204,6 +205,27 @@ function parseEffectiveDensity(output: string): number | undefined {
   if (!match) return undefined;
   const dpi = Number(match[1]);
   return Number.isFinite(dpi) && dpi > 0 ? dpi / 160 : undefined;
+}
+
+/**
+ * Parses `wm size`'s output into a device-pixel screen size
+ * (REQ-VISION-001, SPEC-VISION-001 M1). Returns `undefined` when the target
+ * line is absent or unparseable, so the caller surfaces
+ * `SCREEN_SIZE_UNKNOWN` rather than guessing a size — the same
+ * never-guess policy `parseEffectiveDensity` above follows for the threshold.
+ *
+ * @MX:NOTE: [AUTO] 형제 파서 `parseEffectiveDensity`는 `Override density:`를 먼저 읽는다 -- Physical만 읽는 것이 override 활성 기기에서 틀린 것으로 실측됐기 때문이다(spec.md §C.1-⑱). 여기서는 `Physical size:`만 읽는데, 이는 plan.md §B M1(item 3 + 위험 항목)이 그 라인을 파싱 대상으로 명시했기 때문이다. 화면 크기 override가 탭 좌표계를 지배하는지는 SPEC-VISION-001에서 관측된 바 없다 -- 이 비대칭은 추론이 아니라 미검증 항목으로 progress.md §G에 기록되며 M6 실기기 검증 대상이다
+ */
+function parseScreenSize(output: string): ScreenSize | undefined {
+  const match = /Physical size:\s*(\d+)x(\d+)/.exec(output);
+  if (!match) return undefined;
+
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || width <= 0) return undefined;
+  if (!Number.isFinite(height) || height <= 0) return undefined;
+
+  return { width, height };
 }
 
 export class AdbBackend implements DeviceBackend {
@@ -816,5 +838,27 @@ export class AdbBackend implements DeviceBackend {
     const minEffectiveSwipePx = Math.floor(TOUCH_SLOP_DP * density) + TOUCH_SLOP_MARGIN_PX;
     const value: SwipeThreshold = { minEffectiveSwipePx, basis: "device-query" };
     return value;
+  }
+
+  /**
+   * REQ-VISION-001 (SPEC-VISION-001 M1, additive 11th method): reads THIS
+   * device's screen size from `wm size` at call time. Before M1 the `scroll`
+   * command obtained the same two numbers by running a full `uiautomator
+   * dump`, transferring the whole XML tree off the device and deriving a
+   * bounding box from it — for a gesture that needs only a width and a
+   * height.
+   *
+   * The two failure modes stay distinguishable, per `getScreenSize`'s
+   * contract in `device-backend.ts`: a non-zero exit throws via
+   * `assertSuccess` (surfaced as `BACKEND_COMMAND_FAILED`), while a
+   * successful command whose output does not carry a parseable
+   * `Physical size:` line returns `undefined` (surfaced as
+   * `SCREEN_SIZE_UNKNOWN`).
+   */
+  async getScreenSize(serial: string): Promise<ScreenSize | undefined> {
+    const result = await this.exec(["-s", serial, "shell", "wm", "size"]);
+    assertSuccess(result, "shell wm size");
+
+    return parseScreenSize(result.stdout.toString("utf-8"));
   }
 }

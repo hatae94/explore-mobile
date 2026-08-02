@@ -45,6 +45,7 @@ function createMockIosBackend(): DeviceBackend {
     stopApp: vi.fn().mockResolvedValue(undefined),
     swipe: vi.fn().mockResolvedValue(undefined),
     getMinEffectiveSwipeThreshold: vi.fn().mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
+    getScreenSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
   };
 }
 
@@ -86,6 +87,7 @@ function createMockBackend(devices: DeviceInfo[] = [device()]): DeviceBackend {
     stopApp: vi.fn().mockResolvedValue(undefined),
     swipe: vi.fn().mockResolvedValue(undefined),
     getMinEffectiveSwipeThreshold: vi.fn().mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
+    getScreenSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
   };
 }
 
@@ -370,6 +372,7 @@ describe("runCli", () => {
         getMinEffectiveSwipeThreshold: vi
           .fn()
           .mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
+        getScreenSize: vi.fn().mockResolvedValue({ width: 1179, height: 2556 }),
       };
       const registry: DeviceBackend = new BackendRegistry([
         { platform: "ios", backend: idbBackend, isAvailable: async () => true },
@@ -449,6 +452,7 @@ describe("runCli", () => {
         getMinEffectiveSwipeThreshold: vi
           .fn()
           .mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
+        getScreenSize: vi.fn().mockResolvedValue({ width: 1179, height: 2556 }),
       };
       const registry: DeviceBackend = new BackendRegistry([
         { platform: "ios", backend: idbBackend, isAvailable: async () => true },

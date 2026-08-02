@@ -13,9 +13,10 @@
  *
  * @MX:ANCHOR — invariant contract for backend substitution (REQ-ARCH-003,
  * REQ-IOS-ARCH-005). Both `AdbBackend` and `IdbBackend` implement this exact
- * 10-method surface (SPEC-GESTURE-001 M1 added `swipe`, M8 added
- * `getMinEffectiveSwipeThreshold` — both additive only, the pre-existing
- * methods are unchanged in shape/behavior).
+ * 11-method surface (SPEC-GESTURE-001 M1 added `swipe`, M8 added
+ * `getMinEffectiveSwipeThreshold`, SPEC-VISION-001 M1 added `getScreenSize`
+ * — all additive only, the pre-existing methods are unchanged in
+ * shape/behavior).
  * @MX:REASON — every CLI command and the backend registry (`registry.ts`)
  * depend on this method surface; changing it ripples through every backend
  * and the command layer above it.
@@ -75,6 +76,22 @@ export type SwipeThresholdBasis = "device-query" | "measured-constant";
 export interface SwipeThreshold {
   minEffectiveSwipePx: number;
   basis: SwipeThresholdBasis;
+}
+
+/**
+ * A device's screen size in device pixels — the SAME coordinate system as
+ * `swipe()`'s `SwipePoint` and `tap()`'s `x`/`y` (REQ-VISION-001,
+ * SPEC-VISION-001 M1).
+ *
+ * Relocated here from `cli/commands/scroll-geometry.ts`, where it was
+ * defined back when screen size was DERIVED from a UI-hierarchy dump. It is
+ * now a value the backend supplies directly, so the type belongs with the
+ * interface that supplies it. `scroll-geometry.ts` re-exports it so its
+ * existing importers are unaffected.
+ */
+export interface ScreenSize {
+  width: number;
+  height: number;
 }
 
 /**
@@ -184,6 +201,26 @@ export interface DeviceBackend {
    * other's.
    */
   getMinEffectiveSwipeThreshold(serial: string): Promise<SwipeThreshold>;
+
+  /**
+   * Returns this device's screen size in device pixels (REQ-VISION-001,
+   * SPEC-VISION-001 M1 — additive 11th method, the original 10 are
+   * unchanged). This is the screen-size SOURCE: before M1, `scroll` called
+   * `dumpUiHierarchy()` and derived the size from the returned element
+   * bounds, which made a full UI-hierarchy dump a prerequisite for a gesture
+   * that needs nothing but a width and a height.
+   *
+   * Returns `undefined` — never a guessed size — when the backend's own
+   * screen-size source answers but is unparseable; the command layer
+   * surfaces that as `SCREEN_SIZE_UNKNOWN`, the pre-existing error contract
+   * previously produced by `deriveScreenSize()` returning `undefined`. A
+   * FAILING query (dead device, non-zero exit) throws instead and surfaces
+   * as `BACKEND_COMMAND_FAILED`. The two are deliberately distinct: "the
+   * tool could not answer" and "the tool answered something we cannot read"
+   * are different facts, and a caller that cannot tell them apart cannot
+   * know whether retrying is worthwhile.
+   */
+  getScreenSize(serial: string): Promise<ScreenSize | undefined>;
 }
 
 // Re-exported so consumers of this module can reference the schema type

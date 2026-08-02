@@ -8,7 +8,13 @@
 
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
-import type { CommonElement, DeviceBackend, DeviceInfo, SwipeThreshold } from "../../schema/device-backend.js";
+import type {
+  CommonElement,
+  DeviceBackend,
+  DeviceInfo,
+  ScreenSize,
+  SwipeThreshold,
+} from "../../schema/device-backend.js";
 import type { ProcessExecResult } from "../../backend/process-executor.js";
 import { CalibrationStore } from "../../webview/calibration.js";
 import { AmbiguousWebPageError, IwdpNotInstalledError } from "../../webview/webkit-errors.js";
@@ -102,6 +108,7 @@ function harness(
       minEffectiveSwipePx: 11,
       basis: "measured-constant",
     }),
+    getScreenSize: async (): Promise<ScreenSize> => ({ width: 1080, height: 1920 }),
   } satisfies DeviceBackend;
 
   const client: WebInspectorClient = {
