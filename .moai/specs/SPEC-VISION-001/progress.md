@@ -158,6 +158,92 @@ M2 이후 `656 passed | 2 expected fail (658)` — **순감 57건**. 감소분�
   SPEC이 열려야 한다.
 - 기기 열거는 아직 명령당 2회다(M5 범위). M2는 여기에 손대지 않았다.
 
+### M1·M2가 남긴 Android D등급 AC의 실기기 실측 (2026-08-03)
+
+**주장**: M1이 미룬 AC-VISION-003·004(D 부분)·005와, M2 시점에 측정하지 않은
+AC-VISION-028을 실기기에서 닫았다. 코드는 변경하지 않았다 — 검증만 수행했다.
+
+**측정 조건 (baseline 귀속)**:
+
+```
+트리      : HEAD = 4ca5260 (M2 커밋). 추적 파일 변경 0건
+기기      : R3CY106LKVX / SM-S938N / Android 16 / USB 유선
+화면      : 1440x3120, density 600, 디스플레이 1개
+대조 기준 : 181199e (pre-M1) — 별도 git worktree에 펼쳐 빌드. master 미변경
+무대      : com.android.settings 최상위 (매 측정 전 stop -> launch로 리셋)
+```
+
+**증거** (실제 실행한 명령과 관측한 출력):
+
+```
+$ adb -s R3CY106LKVX shell wm size
+Physical size: 1440x3120                                     (AC-VISION-003)
+
+$ adb -s R3CY106LKVX shell dumpsys display | grep -c DisplayDeviceInfo
+1                                                            (멀티 디스플레이 아님)
+
+$ node dist/cli/bin.js scroll down --device R3CY106LKVX
+{"ok":true,...,"from":{"x":720,"y":2262},"to":{"x":720,"y":858}}
+  좌표 도출: 720 = 1440/2 · 2262 = 1560+702 · 858 = 1560-702 · 702 = (3120*0.45)/2
+
+$ node dist/cli/bin.js screenshot --device R3CY106LKVX --out a1-before.png
+$ file a1-before.png
+PNG image data, 1440 x 3120                                  (AC-VISION-028: 배율 1.0)
+
+$ node dist/cli/bin.js scroll down --device 00008130-001238880C13803A   (iPhone)
+{"ok":false,"error":{"code":"SCREEN_SIZE_UNKNOWN",
+ "message":"Could not determine the device's screen size."}}  (AC-VISION-004 D 부분)
+
+제거 전후 좌표 대조 (AC-VISION-005) — 무대 리셋 후 3쌍:
+  OLD(181199e)  "from":{"x":720,"y":2262},"to":{"x":720,"y":858}   x3
+  NEW(4ca5260)  "from":{"x":720,"y":2262},"to":{"x":720,"y":858}   x3
+  스크롤 결과 화면 스크린샷도 동일 (시계·배터리 표시만 상이)
+
+scroll 소요 시간 (같은 기기·같은 무대, node 프로세스 기동 비용 포함):
+  OLD 6039 / 6032 / 5967 ms      (평균 6013)
+  NEW 3861 / 3856 / 3901 ms      (평균 3873)
+
+$ node dist/cli/bin.js devices   (열거 2회 구조의 현재 baseline, AC-VISION-024용)
+829 / 833 / 812 ms
+```
+
+**AC 판정**:
+
+| AC | 등급 | 판정 |
+|---|---|---|
+| AC-VISION-003 | D | **PASS** — `wm size` 실기기 출력이 파서 가정과 일치하고, 좌표가 1440x3120에서 도출됨 |
+| AC-VISION-004 (D 부분) | D | **PASS** — 실기기에서 `SCREEN_SIZE_UNKNOWN` 반환. 조용한 대체 없음 |
+| AC-VISION-005 | D | **PASS** — 제거 전후 좌표 3쌍 완전 일치 + 결과 화면 동일 |
+| AC-VISION-028 | D | **PASS** — 캡처 해상도 = `wm size` → 배율 1.0 |
+| AC-VISION-035 | D | 절차 준수 — 모든 조작 전 스크린샷으로 무대 확인 |
+
+**미검증 (Gaps)**:
+
+1. **AC-VISION-004의 Android 파싱 실패는 여전히 U 단독이다.** 위 D 증거는 iOS 경로
+   (M2가 `IdbBackend.getScreenSize`를 `undefined`로 강등한 §G 결정)에서 얻었다.
+   이는 **설계된 실패**이지 우발적 파싱 실패가 아니다 — 형태는 같지만 원인이 다르다.
+2. **AC-VISION-028은 "두 입력값이 일치한다"까지만 관측했다.** 배율을 도출하는 코드는
+   아직 없다(AC-VISION-025·026은 M3에서 신설).
+3. **멀티 디스플레이·폴더블·화면 크기 override 변형은 관측하지 못했다** — 이 기기는
+   디스플레이 1개이고 override가 설정돼 있지 않다.
+4. **AC-VISION-031(`--web` 회귀)·AC-VISION-033(비전 루프 e2e)는 수행하지 않았다.**
+5. **AC-VISION-024는 baseline만 확보했다** — "이후" 값은 M5(열거 1회화) 완료 후에만
+   측정 가능하다.
+
+**잔여 위험**:
+
+- scroll 지연 감소(6013 → 3873ms, 약 2140ms)는 dump 호출 제거의 효과로 보이나,
+  측정값에 node 프로세스 기동 비용이 포함되어 있어 **CLI 내부 순수 지연이 아니다.**
+  AC-VISION-024가 요구하는 열거 1회화 효과와는 별개 축이므로 혼동하지 않는다.
+- 좌표 3쌍 일치는 **같은 기기·같은 화면**에서의 결과다. 화면 크기 파생 방식 자체가
+  달라졌으므로(dump 루트 bounds → `wm size`), 루트 요소 bounds가 화면 전체와
+  다른 앱(전체화면 오버레이 등)에서는 두 방식이 갈릴 수 있으며 그 경우는
+  관측하지 않았다.
+- CLI는 `spawnAdb`가 바이너리명을 `"adb"`로 고정하므로 **PATH에 adb가 없으면
+  Android 기기를 전혀 보지 못한다.** 이번 실측은 PATH를 보정한 상태에서 수행했다.
+  `doctor`는 이 상태를 `adb:{installed:false}` + 복구 안내로 정확히 보고하므로
+  조용한 실패는 아니지만, 배포 시 사용자가 겪을 함정으로 남아 있다.
+
 ---
 
 ## §E.3 Run-phase Audit-Ready Signal
