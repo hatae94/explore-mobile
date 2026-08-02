@@ -17,11 +17,20 @@ export interface ParsedCommandArgs {
   clean: boolean;
   /** `text --keep-keyboard`: opts out of the default post-send soft-keyboard dismissal (REQ-INPUT-004 revised, real-device UX). */
   keepKeyboard: boolean;
-  /** `tap`/`text --id <resource-id>`: selector-mode element target, matched against `CommonElement.id` (element-selector interaction, new capability — see element-query.ts). */
-  id: string | undefined;
-  /** `tap`/`text --text <label>`: selector-mode element target, matched against `CommonElement.text` (also matches content-desc-derived text). Named `selectorText` (not `text`) to stay unambiguous next to `text`'s own positional "string to type". */
-  selectorText: string | undefined;
-  /** `tap`/`text --index <n>`: 0-based match index when a selector matches more than one element. Kept as a raw string here (parsed by the command handler) to match the existing coordinate-parsing pattern. */
+  /**
+   * `tap`/`text --web "<CSS>" --index <n>`: 0-based match index when the CSS
+   * selector matches more than one element. Kept as a raw string here
+   * (parsed by the command handler) to match the existing coordinate-parsing
+   * pattern.
+   *
+   * **SPEC-VISION-001 M2**: this is now a WEB-ONLY flag. The native
+   * `--id`/`--text` selectors it used to disambiguate were removed with the
+   * UI-tree dump (REQ-VISION-002); `--index` itself survives because
+   * `web-support.ts` `readSelector` still needs it and REQ-VISION-007
+   * (웹뷰 회귀 금지) is the ceiling on that removal (spec.md §C.4).
+   * AC-VISION-008's `--index` clause is therefore explicitly unmet — see
+   * progress.md §G.
+   */
   index: string | undefined;
   /**
    * `--web` (SPEC-WEBVIEW-001, REQ-WEB-CLI-001): routes the command through
@@ -92,10 +101,16 @@ export function normalizeWebFlagArgv(argv: string[]): string[] {
  * `--out <path>` (screenshot host-file option), `--yes`/`--install`
  * (doctor auto-install consent), `--clean` (doctor --clean == reset),
  * `--keep-keyboard` (text: skip the default post-send keyboard dismissal),
- * and `--id`/`--text`/`--index` (tap/text: element-selector targeting)
+ * and `--index` (tap/text --web: which CSS-selector match to act on)
  * options. Throws on unrecognized flags; callers (the router) convert
  * that into a graceful JSON error rather than letting it crash the
  * process.
+ *
+ * **SPEC-VISION-001 M2**: `--id` and `--text` are GONE (REQ-VISION-002).
+ * Because they are no longer declared here, `parseArgs` throws on them and
+ * the router surfaces `INVALID_ARGS` — the removed flags are refused
+ * explicitly rather than silently degrading to a coordinate tap
+ * (AC-VISION-009).
  */
 export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
   const { values, positionals } = parseArgs({
@@ -109,8 +124,6 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
       install: { type: "boolean" },
       clean: { type: "boolean" },
       "keep-keyboard": { type: "boolean" },
-      id: { type: "string" },
-      text: { type: "string" },
       index: { type: "string" },
       duration: { type: "string" },
       amount: { type: "string" },
@@ -125,8 +138,6 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
     yes: values.yes === true || values.install === true,
     clean: values.clean === true,
     keepKeyboard: values["keep-keyboard"] === true,
-    id: typeof values.id === "string" ? values.id : undefined,
-    selectorText: typeof values.text === "string" ? values.text : undefined,
     index: typeof values.index === "string" ? values.index : undefined,
     web: typeof values.web === "string" ? values.web : undefined,
     page: typeof values.page === "string" ? values.page : undefined,

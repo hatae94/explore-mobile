@@ -2,9 +2,16 @@
  * `scroll` 편의 계층이 방향+비율을 실제 swipe 좌표로 바꾸는 순수 함수 모듈
  * (SPEC-GESTURE-001 M3, REQ-GEST-SCROLL-001/002/003).
  *
- * 새 백엔드 메서드를 추가하지 않는다(spec.md §F, plan.md §F M3) — 화면
- * 크기는 기존 `dumpUiHierarchy()`가 돌려주는 `CommonElement[]`에서
- * 파생하고(REQ-GEST-SCROLL-002), 방향·비율 변환은 기기 없이 테스트
+ * SPEC-GESTURE-001 당시에는 새 백엔드 메서드를 추가하지 않고(spec.md §F,
+ * plan.md §F M3) 화면 크기를 UI 계층 덤프가 돌려주는 `CommonElement[]`에서
+ * 파생했다(REQ-GEST-SCROLL-002). **SPEC-VISION-001이 그 결정을 뒤집었다**:
+ * M1이 `backend.getScreenSize`를 도입했고 M2가 덤프 메서드를 제거했으므로,
+ * 아래 `deriveScreenSize`는 더 이상 생산 경로에서 호출되지 않는다 —
+ * `scroll.test.ts`가 기존 화면 크기 픽스처를 재사용하는 테스트 헬퍼로만
+ * 남아 있다. 이 SPEC의 제거 목록(plan.md §A.1)에 없으므로 존치하며,
+ * iOS가 WDA로 교체되는 M3에서 함께 정리 대상이 된다.
+ *
+ * 방향·비율 변환은 기기 없이 테스트
  * 가능한 순수 함수로 뗀다(plan.md §F M3 item 3 — 두 실수를 각각 다른
  * 픽스처로 잡기 위해 같은 함수 경계 안에 둔다: 최상위 여러 개 + witness
  * 있음(AC-GEST-008)으로 인덱스 0 가정을 배제하고, 조각들만 있고 witness

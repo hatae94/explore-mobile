@@ -21,7 +21,6 @@ export type {
   DeviceInfo,
 } from "./schema/device-backend.js";
 export { KEY_ALIASES, isKeyAlias, type KeyAlias } from "./schema/key-alias.js";
-export { normalizeUiAutomatorXml } from "./normalize/uiautomator.js";
 export { AdbBackend } from "./backend/adb-backend.js";
 export type { AdbExecResult, AdbExecutor } from "./backend/adb-executor.js";
 export { parseAdbDevicesList } from "./backend/device-list-parser.js";

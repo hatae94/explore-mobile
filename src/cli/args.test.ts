@@ -12,18 +12,26 @@ describe("parseCommandArgs", () => {
     expect(result.yes).toBe(false);
     expect(result.clean).toBe(false);
     expect(result.keepKeyboard).toBe(false);
-    expect(result.id).toBeUndefined();
-    expect(result.selectorText).toBeUndefined();
     expect(result.index).toBeUndefined();
   });
 
-  it("parses --id/--text/--index (element-selector targeting, new capability)", () => {
-    const result = parseCommandArgs(["--id", "btn_ok", "--text", "OK", "--index", "2"]);
+  it("parses --index (SPEC-VISION-001 M2: now WEB-ONLY — which CSS-selector match to act on)", () => {
+    const result = parseCommandArgs(["--web", "a", "--index", "2"]);
 
-    expect(result.id).toBe("btn_ok");
-    expect(result.selectorText).toBe("OK");
+    expect(result.web).toBe("a");
     expect(result.index).toBe("2");
   });
+
+  // AC-VISION-009 (REQ-VISION-002 후반부): 제거된 셀렉터 플래그는 조용히
+  // 무시되지 않는다. `parseArgs`가 던지고 라우터가 INVALID_ARGS로 감싸므로
+  // 좌표 탭으로 임의 대체되는 경로 자체가 없다. 이 테스트가 그 계약의
+  // 회귀 가드다 — 누군가 args.ts에 플래그를 되돌리면 여기서 먼저 깨진다.
+  it.each([["--id", "btn_ok"], ["--text", "OK"]])(
+    "throws on the removed native selector flag %s (AC-VISION-009)",
+    (flag, value) => {
+      expect(() => parseCommandArgs([flag!, value!])).toThrow();
+    },
+  );
 
   it("recognizes --yes as consent (REQ-DOCTOR-002)", () => {
     expect(parseCommandArgs(["--yes"]).yes).toBe(true);
@@ -49,7 +57,7 @@ describe("parseCommandArgs", () => {
     expect(parseCommandArgs(["100", "200"]).web).toBeUndefined();
   });
 
-  it("parses a bare --web as web mode with no selector (dump --web)", () => {
+  it("parses a bare --web as web mode with no selector (the handler then rejects it as MISSING_SELECTOR)", () => {
     expect(parseCommandArgs(["--web"]).web).toBe("");
     expect(parseCommandArgs(["--web", "--device", "UDID"]).web).toBe("");
   });

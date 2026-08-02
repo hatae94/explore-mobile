@@ -15,7 +15,6 @@ import { ImeSessionStore } from "../backend/ime-session-store.js";
 import { BackendRegistry } from "../backend/registry.js";
 import type { ProcessExecutor } from "../backend/process-executor.js";
 import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
-import { normalizeUiAutomatorXml } from "../normalize/uiautomator.js";
 import type { EnvServices } from "./env-services.js";
 import { runCli } from "./router.js";
 
@@ -36,7 +35,6 @@ function envServices(android: AdbDoctor, ios: IdbDoctor = new IdbDoctor()): EnvS
 function createMockIosBackend(): DeviceBackend {
   return {
     listDevices: vi.fn().mockResolvedValue([]),
-    dumpUiHierarchy: vi.fn().mockResolvedValue([]),
     screenshot: vi.fn().mockResolvedValue(new Uint8Array()),
     tap: vi.fn().mockResolvedValue(undefined),
     inputText: vi.fn().mockResolvedValue(undefined),
@@ -63,22 +61,16 @@ function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
 
 /**
  * A fully-mocked DeviceBackend — the router/commands never touch adb
- * directly. `dumpUiHierarchy` resolves to already-normalized
- * `CommonElement[]` (REQ-IOS-SCHEMA-002/003, SPEC-IOS-001): fixtures below
- * are authored as uiautomator XML for readability, then normalized via
- * `normalizeUiAutomatorXml` at mock-setup time so the mock's return shape
- * matches the real backend contract.
+ * directly.
+ *
+ * SPEC-VISION-001 M2 (REQ-VISION-002): the UI-tree read member and its
+ * uiautomator-XML fixture were dropped along with the interface method, so
+ * this mock no longer carries a normalizer dependency. `getScreenSize` is
+ * the only screen-shaped member left.
  */
 function createMockBackend(devices: DeviceInfo[] = [device()]): DeviceBackend {
   return {
     listDevices: vi.fn().mockResolvedValue(devices),
-    dumpUiHierarchy: vi
-      .fn()
-      .mockResolvedValue(
-        normalizeUiAutomatorXml(
-          '<hierarchy><node class="android.widget.Button" resource-id="btn_ok" clickable="true" enabled="true" bounds="[0,0][10,10]" /></hierarchy>',
-        ),
-      ),
     screenshot: vi.fn().mockResolvedValue(Buffer.from([0x89, 0x50, 0x4e, 0x47])),
     tap: vi.fn().mockResolvedValue(undefined),
     inputText: vi.fn().mockResolvedValue(undefined),
@@ -173,7 +165,11 @@ describe("runCli", () => {
     it("returns a graceful NO_DEVICE error when 0 devices are connected", async () => {
       const backend = createMockBackend([]);
 
-      const result = await runCli(["dump"], backend);
+      // SPEC-VISION-001 M2: this used to target `dump`. That command is gone,
+      // and an UNKNOWN_COMMAND would short-circuit before device resolution —
+      // masking the NO_DEVICE contract this test exists to check. `screenshot`
+      // is a surviving device-targeted command with the same resolution path.
+      const result = await runCli(["screenshot"], backend);
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe("NO_DEVICE");
@@ -218,174 +214,23 @@ describe("runCli", () => {
     });
   });
 
-  describe("tap --id/--text element-selector targeting (new capability)", () => {
-    it("taps the computed center of the element matched by --id, reusing the dump/normalize tree-fetch path", async () => {
+  // SPEC-VISION-001 M2 (REQ-VISION-002): tap의 셀렉터 모드와 그 iOS 라우팅
+  // 회귀 테스트가 함께 제거됐다. 남는 계약은 "제거된 플래그는 조용히
+  // 좌표 탭으로 대체되지 않는다"이며, 아래가 그 가드다(AC-VISION-009).
+  describe("tap: 제거된 셀렉터 플래그 (AC-VISION-009)", () => {
+    it.each([
+      [["tap", "--id", "btn_ok"]],
+      [["tap", "--text", "OK"]],
+      [["tap", "--id", "btn_ok", "--index", "1"]],
+      [["tap", "100", "200", "--id", "btn_ok"]],
+    ])("%j는 INVALID_ARGS로 거부되고 backend.tap은 호출되지 않는다", async (argv) => {
       const backend = createMockBackend();
 
-      const result = await runCli(["tap", "--id", "btn_ok"], backend);
-
-      expect(result).toEqual({
-        ok: true,
-        command: "tap",
-        data: { serial: "R58N90ABCDE", x: 5, y: 5, selector: { id: "btn_ok" } },
-      });
-      expect(backend.tap).toHaveBeenCalledWith("R58N90ABCDE", 5, 5);
-    });
-
-    it("taps the computed center of the element matched by --text", async () => {
-      const backend = createMockBackend();
-      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        normalizeUiAutomatorXml(
-          '<hierarchy><node class="android.widget.Button" resource-id="btn_submit" text="Submit" clickable="true" enabled="true" bounds="[100,200][140,240]" /></hierarchy>',
-        ),
-      );
-
-      const result = await runCli(["tap", "--text", "Submit"], backend);
-
-      expect(result).toEqual({
-        ok: true,
-        command: "tap",
-        data: { serial: "R58N90ABCDE", x: 120, y: 220, selector: { text: "Submit" } },
-      });
-      expect(backend.tap).toHaveBeenCalledWith("R58N90ABCDE", 120, 220);
-    });
-
-    it("selects the Nth match (0-based) via --index when multiple elements share the same id", async () => {
-      const backend = createMockBackend();
-      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        normalizeUiAutomatorXml(
-          "<hierarchy>" +
-            '<node class="a" resource-id="row" clickable="true" enabled="true" bounds="[0,0][10,10]" />' +
-            '<node class="a" resource-id="row" clickable="true" enabled="true" bounds="[0,100][10,110]" />' +
-            "</hierarchy>",
-        ),
-      );
-
-      const result = await runCli(["tap", "--id", "row", "--index", "1"], backend);
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.data).toEqual({ serial: "R58N90ABCDE", x: 5, y: 105, selector: { id: "row", index: 1 } });
-      }
-      expect(backend.tap).toHaveBeenCalledWith("R58N90ABCDE", 5, 105);
-    });
-
-    it("still taps a matched but non-tappable element, surfacing a warning instead of refusing", async () => {
-      const backend = createMockBackend();
-      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        normalizeUiAutomatorXml(
-          '<hierarchy><node class="a" resource-id="disabled_btn" clickable="false" enabled="false" bounds="[0,0][10,10]" /></hierarchy>',
-        ),
-      );
-
-      const result = await runCli(["tap", "--id", "disabled_btn"], backend);
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        const data = result.data as { warnings?: string[] };
-        expect(data.warnings?.[0]).toMatch(/not tappable/i);
-      }
-      expect(backend.tap).toHaveBeenCalledWith("R58N90ABCDE", 5, 5);
-    });
-
-    it("returns a graceful ELEMENT_NOT_FOUND (carrying the selector) and does not tap when no element matches", async () => {
-      const backend = createMockBackend();
-
-      const result = await runCli(["tap", "--id", "does_not_exist"], backend);
+      const result = await runCli(argv as string[], backend);
 
       expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.code).toBe("ELEMENT_NOT_FOUND");
-        expect(result.error.details?.["selector"]).toEqual({ id: "does_not_exist" });
-      }
+      if (!result.ok) expect(result.error.code).toBe("INVALID_ARGS");
       expect(backend.tap).not.toHaveBeenCalled();
-    });
-
-    it("returns a graceful TARGET_CONFLICT (coords XOR selector) without resolving a device or calling the backend", async () => {
-      const backend = createMockBackend();
-
-      const result = await runCli(["tap", "10", "20", "--id", "btn_ok"], backend);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("TARGET_CONFLICT");
-      expect(backend.listDevices).not.toHaveBeenCalled();
-      expect(backend.tap).not.toHaveBeenCalled();
-    });
-
-    it("returns a graceful INVALID_INDEX when --index is not a non-negative integer", async () => {
-      const backend = createMockBackend();
-
-      const result = await runCli(["tap", "--id", "btn_ok", "--index", "abc"], backend);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("INVALID_INDEX");
-      expect(backend.tap).not.toHaveBeenCalled();
-    });
-
-    it("degrades a dumpUiHierarchy rejection in selector mode to a graceful BACKEND_COMMAND_FAILED envelope", async () => {
-      const backend = createMockBackend();
-      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-        new Error("adb: exec-out cat failed"),
-      );
-
-      const result = await runCli(["tap", "--id", "btn_ok"], backend);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
-    });
-
-    it("returns a graceful device-targeting error (not ELEMENT_NOT_FOUND) when the device is ambiguous in selector mode", async () => {
-      const devices = [device({ serial: "A" }), device({ serial: "B" })];
-      const backend = createMockBackend(devices);
-
-      const result = await runCli(["tap", "--id", "btn_ok"], backend);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("AMBIGUOUS_DEVICE");
-      expect(backend.dumpUiHierarchy).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("tap --id/--text works transparently on iOS via the registry (AC-IOS-025 — normalization-relocation side effect)", () => {
-    it("routes 'tap --id' through a registry-wrapped IdbBackend with zero changes to this command's code", async () => {
-      const iosDevice = device({ serial: "00008030-IOS", platform: "ios" });
-      const idbBackend: DeviceBackend = {
-        listDevices: vi.fn().mockResolvedValue([iosDevice]),
-        dumpUiHierarchy: vi.fn().mockResolvedValue([
-          {
-            role: "Button",
-            text: "Wallet",
-            id: "btn_wallet",
-            bounds: { x: 100, y: 100, w: 50, h: 50 },
-            tappable: true,
-            enabled: true,
-            children: [],
-          },
-        ]),
-        screenshot: vi.fn().mockResolvedValue(new Uint8Array()),
-        tap: vi.fn().mockResolvedValue(undefined),
-        inputText: vi.fn().mockResolvedValue(undefined),
-        sendKeyEvent: vi.fn().mockResolvedValue(undefined),
-        launchApp: vi.fn().mockResolvedValue(undefined),
-        stopApp: vi.fn().mockResolvedValue(undefined),
-        swipe: vi.fn().mockResolvedValue(undefined),
-        getMinEffectiveSwipeThreshold: vi
-          .fn()
-          .mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
-        getScreenSize: vi.fn().mockResolvedValue({ width: 1179, height: 2556 }),
-      };
-      const registry: DeviceBackend = new BackendRegistry([
-        { platform: "ios", backend: idbBackend, isAvailable: async () => true },
-      ]);
-
-      const result = await runCli(["tap", "--id", "btn_wallet"], registry);
-
-      expect(result).toEqual({
-        ok: true,
-        command: "tap",
-        data: { serial: "00008030-IOS", x: 125, y: 125, selector: { id: "btn_wallet" } },
-      });
-      expect(idbBackend.tap).toHaveBeenCalledWith("00008030-IOS", 125, 125);
     });
   });
 
@@ -435,7 +280,6 @@ describe("runCli", () => {
       const iosDeviceInfo = device({ serial: "00008030-IOS", platform: "ios" });
       const idbBackend: DeviceBackend = {
         listDevices: vi.fn().mockResolvedValue([iosDeviceInfo]),
-        dumpUiHierarchy: vi.fn().mockResolvedValue([]),
         screenshot: vi.fn().mockResolvedValue(new Uint8Array()),
         tap: vi.fn().mockResolvedValue(undefined),
         inputText: vi.fn().mockResolvedValue(undefined),
@@ -567,44 +411,23 @@ describe("runCli", () => {
     });
   });
 
-  describe("dump (M2 reuse integration)", () => {
-    it("normalizes the backend's raw XML via normalizeUiAutomatorXml and returns CommonElement[] JSON", async () => {
-      const backend = createMockBackend();
+  // SPEC-VISION-001 M2 (REQ-VISION-002): `dump` 명령이 제거됐다. 사용자
+  // 결정으로 `dump --web`까지 함께 제거됐다(progress.md §G). 아래는
+  // AC-VISION-007의 행동 쪽 증인 -- 라우터 등록 부재를 grep이 아니라
+  // 디스패치 결과로 확인한다.
+  describe("dump: 명령 제거 (AC-VISION-007)", () => {
+    it.each([[["dump"]], [["dump", "--web"]], [["dump", "--web", "a"]]])(
+      "%j는 UNKNOWN_COMMAND로 거부된다 -- 네이티브도 웹도 남아 있지 않다",
+      async (argv) => {
+        const backend = createMockBackend();
 
-      const result = await runCli(["dump"], backend);
+        const result = await runCli(argv as string[], backend);
 
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.data).toEqual({
-          serial: "R58N90ABCDE",
-          elements: [
-            {
-              role: "android.widget.Button",
-              text: "",
-              id: "btn_ok",
-              bounds: { x: 0, y: 0, w: 10, h: 10 },
-              tappable: true,
-              enabled: true,
-              children: [],
-            },
-          ],
-        });
-      }
-    });
-
-    it("degrades a dumpUiHierarchy rejection to a graceful BACKEND_COMMAND_FAILED envelope", async () => {
-      const backend = createMockBackend();
-      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-        new Error("adb: exec-out cat failed"),
-      );
-
-      const result = await runCli(["dump"], backend);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
-    });
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.error.code).toBe("UNKNOWN_COMMAND");
+      },
+    );
   });
-
   describe("screenshot", () => {
     it("embeds base64 PNG bytes in the JSON envelope when --out is omitted (REQ-SCREENSHOT-001/002)", async () => {
       const backend = createMockBackend();
@@ -781,90 +604,21 @@ describe("runCli", () => {
     });
   });
 
-  describe("text --id/--text focus-before-type (new capability)", () => {
-    it("focus-taps the element matched by --id, then sends the input text (tap happens before typing)", async () => {
+  // SPEC-VISION-001 M2 (REQ-VISION-002): text의 focus-before-type 셀렉터
+  // 경로가 제거됐다. 포커스는 이제 호출자가 스크린샷 좌표로 `tap`을 먼저
+  // 보내 만든다(spec.md §C.2). 아래는 제거 회귀 가드다.
+  describe("text: 제거된 셀렉터 플래그 (AC-VISION-009)", () => {
+    it("text --id는 INVALID_ARGS로 거부되고, 입력도 탭도 일어나지 않는다 -- 조용한 대체 없음", async () => {
       const backend = createMockBackend();
-      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        normalizeUiAutomatorXml(
-          '<hierarchy><node class="android.widget.EditText" resource-id="et_name" clickable="true" enabled="true" bounds="[40,220][1040,320]" /></hierarchy>',
-        ),
-      );
-
-      const result = await runCli(["text", "hello", "--id", "et_name"], backend);
-
-      expect(result).toEqual({ ok: true, command: "text", data: { serial: "R58N90ABCDE" } });
-      expect(backend.tap).toHaveBeenCalledWith("R58N90ABCDE", 540, 270);
-      expect(backend.inputText).toHaveBeenCalledWith("R58N90ABCDE", "hello", { hideKeyboardAfter: true });
-
-      const tapOrder = (backend.tap as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!;
-      const inputOrder = (backend.inputText as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!;
-      expect(tapOrder).toBeLessThan(inputOrder);
-    });
-
-    it("focus-taps the element matched by --text (content-desc-derived), then sends the input text", async () => {
-      const backend = createMockBackend();
-      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        normalizeUiAutomatorXml(
-          '<hierarchy><node class="android.widget.EditText" resource-id="et_search" content-desc="Search field" clickable="true" enabled="true" bounds="[0,0][100,100]" /></hierarchy>',
-        ),
-      );
-
-      const result = await runCli(["text", "query", "--text", "Search field"], backend);
-
-      expect(result).toEqual({ ok: true, command: "text", data: { serial: "R58N90ABCDE" } });
-      expect(backend.tap).toHaveBeenCalledWith("R58N90ABCDE", 50, 50);
-      expect(backend.inputText).toHaveBeenCalledWith("R58N90ABCDE", "query", { hideKeyboardAfter: true });
-    });
-
-    it("returns a graceful ELEMENT_NOT_FOUND and does NOT tap or type when the focus selector matches nothing", async () => {
-      const backend = createMockBackend();
-
-      const result = await runCli(["text", "hello", "--id", "does_not_exist"], backend);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.code).toBe("ELEMENT_NOT_FOUND");
-        expect(result.error.details?.["selector"]).toEqual({ id: "does_not_exist" });
-      }
-      expect(backend.tap).not.toHaveBeenCalled();
-      expect(backend.inputText).not.toHaveBeenCalled();
-    });
-
-    it("preserves bare `text` behavior (types into whatever is already focused) when no selector is given", async () => {
-      const backend = createMockBackend();
-
-      const result = await runCli(["text", "hello"], backend);
-
-      expect(result).toEqual({ ok: true, command: "text", data: { serial: "R58N90ABCDE" } });
-      expect(backend.dumpUiHierarchy).not.toHaveBeenCalled();
-      expect(backend.tap).not.toHaveBeenCalled();
-      expect(backend.inputText).toHaveBeenCalledWith("R58N90ABCDE", "hello", { hideKeyboardAfter: true });
-    });
-
-    it("returns a graceful INVALID_INDEX when --index is not a non-negative integer, without typing", async () => {
-      const backend = createMockBackend();
-
-      const result = await runCli(["text", "hello", "--id", "et_name", "--index", "abc"], backend);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("INVALID_INDEX");
-      expect(backend.inputText).not.toHaveBeenCalled();
-    });
-
-    it("degrades a dumpUiHierarchy rejection during focus mode to a graceful BACKEND_COMMAND_FAILED envelope, without typing", async () => {
-      const backend = createMockBackend();
-      (backend.dumpUiHierarchy as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-        new Error("adb: exec-out cat failed"),
-      );
 
       const result = await runCli(["text", "hello", "--id", "et_name"], backend);
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
+      if (!result.ok) expect(result.error.code).toBe("INVALID_ARGS");
       expect(backend.inputText).not.toHaveBeenCalled();
+      expect(backend.tap).not.toHaveBeenCalled();
     });
   });
-
   describe("doctor (M6 — REQ-DOCTOR-001~005)", () => {
     async function makeDoctor(overrides: {
       adbExec?: AdbExecutor;

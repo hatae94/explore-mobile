@@ -4,25 +4,26 @@
  * redesign (spec.md §A.4 architecture layers).
  *
  * SPEC-ANDROID-001 defined the interface and its Android implementation
- * (`AdbBackend`). SPEC-IOS-001 fulfills the original promise: `IdbBackend`
+ * (`AdbBackend`). SPEC-IOS-001 fulfilled the original promise: `IdbBackend`
  * implements this SAME interface unchanged in shape (REQ-IOS-ARCH-005 —
- * thin/swappable), plus two additive/relocated changes: `DeviceInfo.platform`
- * (additive) and `dumpUiHierarchy`'s return type moving from raw string to
- * normalized `CommonElement[]` (REQ-IOS-SCHEMA-002 — normalization ownership
- * moves INTO each backend).
+ * thin/swappable), plus the additive `DeviceInfo.platform` field.
+ *
+ * **SPEC-VISION-001 M2 (REQ-VISION-002) removed the UI-tree dump method** —
+ * that read path and the `--id`/`--text` selectors above it are gone. The
+ * screen is read through `screenshot()` alone, and the only screen-shaped
+ * query left is `getScreenSize()` (M1's additive method), which asks the
+ * platform directly instead of deriving two numbers from a full element
+ * tree. This is the first NON-additive change to the surface.
  *
  * @MX:ANCHOR — invariant contract for backend substitution (REQ-ARCH-003,
  * REQ-IOS-ARCH-005). Both `AdbBackend` and `IdbBackend` implement this exact
- * 11-method surface (SPEC-GESTURE-001 M1 added `swipe`, M8 added
+ * 10-method surface (SPEC-GESTURE-001 M1 added `swipe`, M8 added
  * `getMinEffectiveSwipeThreshold`, SPEC-VISION-001 M1 added `getScreenSize`
- * — all additive only, the pre-existing methods are unchanged in
- * shape/behavior).
+ * and M2 removed the UI-tree dump method).
  * @MX:REASON — every CLI command and the backend registry (`registry.ts`)
  * depend on this method surface; changing it ripples through every backend
  * and the command layer above it.
  */
-
-import type { CommonElement } from "./common-element.js";
 
 /** Device connection state as reported by the platform's device-listing tool. */
 export type DeviceConnectionState = "device" | "offline" | "unauthorized";
@@ -70,7 +71,7 @@ export type SwipeThresholdBasis = "device-query" | "measured-constant";
 
 /**
  * The minimum swipe distance — device pixels, the SAME coordinate system
- * as `swipe()`'s `SwipePoint`/`dumpUiHierarchy()`'s bounds — that reliably
+ * as `swipe()`'s `SwipePoint` — that reliably
  * moves a device's screen (REQ-GEST-SCROLL-007/008, SPEC-GESTURE-001 M8).
  */
 export interface SwipeThreshold {
@@ -136,20 +137,6 @@ export interface DeviceBackend {
   /** Lists all devices currently visible to the backend. */
   listDevices(): Promise<DeviceInfo[]>;
 
-  /**
-   * Captures the current UI hierarchy and returns it already normalized to
-   * the common element schema (REQ-IOS-SCHEMA-002, SPEC-IOS-001 — revises
-   * the original SPEC-ANDROID-001 design). Each backend owns normalization
-   * of its own raw platform format INTERNALLY: `AdbBackend` collects
-   * uiautomator XML and calls `normalizeUiAutomatorXml` before returning;
-   * `IdbBackend` collects idb's `describe-all` JSON and calls
-   * `normalizeIdbAccessibility` before returning. The command layer
-   * (`dump.ts`/`tap.ts`/`text.ts`) never sees a raw platform format and is
-   * therefore platform-agnostic — this is what lets element-selector
-   * tap/text work on iOS with zero command-layer changes.
-   */
-  dumpUiHierarchy(serial: string): Promise<CommonElement[]>;
-
   /** Captures a screenshot as raw PNG bytes (REQ-SCREENSHOT-001/002). */
   screenshot(serial: string): Promise<Uint8Array>;
 
@@ -204,11 +191,12 @@ export interface DeviceBackend {
 
   /**
    * Returns this device's screen size in device pixels (REQ-VISION-001,
-   * SPEC-VISION-001 M1 — additive 11th method, the original 10 are
-   * unchanged). This is the screen-size SOURCE: before M1, `scroll` called
-   * `dumpUiHierarchy()` and derived the size from the returned element
-   * bounds, which made a full UI-hierarchy dump a prerequisite for a gesture
-   * that needs nothing but a width and a height.
+   * SPEC-VISION-001 M1). This is the screen-size SOURCE: before M1, `scroll`
+   * asked for the whole UI element tree and derived the size from the
+   * returned element bounds, which made a full UI-hierarchy dump a
+   * prerequisite for a gesture that needs nothing but a width and a height.
+   * M2 then removed that tree-read method outright (REQ-VISION-002), leaving
+   * this as the only screen-shaped query on the interface.
    *
    * Returns `undefined` — never a guessed size — when the backend's own
    * screen-size source answers but is unparseable; the command layer
@@ -224,5 +212,9 @@ export interface DeviceBackend {
 }
 
 // Re-exported so consumers of this module can reference the schema type
-// alongside the backend interface without a second import.
-export type { CommonElement };
+// alongside the backend interface without a second import. The interface
+// itself no longer traffics in `CommonElement` (SPEC-VISION-001 M2 removed
+// the UI-tree method); the re-export is kept because `--web` still uses the
+// schema (spec.md §C.3, AC-VISION-011) and dropping it would be a breaking
+// change outside this SPEC's scope.
+export type { CommonElement } from "./common-element.js";

@@ -135,11 +135,6 @@ export class BackendRegistry implements DeviceBackend {
     return this.listAllDevices();
   }
 
-  async dumpUiHierarchy(serial: string): Promise<CommonElement[]> {
-    const backend = await this.resolveOwningBackend(serial);
-    return backend.dumpUiHierarchy(serial);
-  }
-
   async screenshot(serial: string): Promise<Uint8Array> {
     const backend = await this.resolveOwningBackend(serial);
     return backend.screenshot(serial);

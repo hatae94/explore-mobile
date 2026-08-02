@@ -157,55 +157,10 @@ describe("IdbBackend", () => {
     });
   });
 
-  describe("dumpUiHierarchy (AC-IOS-013)", () => {
-    it("calls 'idb ui describe-all --udid <serial> --json' and returns CommonElement[] via the idb normalizer", async () => {
-      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(
-        ok(
-          JSON.stringify([
-            {
-              AXUniqueId: "Wallet",
-              AXLabel: "Wallet",
-              frame: { x: 199, y: 116, width: 64, height: 87.5 },
-              type: "Button",
-              role: "AXButton",
-              custom_actions: [],
-              enabled: true,
-            },
-          ]),
-        ),
-      );
-
-      const backend = new IdbBackend(exec);
-      const elements = await backend.dumpUiHierarchy("SIM-1");
-
-      expect(exec).toHaveBeenCalledWith(["ui", "describe-all", "--udid", "SIM-1", "--json"]);
-      expect(elements).toEqual([
-        {
-          role: "Button",
-          text: "Wallet",
-          id: "Wallet",
-          bounds: { x: 199, y: 116, w: 64, h: 87.5 },
-          tappable: true,
-          enabled: true,
-          children: [],
-        },
-      ]);
-    });
-
-    it("returns an empty array for empty/malformed stdout, without throwing", async () => {
-      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(ok(""));
-      const backend = new IdbBackend(exec);
-
-      await expect(backend.dumpUiHierarchy("SIM-1")).resolves.toEqual([]);
-    });
-
-    it("propagates a failed idb invocation as IdbCommandFailedError", async () => {
-      const exec = vi.fn<IdbExecutor>().mockResolvedValueOnce(fail("Simulator not booted"));
-      const backend = new IdbBackend(exec);
-
-      await expect(backend.dumpUiHierarchy("SIM-1")).rejects.toThrow(/Simulator not booted/);
-    });
-  });
+  // SPEC-VISION-001 M2 (REQ-VISION-002): the UI-tree read method (AC-IOS-013)
+  // was removed from DeviceBackend, so its `idb ui describe-all` block goes
+  // with it. The AC-IOS-027 failure-propagation contract it also exercised is
+  // still covered by the sibling listDevices/screenshot/tap blocks.
 
   describe("screenshot (AC-IOS-014)", () => {
     it("calls 'idb screenshot --udid <serial> -' (dest_path is a REQUIRED positional; '-' = stdout) and returns raw PNG bytes", async () => {

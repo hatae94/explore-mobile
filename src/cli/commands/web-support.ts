@@ -1,9 +1,16 @@
 /**
  * `--web` command wiring (REQ-WEB-ACT-001..005, REQ-WEB-CLI-001..003).
  *
- * `dump`, `tap`, and `text` each delegate here when `--web` is present. The
- * native path in those handlers is untouched, which is what keeps the
- * extension additive (REQ-WEB-CLI-001, AC-WEB-017).
+ * `tap` and `text` each delegate here when `--web` is present. The native
+ * path in those handlers is untouched, which is what keeps the extension
+ * additive (REQ-WEB-CLI-001, AC-WEB-017).
+ *
+ * **SPEC-VISION-001 M2 (REQ-VISION-002)**: `dump`는 명령 자체가 제거됐고
+ * `runWebDump`도 함께 사라졌다 — 사용자 결정으로 `dump --web` 존치가
+ * 기각됐다(progress.md §G). `tap --web` / `text --web`의 CSS 셀렉터 경로는
+ * 변경 없이 유지된다(REQ-VISION-007, AC-VISION-031). `--index`는 이 파일의
+ * `readSelector`가 쓰므로 **웹 전용 플래그로 존치**한다 — 네이티브
+ * `--id`/`--text`만 제거됐다.
  *
  * The session lifecycle is: resolve an iOS target -> ensure a proxy ->
  * attach to the page -> do the work -> always release both. Releasing is in
@@ -15,7 +22,7 @@
  * requires an unmatched selector to produce no device interaction at all.
  */
 
-import { buildCollectExpression, normalizeWebDom, normalizeWebDomIndexed } from "../../normalize/webdom.js";
+import { buildCollectExpression, normalizeWebDomIndexed } from "../../normalize/webdom.js";
 import type { IndexedWebElement } from "../../normalize/webdom.js";
 import { spawnProcess, type ProcessExecutor } from "../../backend/process-executor.js";
 import type { DeviceBackend, DeviceInfo } from "../../schema/device-backend.js";
@@ -378,36 +385,25 @@ async function findWebElement(ctx: WebContext, css: string, index: number): Prom
 const NOT_FOUND_MESSAGE = "No visible element matched the given CSS selector.";
 
 /**
- * Rejects a command that mixes the web selector with a native target.
+ * Rejects `tap --web "<CSS>" <x> <y>` — a coordinate AND a CSS selector.
  *
  * Silently honouring one and dropping the other is the failure mode this
- * guards: the caller asked for two different elements and would be told the
+ * guards: the caller asked for two different targets and would be told the
  * command succeeded.
+ *
+ * **SPEC-VISION-001 M2**: the native-selector arm (`--id`/`--text`) is gone
+ * with those flags, so only the coordinate arm remains. `text --web` can no
+ * longer conflict at all — its sole positional IS the string to type — which
+ * is why `runWebText` no longer calls this.
  */
-function nativeTargetConflict(command: string, args: ParsedCommandArgs, includeCoordinates: boolean): CommandError | null {
-  const hasCoordinates = includeCoordinates && args.positionals.length > 0;
-  const hasNativeSelector = args.id !== undefined || args.selectorText !== undefined;
-  if (!hasCoordinates && !hasNativeSelector) return null;
+function coordinateTargetConflict(command: string, args: ParsedCommandArgs): CommandError | null {
+  if (args.positionals.length === 0) return null;
 
   return failure(
     command,
     "TARGET_CONFLICT",
-    `${command} --web targets by CSS selector; it cannot be combined with ${includeCoordinates ? "coordinates or " : ""}--id/--text.`,
+    `${command} --web targets by CSS selector; it cannot be combined with coordinates.`,
   );
-}
-
-/** `dump --web [<CSS>]` — the page's interactive surface, normalized. */
-export async function runWebDump(
-  args: ParsedCommandArgs,
-  backend: DeviceBackend,
-  deps: WebRunDeps = defaultWebDeps(),
-): Promise<CommandResult> {
-  const css = args.web !== undefined && args.web.length > 0 ? args.web : undefined;
-
-  return runInWebSession("dump", args, backend, deps, async (ctx) => {
-    const collected = await ctx.client.evaluate<unknown>(buildCollectExpression(css));
-    return success("dump", { serial: ctx.serial, mode: "web", page: toPageSummary(ctx.page), elements: normalizeWebDom(collected) });
-  });
 }
 
 /** `tap --web "<CSS>"` — native tap by default, JS click when the coordinate cannot be trusted. */
@@ -416,7 +412,7 @@ export async function runWebTap(
   backend: DeviceBackend,
   deps: WebRunDeps = defaultWebDeps(),
 ): Promise<CommandResult> {
-  const conflict = nativeTargetConflict("tap", args, true);
+  const conflict = coordinateTargetConflict("tap", args);
   if (conflict !== null) return conflict;
 
   const selector = readSelector("tap", args);
@@ -464,9 +460,6 @@ export async function runWebText(
   if (text === undefined) {
     return failure("text", "MISSING_TEXT", 'text requires an input string: text "<...>" --web "<CSS>".');
   }
-
-  const conflict = nativeTargetConflict("text", args, false);
-  if (conflict !== null) return conflict;
 
   const selector = readSelector("text", args);
   if (!selector.ok) return selector.error;

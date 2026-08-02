@@ -28,7 +28,6 @@ function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
 function createMockBackend(devices: DeviceInfo[] = [device()]): DeviceBackend {
   return {
     listDevices: vi.fn().mockResolvedValue(devices),
-    dumpUiHierarchy: vi.fn().mockResolvedValue([]),
     screenshot: vi.fn().mockResolvedValue(new Uint8Array()),
     tap: vi.fn().mockResolvedValue(undefined),
     inputText: vi.fn().mockResolvedValue(undefined),

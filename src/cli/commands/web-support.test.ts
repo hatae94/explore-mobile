@@ -21,7 +21,7 @@ import { AmbiguousWebPageError, IwdpNotInstalledError } from "../../webview/webk
 import type { WebInspectorClient } from "../../webview/inspector-client.js";
 import type { WebProxySession } from "../../webview/proxy-service.js";
 import { parseCommandArgs } from "../args.js";
-import { buildScrollIntoViewExpression, runWebDump, runWebTap, runWebText, type WebRunDeps } from "./web-support.js";
+import { buildScrollIntoViewExpression, runWebTap, runWebText, type WebRunDeps } from "./web-support.js";
 
 const IOS_DEVICE: DeviceInfo = {
   serial: "UDID-1",
@@ -92,7 +92,6 @@ function harness(
 
   const backend = {
     listDevices: async (): Promise<DeviceInfo[]> => [device],
-    dumpUiHierarchy: async (): Promise<CommonElement[]> => [],
     screenshot: async (): Promise<Uint8Array> => new Uint8Array(),
     tap: async (_serial: string, x: number, y: number): Promise<void> => {
       taps.push({ x, y });
@@ -185,34 +184,24 @@ function harness(
   };
 }
 
-describe("runWebDump", () => {
-  it("returns normalized web elements", async () => {
-    const h = harness();
-    const result = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+// SPEC-VISION-001 M2 (REQ-VISION-002): `describe("runWebDump")` was removed
+// with the `dump` command itself (사용자 결정, progress.md §G). The session
+// lifecycle it also happened to exercise — page selection, the platform
+// guard, proxy/connection release — lives in `runInWebSession`, which
+// `runWebTap`/`runWebText` still use, so those tests were RE-POINTED at
+// `runWebTap` rather than deleted. Deleting them would have dropped
+// coverage of a surviving path, which REQ-VISION-007 forbids.
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const data = result.data as { serial: string; elements: CommonElement[] };
-    expect(data.serial).toBe("UDID-1");
-    expect(data.elements).toHaveLength(1);
-    expect(data.elements[0]).toMatchObject({ role: "a", text: "뉴스", tappable: true });
-  });
-
-  it("drops invisible elements before reporting", async () => {
-    const h = harness({ collected: [rawEl(), rawEl({ id: "ghost", rect: { x: 0, y: 0, w: 0, h: 0 } })] });
-    const result = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
-    expect(result.ok && (result.data as { elements: CommonElement[] }).elements).toHaveLength(1);
-  });
-
+describe("session lifecycle (was exercised via runWebDump before SPEC-VISION-001 M2)", () => {
   it("emits a single parseable JSON document (AC-WEB-018)", async () => {
     const h = harness();
-    const result = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
     expect(() => JSON.parse(JSON.stringify(result))).not.toThrow();
   });
 
   it("always releases the proxy and the connection", async () => {
     const h = harness();
-    await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+    await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
     expect(h.disposed()).toBe(true);
     expect(h.clientClosed()).toBe(true);
   });
@@ -221,11 +210,10 @@ describe("runWebDump", () => {
 describe("page selection (0.2.0 amendment, AC-WEB-021..023)", () => {
   it("names the page it acted on in every success response", async () => {
     const h = harness();
-    const dumped = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
     const tapped = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
     const typed = await runWebText(parseCommandArgs(["안녕", "--web", "a"]), h.backend, h.deps);
 
-    for (const result of [dumped, tapped, typed]) {
+    for (const result of [tapped, typed]) {
       expect(result.ok).toBe(true);
       // toEqual: the debugger socket is transport plumbing and must not reach
       // the caller's envelope.
@@ -243,7 +231,7 @@ describe("page selection (0.2.0 amendment, AC-WEB-021..023)", () => {
       { index: 1, title: "클립", url: "https://clip.naver.com/" },
     ];
     const h = harness({ proxyError: new AmbiguousWebPageError("2 debuggable pages are open", pages) });
-    const result = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -254,21 +242,21 @@ describe("page selection (0.2.0 amendment, AC-WEB-021..023)", () => {
   it("passes --page through to the proxy", async () => {
     const seen: { pageIndex?: number }[] = [];
     const h = harness({ onOpenProxy: (opts) => seen.push(opts) });
-    await runWebDump(parseCommandArgs(["--web", "--page", "1"]), h.backend, h.deps);
+    await runWebTap(parseCommandArgs(["--web", "a", "--page", "1"]), h.backend, h.deps);
     expect(seen[0]?.pageIndex).toBe(1);
   });
 
   it("omits pageIndex entirely when --page is absent", async () => {
     const seen: { pageIndex?: number }[] = [];
     const h = harness({ onOpenProxy: (opts) => seen.push(opts) });
-    await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+    await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
     expect(seen[0]?.pageIndex).toBeUndefined();
   });
 
   it("rejects a non-numeric --page without opening a proxy", async () => {
     const seen: { pageIndex?: number }[] = [];
     const h = harness({ onOpenProxy: (opts) => seen.push(opts) });
-    const result = await runWebDump(parseCommandArgs(["--web", "--page", "abc"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a", "--page", "abc"]), h.backend, h.deps);
 
     expect(!result.ok && result.error.code).toBe("INVALID_PAGE");
     expect(seen).toEqual([]);
@@ -278,7 +266,7 @@ describe("page selection (0.2.0 amendment, AC-WEB-021..023)", () => {
 describe("platform guard (REQ-WEB-CLI-003, AC-WEB-019)", () => {
   it("refuses --web against an Android device", async () => {
     const h = harness({ device: ANDROID_DEVICE });
-    const result = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -287,7 +275,7 @@ describe("platform guard (REQ-WEB-CLI-003, AC-WEB-019)", () => {
 
   it("does not open a proxy for an unsupported platform", async () => {
     const h = harness({ device: ANDROID_DEVICE, proxyError: new Error("must not be reached") });
-    const result = await runWebDump(parseCommandArgs(["--web"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
     expect(result.ok).toBe(false);
   });
 });
@@ -380,12 +368,14 @@ describe("runWebTap", () => {
     expect(h.taps).toEqual([]);
   });
 
-  it("refuses to combine --web with the native --id/--text selectors", async () => {
-    const h = harness();
-    const byId = await runWebTap(parseCommandArgs(["--web", "a", "--id", "btn"]), h.backend, h.deps);
-    const byText = await runWebTap(parseCommandArgs(["--web", "a", "--text", "OK"]), h.backend, h.deps);
-    expect(!byId.ok && byId.error.code).toBe("TARGET_CONFLICT");
-    expect(!byText.ok && byText.error.code).toBe("TARGET_CONFLICT");
+  // SPEC-VISION-001 M2 (REQ-VISION-002): the native selectors are gone, so
+  // this conflict is now refused one layer EARLIER — at arg parsing, before
+  // any handler runs. That is strictly stronger than the old handler-level
+  // TARGET_CONFLICT: no proxy is opened and no device is touched, because
+  // the command never gets constructed at all.
+  it("refuses --web combined with a removed native selector, at parse time (AC-VISION-009)", () => {
+    expect(() => parseCommandArgs(["--web", "a", "--id", "btn"])).toThrow(/--id/);
+    expect(() => parseCommandArgs(["--web", "a", "--text", "OK"])).toThrow(/--text/);
   });
 
   it("surfaces a proxy failure with its own code (AC-WEB-003)", async () => {
@@ -535,11 +525,10 @@ describe("runWebText", () => {
     expect(!result.ok && result.error.code).toBe("MISSING_TEXT");
   });
 
-  it("refuses to combine --web with the native --id/--text selectors", async () => {
-    const h = harness();
-    const result = await runWebText(parseCommandArgs(["안녕", "--web", "#query", "--id", "field"]), h.backend, h.deps);
-    expect(!result.ok && result.error.code).toBe("TARGET_CONFLICT");
-    expect(h.typed).toEqual([]);
+  // SPEC-VISION-001 M2 (REQ-VISION-002): parse-time refusal, same as the
+  // runWebTap case above — nothing is typed because nothing runs.
+  it("refuses --web combined with a removed native selector, at parse time (AC-VISION-009)", () => {
+    expect(() => parseCommandArgs(["안녕", "--web", "#query", "--id", "field"])).toThrow(/--id/);
   });
 
   it("releases the session even when the selector fails", async () => {

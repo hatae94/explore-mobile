@@ -15,7 +15,6 @@ import type { DeviceBackend } from "../schema/device-backend.js";
 import { parseCommandArgs } from "./args.js";
 import { devicesCommand } from "./commands/devices.js";
 import { doctorCommand } from "./commands/doctor.js";
-import { dumpCommand } from "./commands/dump.js";
 import { keyCommand } from "./commands/key.js";
 import { launchCommand } from "./commands/launch.js";
 import { resetCommand } from "./commands/reset.js";
@@ -37,7 +36,6 @@ const COMMANDS: Record<string, CommandHandler> = {
   screenshot: screenshotCommand,
   tap: tapCommand,
   key: keyCommand,
-  dump: dumpCommand,
   swipe: swipeCommand,
   scroll: scrollCommand,
   text: textCommand,

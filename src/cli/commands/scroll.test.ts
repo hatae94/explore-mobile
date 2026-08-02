@@ -112,7 +112,6 @@ function createMockBackend(
 ): DeviceBackend {
   return {
     listDevices: vi.fn().mockResolvedValue(devices),
-    dumpUiHierarchy: vi.fn().mockResolvedValue(elements),
     screenshot: vi.fn().mockResolvedValue(new Uint8Array()),
     tap: vi.fn().mockResolvedValue(undefined),
     inputText: vi.fn().mockResolvedValue(undefined),
@@ -131,6 +130,9 @@ function createMockBackend(
     // 만들어 돌려준다 — 그래야 이 파일에 M1 이전에 작성된 모든 화면 크기
     // 픽스처가 여전히 같은 크기를 의미하고, 바뀐 것이 크기의 출처뿐임을
     // 기존 테스트들이 그대로 증언한다.
+    //
+    // M2(REQ-VISION-002) 이후 `elements`는 오직 이 파생의 입력으로만
+    // 남는다 — 백엔드에는 트리를 읽는 메서드가 더 이상 없다.
     getScreenSize: vi.fn().mockResolvedValue(deriveScreenSize(elements)),
   };
 }
@@ -493,9 +495,10 @@ describe("scroll", () => {
       expect(backend.getMinEffectiveSwipeThreshold).toHaveBeenCalledWith("R58N90ABCDE");
       expect(backend.getMinEffectiveSwipeThreshold).toHaveBeenCalledTimes(1);
       // SPEC-VISION-001 M1(REQ-VISION-001)으로 화면 크기 조회 단계가
-      // UI 계층 덤프에서 `getScreenSize`로 교체됐다. 0.6.0까지 이 자리에
-      // 있던 `dumpUiHierarchy` 호출 횟수 단언을 그대로 두면 이 테스트는
-      // 사라진 계약을 지키게 된다.
+      // UI 계층 덤프에서 `getScreenSize`로 교체됐고, M2(REQ-VISION-002)가
+      // 그 덤프 메서드를 인터페이스에서 아예 제거했다. 0.6.0까지 이 자리에
+      // 있던 덤프 호출 횟수 단언을 그대로 두면 이 테스트는 사라진 계약을
+      // 지키게 된다.
       expect(backend.getScreenSize).toHaveBeenCalledWith("R58N90ABCDE");
       expect(backend.getScreenSize).toHaveBeenCalledTimes(1);
     });
@@ -555,9 +558,9 @@ describe("scroll", () => {
   });
 
   describe("AC-GEST-022 — 홀수 축 화면에서도 움직임 불가 스와이프를 거부한다 (SPEC-GESTURE-001 M7/0.5.0 amendment, CLI 전 구간)", () => {
-    // 순수 함수 레벨(scroll-geometry.test.ts)과 별개로, `dump` -> deriveScreenSize
+    // 순수 함수 레벨(scroll-geometry.test.ts)과 별개로, `getScreenSize`
     // -> computeScrollSwipe -> isDegenerateSwipe 전 구간을 CLI 디스패치로
-    // 확인한다. witness == 유일한 최상위 요소인 단일 항목 dump 픽스처를 쓴다.
+    // 확인한다. 크기는 아래 단일 항목 픽스처에서 파생된다(createMockBackend).
     const ODD_SCREENS: Record<string, CommonElement[]> = {
       "402x874(짝x짝)": [element({ bounds: { x: 0, y: 0, w: 402, h: 874 } })],
       "393x852(폭 홀)": [element({ bounds: { x: 0, y: 0, w: 393, h: 852 } })],
@@ -631,13 +634,13 @@ describe("scroll", () => {
   });
 
   describe("REQ-VISION-001 — 화면 크기 소스 교체 (SPEC-VISION-001 M1)", () => {
-    it("AC-VISION-001: 성공 경로에서 UI 계층 덤프를 한 번도 호출하지 않는다 -- grep은 코드의 부재를, 이 테스트는 실행의 부재를 증언한다", async () => {
+    it("AC-VISION-001/006: 성공 경로의 화면 크기 조회는 getScreenSize 정확히 1회뿐이다 -- M2에서 UI 계층 덤프 메서드 자체가 인터페이스에서 사라졌으므로 '호출하지 않음'은 타입이 보장하고, 이 테스트는 '무엇을 대신 호출하는가'를 증언한다", async () => {
       const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
 
       const result = await runCli(["scroll", "down", "--amount", "1"], backend);
 
       expect(result.ok).toBe(true);
-      expect(backend.dumpUiHierarchy).not.toHaveBeenCalled();
+      expect(backend.getScreenSize).toHaveBeenCalledTimes(1);
       expect(backend.swipe).toHaveBeenCalledTimes(1);
     });
 

@@ -11,7 +11,6 @@ import type { ApkAcquirer } from "./apk-downloader.js";
 import { AdbKeyboardInstallFailedError, ImeBindTimeoutError } from "./ime-errors.js";
 import { ImeSessionStore } from "./ime-session-store.js";
 import { LauncherActivityNotFoundError } from "./launch-errors.js";
-import { normalizeUiAutomatorXml } from "../normalize/uiautomator.js";
 
 function ok(stdout: string, stderr = ""): AdbExecResult {
   return { stdout: Buffer.from(stdout, "utf-8"), stderr: Buffer.from(stderr, "utf-8"), exitCode: 0 };
@@ -179,87 +178,12 @@ describe("AdbBackend", () => {
     });
   });
 
-  describe("dumpUiHierarchy", () => {
-    it("writes, streams via exec-out cat, then removes the device-side temp file, using the SAME path across all three calls, and returns the XML normalized to CommonElement[] (REQ-DUMP-001, REQ-IDEMP-003, REQ-IOS-SCHEMA-002/003)", async () => {
-      const xml = "<hierarchy><node class=\"a\" /></hierarchy>";
-      const exec = vi
-        .fn<AdbExecutor>()
-        .mockResolvedValueOnce(ok("")) // uiautomator dump
-        .mockResolvedValueOnce(ok(xml)) // exec-out cat
-        .mockResolvedValueOnce(ok("")); // rm cleanup
-
-      const backend = new AdbBackend(exec);
-      const result = await backend.dumpUiHierarchy("R58N90ABCDE");
-
-      const dumpPath = exec.mock.calls[0]?.[0][5] as string;
-      expect(dumpPath).toMatch(/^\/sdcard\/window_dump-R58N90ABCDE-[0-9a-f]+\.xml$/);
-
-      expect(exec).toHaveBeenNthCalledWith(1, [
-        "-s",
-        "R58N90ABCDE",
-        "shell",
-        "uiautomator",
-        "dump",
-        dumpPath,
-      ]);
-      expect(exec).toHaveBeenNthCalledWith(2, ["-s", "R58N90ABCDE", "exec-out", "cat", dumpPath]);
-      expect(exec).toHaveBeenNthCalledWith(3, ["-s", "R58N90ABCDE", "shell", "rm", "-f", dumpPath]);
-      // REQ-IOS-SCHEMA-003: normalization now happens INSIDE the backend —
-      // the caller receives CommonElement[], not the raw XML string.
-      expect(result).toEqual(normalizeUiAutomatorXml(xml));
-      expect(result).toEqual([{ role: "a", text: "", id: "", bounds: { x: 0, y: 0, w: 0, h: 0 }, tappable: false, enabled: false, children: [] }]);
-    });
-
-    it("namespaces the device-side temp path by serial (REQ-MULTIDEV-004)", async () => {
-      const execA = vi
-        .fn<AdbExecutor>()
-        .mockResolvedValueOnce(ok(""))
-        .mockResolvedValueOnce(ok("<hierarchy/>"))
-        .mockResolvedValueOnce(ok(""));
-      const execB = vi
-        .fn<AdbExecutor>()
-        .mockResolvedValueOnce(ok(""))
-        .mockResolvedValueOnce(ok("<hierarchy/>"))
-        .mockResolvedValueOnce(ok(""));
-
-      await new AdbBackend(execA).dumpUiHierarchy("emulator-5554");
-      await new AdbBackend(execB).dumpUiHierarchy("R58N90ABCDE");
-
-      const pathA = execA.mock.calls[0]?.[0][5] as string;
-      const pathB = execB.mock.calls[0]?.[0][5] as string;
-
-      expect(pathA).toContain("emulator-5554");
-      expect(pathB).toContain("R58N90ABCDE");
-      expect(pathA).not.toContain("R58N90ABCDE");
-      expect(pathB).not.toContain("emulator-5554");
-    });
-
-    it("generates a unique path per call, even for the same serial (concurrent same-serial invocations do not collide)", async () => {
-      const exec = vi.fn<AdbExecutor>().mockResolvedValue(ok(""));
-      const backend = new AdbBackend(exec);
-
-      await backend.dumpUiHierarchy("R58N90ABCDE");
-      const firstPath = exec.mock.calls[0]?.[0][5] as string;
-
-      exec.mockClear();
-      await backend.dumpUiHierarchy("R58N90ABCDE");
-      const secondPath = exec.mock.calls[0]?.[0][5] as string;
-
-      expect(firstPath).not.toBe(secondPath);
-    });
-
-    it("sanitizes a serial containing filesystem-unsafe characters before embedding it in the path", async () => {
-      const exec = vi.fn<AdbExecutor>().mockResolvedValue(ok(""));
-      const backend = new AdbBackend(exec);
-
-      // Serials are normally alnum+dash, but defend against unexpected input anyway (Secured).
-      await backend.dumpUiHierarchy("weird/serial:name");
-
-      const dumpPath = exec.mock.calls[0]?.[0][5] as string;
-      expect(dumpPath).not.toContain("/serial:"); // no embedded path separator or colon
-      expect(dumpPath).toMatch(/^\/sdcard\/window_dump-[A-Za-z0-9_-]+-[0-9a-f]+\.xml$/);
-    });
-  });
+  // SPEC-VISION-001 M2 (REQ-VISION-002): the UI-tree read method's describe
+  // block was removed with the method itself. Its 4 tests covered the
+  // device-side `uiautomator dump` -> `exec-out cat` -> `rm` sequence and the
+  // temp-path namespacing helper, all of which are gone -- nothing in them
+  // describes a surviving behaviour, so they were deleted rather than
+  // re-pointed.
 
   describe("screenshot", () => {
     it("streams PNG bytes via 'exec-out screencap -p' with no device file (REQ-SCREENSHOT-001/002)", async () => {

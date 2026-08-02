@@ -27,7 +27,6 @@
  * transparently.
  */
 
-import type { CommonElement } from "../schema/common-element.js";
 import type {
   DeviceBackend,
   DeviceInfo,
@@ -36,7 +35,6 @@ import type {
   SwipePoint,
   SwipeThreshold,
 } from "../schema/device-backend.js";
-import { deriveScreenSize } from "../cli/commands/scroll-geometry.js";
 import { isKeyAlias, type KeyAlias } from "../schema/key-alias.js";
 import type { IdbExecResult, IdbExecutor } from "./idb-executor.js";
 import { spawnIdb } from "./idb-executor.js";
@@ -45,7 +43,6 @@ import { IOS_HID_KEYCODE } from "./keycodes-ios.js";
 import { parseIdbTargets } from "./idb-target-parse.js";
 import type { ClipboardWriter } from "./idb-clipboard.js";
 import { simctlPbcopy } from "./idb-clipboard.js";
-import { normalizeIdbAccessibility } from "../normalize/idb.js";
 
 /**
  * One raw `idb list-targets --json` target entry, CONFIRMED against fb-idb
@@ -166,42 +163,6 @@ export class IdbBackend implements DeviceBackend {
     // empty list rather than throwing (REQ-IOS-ARCH-003 spirit — never let one
     // backend's output shape drift crash the whole CLI).
     return parseIdbTargets(result.stdout.toString("utf-8")).map((entry) => toDeviceInfo(entry as RawIdbTarget));
-  }
-
-  /**
-   * REQ-IOS-BACKEND-003: collects `idb ui describe-all` JSON and returns
-   * it already normalized to CommonElement[] via the idb normalizer —
-   * mirrors AdbBackend.dumpUiHierarchy's internal-normalization contract
-   * (REQ-IOS-SCHEMA-002/003).
-   *
-   * @MX:NOTE — the `--udid <serial>` flag and this argv were confirmed
-   * verbatim against fb-idb 1.1.7 + an iOS 26.0 simulator (2026-07-26):
-   * `describe-all` returns a FLAT JSON array (no `children` key anywhere), the
-   * enabled field is `enabled` (not `isEnabled`), and `AXTraits` does not
-   * exist — which is why the normalizer derives `tappable` from type/role.
-   * @MX:WARN — the returned tree covers only NATIVE UI. With a web page loaded
-   * in Safari, `describe-all` returns the browser chrome alone (6 elements) and
-   * nothing from the page itself, so selector-based targeting cannot reach web
-   * content; that is SPEC-03 (webview DOM via CDP/iwdp) territory.
-   * @MX:REASON — a caller that assumes `dump` sees everything on screen will
-   * silently find no elements on a web page and fall back to blind coordinate
-   * taps.
-   */
-  async dumpUiHierarchy(serial: string): Promise<CommonElement[]> {
-    const result = await this.exec(["ui", "describe-all", "--udid", serial, "--json"]);
-    assertSuccess(result, "ui describe-all");
-
-    const stdout = result.stdout.toString("utf-8").trim();
-    if (stdout.length === 0) return [];
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(stdout);
-    } catch {
-      return [];
-    }
-
-    return normalizeIdbAccessibility(parsed);
   }
 
   /**
@@ -362,22 +323,24 @@ export class IdbBackend implements DeviceBackend {
   }
 
   /**
-   * REQ-VISION-001 (SPEC-VISION-001 M1, additive 11th method) — TEMPORARY.
-   * Wraps the EXACT path `scroll` used to run inline before M1
-   * (`dumpUiHierarchy` -> `deriveScreenSize`), so M1 changes only WHERE the
-   * derivation happens, not WHAT iOS returns. That keeps M1's Android-side
-   * change (a real `wm size` query) from silently altering iOS behaviour in
-   * the same commit.
+   * REQ-VISION-001 (SPEC-VISION-001 M1) — M2에서 화면 크기 출처를 잃었다.
    *
-   * `undefined` propagates unchanged from `deriveScreenSize` (empty tree,
-   * degenerate bounds, or no origin witness), preserving the
-   * `SCREEN_SIZE_UNKNOWN` contract exactly as it behaved pre-M1.
+   * M1의 임시 구현은 UI 계층 트리를 받아 그 bounds에서 크기를 파생했다.
+   * M2(REQ-VISION-002)가 그 트리 조회 메서드를 인터페이스에서 제거하면서
+   * iOS는 **이 시점에 화면 크기를 조회할 경로가 없다**. 추측하지 않고
+   * `undefined`를 돌려주며, 호출자는 기존 계약 그대로
+   * `SCREEN_SIZE_UNKNOWN`을 받는다(REQ-VISION-001 오류 계약 보존) —
+   * 잘못된 좌표로 되돌릴 수 없는 제스처를 보내는 것보다 거부가 낫다.
    *
-   * @MX:DEBT: iOS는 여전히 dump에서 화면 크기를 파생한다 -- M1의 목표(dump 의존 제거)는 이 시점에 Android 경로에서만 달성된다
-   * @MX:CEILING: idb `describe-all`이 원점 witness 요소를 반환하는 화면에서만 유효(deriveScreenSize의 witness 요건)
-   * @MX:UPGRADE: M3에서 WDA 백엔드의 getScreenSize로 교체(plan.md §B M3 item 3) -- 그때 이 메서드와 cli 계층 import가 함께 사라진다
+   * 실기기 영향은 없다: iOS 실기기에서 idb의 UI 계열 명령은 이미 실패한다
+   * (research.md §2.1). 잃는 것은 시뮬레이터 경로뿐이며, 시뮬레이터는
+   * spec.md §C.5가 이 SPEC의 범위 밖으로 명시 이월했다.
+   *
+   * @MX:DEBT: iOS getScreenSize가 항상 undefined -- M2~M3 구간에서 iOS scroll은 SCREEN_SIZE_UNKNOWN으로 거부된다
+   * @MX:CEILING: iOS 실기기에는 영향 없음(idb UI 명령이 이미 실패). 시뮬레이터 scroll만 상실하며 그 경로는 spec.md §C.5로 이월됨
+   * @MX:UPGRADE: M3에서 WDA 백엔드의 getScreenSize(창 크기 조회 또는 캡처 PNG IHDR, design.md §F)로 교체 -- plan.md §B M3 item 3
    */
-  async getScreenSize(serial: string): Promise<ScreenSize | undefined> {
-    return deriveScreenSize(await this.dumpUiHierarchy(serial));
+  async getScreenSize(_serial: string): Promise<ScreenSize | undefined> {
+    return undefined;
   }
 }

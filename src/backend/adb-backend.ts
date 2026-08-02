@@ -10,11 +10,13 @@
  * `DeviceBackend` interface (`src/backend/idb-backend.ts`); this class is
  * the reference implementation proving the interface is thin enough to be
  * backend-swappable (REQ-IOS-ARCH-005). `listDevices` tags `platform:
- * "android"` (REQ-IOS-SCHEMA-001) and `dumpUiHierarchy` now normalizes
- * internally (REQ-IOS-SCHEMA-003) — see the method itself.
+ * "android"` (REQ-IOS-SCHEMA-001).
+ *
+ * SPEC-VISION-001 M2 (REQ-VISION-002) removed the UI-tree dump method and
+ * its `uiautomator dump` -> `cat` -> `rm` device-side sequence: the read
+ * path is a screenshot now, and `wm size` (M1's `getScreenSize`) supplies
+ * the only screen numbers a gesture needs.
  */
-
-import { randomBytes } from "node:crypto";
 
 import { ADBKEYBOARD_BROADCAST_ACTION, ADBKEYBOARD_IME_ID } from "./adbkeyboard.js";
 import { ensureAdbKeyboardInstalled } from "./adbkeyboard-installer.js";
@@ -26,9 +28,7 @@ import type {
   SwipePoint,
   SwipeThreshold,
 } from "../schema/device-backend.js";
-import type { CommonElement } from "../schema/common-element.js";
 import { isKeyAlias } from "../schema/key-alias.js";
-import { normalizeUiAutomatorXml } from "../normalize/uiautomator.js";
 import type { AdbExecResult, AdbExecutor } from "./adb-executor.js";
 import { spawnAdb } from "./adb-executor.js";
 import type { ApkAcquirer } from "./apk-downloader.js";
@@ -44,21 +44,6 @@ import { parseLauncherResolveOutput } from "./launcher-resolve-parser.js";
 import { ANDROID_KEYCODE, KEYCODE_HIDE_KEYBOARD } from "./keycodes.js";
 
 const CONNECTED_STATES = new Set(["device", "offline", "unauthorized"]);
-
-/**
- * Computes a device-side temp path for `dump`, namespaced by serial
- * (REQ-MULTIDEV-004) plus a random suffix so even concurrent `dump`
- * invocations targeting the SAME serial from separate CLI processes
- * never race on the same device-side file. Different devices have
- * independent filesystems, so serial-namespacing here is primarily for
- * traceability/debugging; the random suffix is what actually prevents a
- * same-serial concurrent collision.
- */
-function deviceDumpPath(serial: string): string {
-  const safeSerial = serial.replace(/[^A-Za-z0-9_-]/g, "_");
-  const suffix = randomBytes(4).toString("hex");
-  return `/sdcard/window_dump-${safeSerial}-${suffix}.xml`;
-}
 
 /** Throws with a message built from adb's stderr when the invocation failed. */
 function assertSuccess(result: AdbExecResult, context: string): void {
@@ -330,37 +315,6 @@ export class AdbBackend implements DeviceBackend {
     return devices;
   }
 
-  /**
-   * @MX:NOTE — REQ-IOS-SCHEMA-003 (SPEC-IOS-001): normalization now
-   * happens INSIDE the backend — this method internally calls
-   * `normalizeUiAutomatorXml` on the collected XML before returning,
-   * rather than handing raw XML back to the caller. Behavior is preserved
-   * from SPEC-ANDROID-001 (same dump -> cat -> cleanup sequence); only the
-   * final return value changed shape (layer moved, no behavior change).
-   */
-  async dumpUiHierarchy(serial: string): Promise<CommonElement[]> {
-    // Freshly generated per call (REQ-MULTIDEV-004): namespaced by serial
-    // and made unique so concurrent same-serial dumps from separate CLI
-    // processes never race on the same device-side path.
-    const devicePath = deviceDumpPath(serial);
-
-    const dumpResult = await this.exec(["-s", serial, "shell", "uiautomator", "dump", devicePath]);
-    assertSuccess(dumpResult, "uiautomator dump");
-
-    const catResult = await this.exec(["-s", serial, "exec-out", "cat", devicePath]);
-    assertSuccess(catResult, "exec-out cat window_dump.xml");
-
-    // Best-effort device-side cleanup (REQ-IDEMP-003 — no residual files).
-    // A cleanup failure does not fail the dump itself: the caller already
-    // has the XML content it needs.
-    try {
-      await this.exec(["-s", serial, "shell", "rm", "-f", devicePath]);
-    } catch {
-      // Intentionally swallowed: cleanup is best-effort.
-    }
-
-    return normalizeUiAutomatorXml(catResult.stdout.toString("utf-8"));
-  }
 
   async screenshot(serial: string): Promise<Uint8Array> {
     const result = await this.exec(["-s", serial, "exec-out", "screencap", "-p"]);

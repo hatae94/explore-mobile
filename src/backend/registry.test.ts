@@ -31,7 +31,6 @@ function iosDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
 function mockBackend(devices: DeviceInfo[]): DeviceBackend {
   return {
     listDevices: vi.fn().mockResolvedValue(devices),
-    dumpUiHierarchy: vi.fn().mockResolvedValue([]),
     screenshot: vi.fn().mockResolvedValue(new Uint8Array()),
     tap: vi.fn().mockResolvedValue(undefined),
     inputText: vi.fn().mockResolvedValue(undefined),
@@ -161,17 +160,10 @@ describe("BackendRegistry", () => {
       await expect(registry.listDevices()).resolves.toEqual([androidDevice(), iosDevice()]);
     });
 
-    it("dumpUiHierarchy(serial) routes to the owning backend", async () => {
-      const android = registeredBackend("android", [androidDevice()]);
-      const ios = registeredBackend("ios", [iosDevice()]);
-      const registry: DeviceBackend = new BackendRegistry([android, ios]);
-
-      await registry.dumpUiHierarchy(iosDevice().serial);
-
-      expect(ios.backend.dumpUiHierarchy).toHaveBeenCalledWith(iosDevice().serial);
-      expect(android.backend.dumpUiHierarchy).not.toHaveBeenCalled();
-    });
-
+    // SPEC-VISION-001 M2 (REQ-VISION-002): the UI-tree facade method and its
+    // routing test were removed with the interface method. The per-serial
+    // routing rule they demonstrated is unchanged and still witnessed by the
+    // sibling `tap`/`screenshot`/`swipe` routing tests below.
     it("tap(serial, x, y) routes to the owning backend with the exact arguments", async () => {
       const android = registeredBackend("android", [androidDevice()]);
       const ios = registeredBackend("ios", [iosDevice()]);
