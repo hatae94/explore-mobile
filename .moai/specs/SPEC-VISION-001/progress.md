@@ -830,20 +830,42 @@ idb는 이 호스트에 **설치돼 있다**(`/Users/hatae/.local/bin/idb`,
 판정: baseline에 없던 새 PID 0건  →  PASS
 ```
 
+#### AC-VISION-019 재관측 — WDA 재기동 후 (2026-08-03, 같은 세션)
+
+1차 관측 때 `screenshot`이 WDA HTTP 500
+`"Not authorized for performing UI testing actions"`로 실패했다. 기기는 잠겨
+있지 않았고(`/wda/locked` → false) `activeAppInfo`도 nil 예외로 500이었다 —
+8월 2일부터 떠 있던 WDA 러너가 UI 테스팅 권한을 잃은 **환경 상태**였다.
+`/status`는 곧 000으로 떨어졌다.
+
+`progress.md` §E.2의 재기동 절차대로 러너를 내리고 다시 띄웠다(재빌드 불필요,
+기존 `iproxy` 재사용). **6초 만에 200**이 나왔고 `sessionId: null`이었다 —
+§G가 기록한 콜드 스타트 그대로다. 그 상태에서 재관측했다.
+
+```
+명령 8개 전부 ok:true
+  devices · doctor · screenshot · launch · tap · text · screenshot · stop
+판정: tap이 검색 필드에 명중했고 "재기동 확인 🙂"이 그대로 입력됐다
+      (ok:true가 아니라 스크린샷으로 판정)
+관측: idb 관련 PID = {33853, 68043} — 둘 다 baseline의 기존 데몬
+      baseline에 없던 새 PID 0건  →  AC-VISION-019 PASS (재확인)
+```
+
+**1차 관측 기록 정정**: 1차 때 `doctor`도 실패로 보였으나 그것은 WDA 문제가
+아니라 **관측 스크립트의 결함**이었다 — zsh는 따옴표 없는 변수를 단어 분리하지
+않으므로 `node bin.js $c`가 `"doctor --device <UDID>"` 전체를 한 인자로 넘겨
+`UNKNOWN_COMMAND`가 났다. 실제로 WDA 권한 오류로 실패한 것은 `screenshot`
+하나뿐이다. 테스트 하네스의 결함을 대상 코드의 결함으로 보고할 뻔했다.
+
 #### 미검증 (Gaps)
 
-1. **AC-VISION-019 관측 중 `screenshot`이 실패했다.** WDA가 HTTP 500
-   `"Not authorized for performing UI testing actions"`를 반환했다. 기기는
-   잠겨 있지 않았고(`/wda/locked` → false), `activeAppInfo`도 nil 예외로 500이었다
-   — 8월 2일부터 떠 있던 WDA 러너가 UI 테스팅 권한을 잃은 **환경 상태**이지 M4
-   코드 회귀가 아니다(M4는 iOS 제어 경로를 건드리지 않았다). idb 프로세스
-   관측 자체는 유효하다 — 실패한 `screenshot`도 WDA까지 HTTP 요청을 보냈으므로
-   idb 호출 기회는 그대로 지났다. 다만 **WDA 재기동 후 재관측하면 더 강한
-   증거가 된다.**
-2. **Android 경로는 이 세션에서 실행 판정하지 못했다** — 호스트에 Android 기기도
+1. **Android 경로는 이 세션에서 실행 판정하지 못했다** — 호스트에 Android 기기도
    PATH 상의 adb도 없다. M4가 건드린 Android 파일은 주석뿐이지만, 실행 확인은
    M6의 몫이다.
-3. **AC-VISION-029가 이제 빈 결과가 아니다** — 위 `src/webview/` 예외 참조.
+2. **AC-VISION-029가 이제 빈 결과가 아니다** — 위 `src/webview/` 예외 참조.
+3. **WDA 권한 상실의 재현 조건은 모른다** — 러너가 약 14시간 떠 있다가 권한을
+   잃었다는 사실만 관측했다. 시간 경과·특정 조작·기기 상태 중 무엇이 원인인지
+   좁히지 못했다. M6에서 장시간 세션을 돌린다면 다시 만날 수 있다.
 
 ---
 
