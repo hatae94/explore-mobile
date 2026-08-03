@@ -155,7 +155,7 @@ $ pnpm build       → exit 0
 run_status: audit-ready
 run_complete_at: 2026-08-03
 milestones: M1 (장치) · M1-b (런타임 보호) · M2 (깨뜨리기 확인)
-run_commit_sha: pending-backfill-2026-08-03
+run_commit_sha: 3c92fa3
 gates: pnpm test 26 files / 554 passed | 2 expected fail
        pnpm typecheck exit 0 · pnpm build exit 0
 ac: 8/8 PASS (AC-CONTRACT-005는 조건부 — Gaps 1)
@@ -168,7 +168,7 @@ ac: 8/8 PASS (AC-CONTRACT-005는 조건부 — Gaps 1)
 ```
 sync_status: audit-ready
 sync_complete_at: 2026-08-03
-sync_commit_sha: pending-backfill-2026-08-03
+sync_commit_sha: 3c92fa3
 artifacts_updated: CHANGELOG.md, progress.md
 ```
 
