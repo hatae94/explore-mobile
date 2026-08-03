@@ -2,9 +2,9 @@
 id: SPEC-VISION-001
 title: "iOS/Android 비전 통합 — idb 전면 제거, UI 트리 폐기, 스크린샷 좌표 단일 경로"
 version: "0.1.0"
-status: in-progress
+status: completed
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-03
 author: hatae
 priority: P1
 phase: "v0.5.0 target"

@@ -299,6 +299,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Android screen size was read from the wrong line when a display
+  override was active** (SPEC-VISION-001). `parseScreenSize` read only
+  `Physical size:`, but `adb shell wm size` emits a second `Override
+  size:` line when an override is set — and **the screenshot follows the
+  override, not the physical size.** Measured on an SM-S938N with a
+  1080×2340 override over a 1440×3120 panel: the capture came back
+  1080×2340 while the parser returned 1440×3120, so `scroll` computed
+  `{720,2262} → {720,858}` when the correct coordinates were
+  `{540,1697} → {540,644}` — a 0.75× mismatch. Because the vision loop
+  reads coordinates off the capture, every derived coordinate was wrong
+  by that factor, and `y=2262` landed at 96.7% of the true screen height,
+  overlapping the Android system-gesture strip where a scroll can be
+  swallowed as a back gesture. `parseScreenSize` now prefers `Override
+  size:` and falls back to `Physical size:`, matching its sibling parser
+  `parseEffectiveDensity`, which had preferred `Override density:` all
+  along. Three fixtures pin it — shrink override, enlarge override, and
+  an unparseable override line that must still fall back rather than
+  discard the physical size. Re-measured on the device after the fix:
+  the override case now yields the expected coordinates exactly, and the
+  no-override case is unchanged.
 - **`--web` silently acted on the wrong page after any navigation that
   opened a second debuggable target** (SPEC-WEBVIEW-001 amendment 0.2.0).
   The first release picked the first page the proxy listed. One link tap
@@ -708,6 +728,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "`idb ui text` is Unicode-native" premise was disproved by reading
   fb-idb's own keycode table and is replaced by the ASCII / pasteboard
   split described above.
+- **Vision unification: idb removed, the UI tree retired, screenshots made
+  the single read path** (SPEC-VISION-001). Two premises the project was
+  built on collapsed at the same time — idb's UI commands do not work on a
+  physical iOS device, and a UI-hierarchy dump cannot see web content — so
+  the read path was narrowed to one mechanism that behaves identically on
+  Android, iOS, and inside web views.
+  - **iOS backend replaced: idb → WebDriverAgent (WDA) over HTTP.**
+    `xcrun devicectl` enumerates and launches; WDA serves screenshot,
+    tap, text, app termination, and window size. All idb code is gone —
+    10 files, 1,442 LOC — and no idb process is spawned by any command
+    (verified on a physical device by watching the process table across
+    all 8 device-targeting commands). WDA requires `iproxy 8100:8100 -u
+    <UDID>` to be up; a connection failure returns a dedicated
+    `WDA_UNREACHABLE` code carrying the recovery procedure, and is never
+    silently downgraded to another path.
+  - **`dump` is removed outright, including `dump --web`,** and with it
+    the native selector flags `tap --id` / `tap --text` / `text --id` /
+    `text --text`. Screens are read by screenshot and acted on by
+    coordinate. **Removed flags are rejected with `INVALID_ARGS` — never
+    silently reinterpreted as a coordinate tap.** The cost is stated
+    plainly in the README: coordinates are read off a screenshot by eye,
+    so any downscaled view must be multiplied back by its ratio.
+  - **`--index` was *kept*, against the SPEC's own acceptance criterion.**
+    `AC-VISION-008` asked for its removal, but `web-support.ts`
+    `readSelector` uses it for `tap --web "<CSS>" --index N` and two
+    existing tests pin that behavior; removing it would have broken
+    SPEC-WEBVIEW-001, which the SPEC itself names as the binding ceiling.
+    The AC clause is recorded as explicitly unmet rather than quietly
+    reinterpreted.
+  - **Device enumeration now runs once per command** instead of twice.
+    `BackendRegistry` no longer implements `DeviceBackend`, so the facade
+    path that re-queried the owning backend is gone. Measured on a
+    physical device: `tap` 1720 ms → 916 ms, with the control group
+    unchanged.
+  - **iOS `getScreenSize` works again, via WDA `GET /window/size`.**
+    Between M2 and M3 iOS had no screen-size source at all and returned
+    `SCREEN_SIZE_UNKNOWN` rather than guessing — refusing to send an
+    irreversible gesture at fabricated coordinates. The endpoint answers
+    without a session (measured on iPhone16,2 / iOS 26.5.2), so the
+    PNG-header fallback the design had planned turned out to be
+    unnecessary.
+  - **The iOS coordinate scale is derived, not hardcoded** — capture
+    resolution ÷ window size. It measured exactly 3.0 on the test device,
+    matching the widely quoted constant; the match was deliberately *not*
+    treated as license to hardcode it, and a unit test pins the
+    derivation on a non-3.0 device as a contrast case.
+  - **Multi-device iOS requires an explicit port mapping.** A WDA port is
+    bound to whichever device `iproxy -u` attached it to, and `/status`
+    reports only the device *kind* (`"device": "iphone"`), so the CLI
+    cannot verify identity across the port. `EXPLORE_MOBILE_WDA_PORTS=
+    "<udid>=<port>,…"` declares the mapping; once declared, an
+    unregistered serial is rejected with `WDA_PORT_UNMAPPED` rather than
+    flowing to the default port. Undeclared multi-device use still falls
+    through to port 8100 unverified — tracked as an `@MX:DEBT` in
+    `wda-client.ts`.
+  - **`doctor` no longer early-returns on a missing `adb`** (a cross-SPEC
+    contract change). It previously stopped at the first Android check, so
+    a host without `adb` on `PATH` got no iOS diagnostics at all.
 
 ### Notes
 
@@ -814,6 +892,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plus 4 added by the 0.6.0 amendment (AC-GEST-026 through 029), plus 3
   added by the 0.7.0 amendment (AC-GEST-030 through 032), plus 2 added
   by the 0.8.0 amendment (AC-GEST-033 and 034)).
+- **SPEC-VISION-001 closes with six items explicitly open.** They are
+  listed here rather than absorbed into a PASS count, because a unit test
+  cannot stand in for a real-device observation — the SPEC's own
+  acceptance matrix says so, and closing on `U` alone would be the exact
+  substitution it forbids. Full detail in
+  `.moai/specs/SPEC-VISION-001/progress.md` §E.4.
+  - `AC-VISION-004` (Android `wm size` parse-failure path) is
+    **explicitly unverified**: no way was found to induce a parse failure
+    on a real device. The unit test passes; that is not treated as
+    sufficient.
+  - `AC-VISION-008`'s `--index` clause is **explicitly unmet** — see the
+    `--index` entry under **Changed** above. Its `--id` clause is met.
+  - `AC-VISION-015` (`WDA_UNREACHABLE`) was verified by **pointing at a
+    wrong port (8199)**, not by actually stopping WDA as the criterion
+    words it. The error code and its embedded recovery procedure were
+    confirmed; whether a stopped WDA process produces the same code —
+    connection refused vs. no response — was not observed.
+  - `AC-VISION-031` (`--web` regression) is a **conditional PASS**: the
+    surviving selector paths work, but only against a proxy started by
+    hand. Started by the CLI itself, `tap --web` failed 3 of 3 with
+    `NO_WEB_PAGE`; the startup loop in `proxy-service.ts` appears to
+    give up on the first empty page list rather than retry (measured:
+    0 pages at 0.2 s, 1 page from 0.5 s). `src/webview/` belongs to
+    SPEC-WEBVIEW-001 and was left untouched; only the reproduction is
+    recorded.
+  - `WDA_RESPONSE_LOST` **blocks retries even for read-only calls.**
+    `GET /screenshot` is idempotent, so retrying it cannot "apply twice"
+    — but it is covered by the same blanket policy as mutating calls, and
+    the error message's warning is simply untrue for reads. Unresolved.
+  - **An Android serial containing a space is misread as `offline`**, so
+    every command against that device is refused with
+    `DEVICE_NOT_CONNECTED`. A wireless mDNS name collision makes `adb`
+    append ` (2)`, and `device-list-parser.ts` splits on arbitrary
+    whitespace where `adb` delimits with a tab. This is a **pre-existing
+    defect in SPEC-ANDROID-001's code** that SPEC-VISION-001's real-device
+    testing surfaced; no fixture with a spaced serial exists. Workaround:
+    connect directly with `adb connect <IP>:<PORT>`. Handed off to
+    SPEC-ANDROID-001.
   AC-GEST-006 (Android real-device swipe) is now **PASS**, promoted by
   the 0.6.0 amendment above — a real Android device connected and `adb`
   turned out to be installed (see above), so the condition this project

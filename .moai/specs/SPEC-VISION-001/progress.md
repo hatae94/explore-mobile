@@ -1155,13 +1155,119 @@ $ adb shell wm size reset  → Physical size: 1440x3120 (Override 라인 부재)
 
 ## §E.3 Run-phase Audit-Ready Signal
 
-(run-phase 완료 시 작성)
+```
+run_status: audit-ready
+run_complete_at: 2026-08-03
+milestones: M1 → M2 → M5 → M3 → M4 → M6 (전부 완료)
+commit_range: 4b4ecf9..59bc915 (plan 1 + run 24 = 25 커밋)
+gates: pnpm test 32 files / 690 passed | 2 expected fail
+       pnpm typecheck exit 0 · pnpm build exit 0
+```
+
+| 마일스톤 | 내용 | §E.2 위치 |
+|---|---|---|
+| M1 | 화면 크기 소스 교체 — `scroll`이 dump 없이 `wm size`로 크기를 얻는다 | §E.2 「M1」 |
+| M2 | `dump`·네이티브 셀렉터(`--id`/`--text`) 제거 — 읽기 경로가 스크린샷 하나 | §E.2 「M2」 |
+| M5 | 기기 열거 1회화 — `BackendRegistry` facade 제거 | §E.2 「M5」 |
+| M3 | iOS 백엔드 WDA 교체 — `/window/size`·`/screenshot`·`/wda/keys`·terminate | §E.2 「M3」 |
+| M4 | idb 잔재 전면 제거 (10개 파일, 1,442 LOC) | §E.2 「M4」 |
+| M6 | 양 플랫폼 실기기 검증 — 결함 3건 발견, 그중 ②는 같은 마일스톤에서 수정 | §E.2 「M6」 |
+
+**소급 작성 단서 (사용자 결정 2026-08-03)**: 이 칸은 run-phase 종료 시점에 비어
+있었고, **sync-phase에서 §E.2 M1~M6 기록을 근거로 작성했다.** 관측 시점과 서명
+시점이 다르다 — 위 표와 게이트 수치는 §E.2의 요약이며, 원자료는 §E.2다.
+게이트 3종은 sync-phase(2026-08-03)에 재실행해 같은 값을 확인했다.
 
 ---
 
 ## §E.4 Sync-phase Audit-Ready Signal
 
-(sync-phase 완료 시 작성)
+```
+sync_status: audit-ready
+sync_complete_at: 2026-08-03
+sync_commit_sha: pending-backfill-2026-08-03
+artifacts_updated: CHANGELOG.md, README.md, progress.md (§E.3·§E.4), spec.md (frontmatter)
+```
+
+### sync 게이트 (2026-08-03 직접 실행)
+
+```
+$ pnpm test        → 32 files / 690 passed | 2 expected fail
+$ pnpm typecheck   → exit 0
+$ pnpm build       → exit 0
+$ moai spec lint   → 0 error(s), 3 warning(s)
+    3건 전부 다른 SPEC 소관 (SPEC-IMESTATE-001 2건, SPEC-WEBVIEW-001 1건).
+    SPEC-VISION-001에 대한 지적은 0건.
+```
+
+### 미충족·이월 항목
+
+**이 SPEC은 아래 항목들을 미충족·미검증 상태로 명시한 채 닫는다.** U(단위 테스트)
+통과를 D(실기기) 판정으로 대체하지 않았다 — acceptance.md 「mock 한계 원칙」 그대로다.
+
+#### A. 이 SPEC 안에서 닫지 못한 것
+
+| # | 항목 | 상태 | 근거 |
+|---|---|---|---|
+| A1 | **AC-VISION-004** (Android `wm size` 파싱 실패 경로) | **명시적 미검증** | 실기기에서 파싱 실패를 유발할 방법을 찾지 못했다. U는 통과하나 U 단독으로 닫지 않는다. §E.2 M6 「AC 판정」+ Gaps 1 |
+| A2 | **AC-VISION-008의 `--index` 절** | **명시적 미충족** | `--index`는 웹 전용 플래그로 **존치** 결정. 제거하면 SPEC-WEBVIEW-001이 깨진다. `--id` 절은 충족. §G 「`--index` 플래그 제거 여부」 |
+| A3 | **AC-VISION-015** (`WDA_UNREACHABLE`) | **조건 근사** | AC는 "WDA를 실제로 내린 뒤"를 요구하나, 실측은 **틀린 포트(8199) 유도**로 얻었다. 메시지의 복구 절차 포함은 확인. WDA 프로세스 실제 중단 조건은 미시험. §E.2 M3 「실패 경로 실측」 |
+| A4 | **결함 ③** — `WDA_RESPONSE_LOST`가 읽기 전용 호출도 막는다 | **미결** | `GET /screenshot`은 멱등이라 재시도가 안전한데, 조작 호출과 같은 정책이 걸린다. 메시지도 읽기 호출에서는 사실과 다르다. §E.2 M6 「새로 발견한 결함 3건 ③」 |
+
+#### B. 다른 SPEC으로 이월
+
+| # | 항목 | 소관 | 근거 |
+|---|---|---|---|
+| B1 | **결함 ①** — Android serial에 공백이 들어가면 `offline`로 오인 | **SPEC-ANDROID-001** | `device-list-parser.ts:38`이 임의 공백으로 끊는다. 해당 파일은 `6e091be feat(SPEC-ANDROID-001): M4` 소유이며 본 SPEC은 건드린 적이 없다. 본 SPEC의 실기기 검증이 드러낸 **기존** 결함. §E.2 M6 「결함 ①」 |
+| B2 | **CLI 자체 프록시 기동 결함** — CLI가 띄운 프록시로는 `tap --web`이 3/3 실패 | **SPEC-WEBVIEW-001** | `proxy-service.ts:288-296`의 기동 루프가 첫 조회 빈 목록에서 재시도 없이 종료한다(추론 — CLI 자체를 계측하지는 않음). `src/webview/`는 plan.md §A.2 PRESERVE 목록. **AC-VISION-031은 이 때문에 조건부 PASS다.** §E.2 「AC-VISION-031 검증」 |
+
+#### C. AC 라벨 공백 — 증거는 있으나 progress.md에 AC 번호가 적히지 않은 8건
+
+sync-phase 대조에서 발견했다. **미검증이 아니라 라벨 누락**이며, 각 근거 위치는 아래와 같다.
+§E.2 본문은 이미 닫힌 관측 기록이므로 소급 편집하지 않고 여기에 지목만 한다(사용자 결정 2026-08-03).
+
+| AC | 내용 | 증거 위치 |
+|---|---|---|
+| AC-VISION-012 | iOS 실기기 `screenshot`이 WDA로 성공 | §E.2 M3 「CLI end-to-end 실측」 — PNG 1290×2796 |
+| AC-VISION-013 | iOS 좌표 `tap`이 의도한 요소 명중 | 같은 절 — 설정 앱 검색 필드 명중, 판정은 탭 후 캡처 |
+| AC-VISION-016 | WDA 실패가 조용히 대체되지 않음 | §E.2 M3 「실패 경로 실측」 — "탭은 일어나지 않았다" |
+| AC-VISION-026 | 배율이 캡처 해상도 ÷ 창 크기에서 도출 | `src/backend/wda-backend.test.ts:102-124` (테스트 제목에 AC 번호 명시, 배율 3이 아닌 기기 대조군 포함) |
+| AC-VISION-032 | `dump --web` 존치 여부 결정 기록 | §G 「`dump --web` 존치 여부」 — 결정(제거) + 근거 + 반대 정보 |
+| AC-VISION-038 | `pnpm typecheck` 통과 | 위 sync 게이트 — exit 0 |
+| AC-VISION-039 | `pnpm build` 통과 | 위 sync 게이트 — exit 0 |
+| AC-VISION-040 | `pnpm test` 전부 통과 | 위 sync 게이트 — 690 passed / 2 expected fail |
+
+### 문서 동기화 (README.md)
+
+sync-phase에서 정정한 낡은 서술 5곳. 전부 **실행해서** 확인했다.
+
+| 위치 | 정정 전 | 정정 후 |
+|---|---|---|
+| 현재 상태 배너 | "idb → WDA 교체가 **진행 중**" | 교체 완료 (M3~M4) |
+| 테스트 수치 | `29 passed (29)` / `656 passed` | `32` / `690` (2026-08-03 실측) |
+| 아직 검증하지 않은 것 | "화면 크기 override 설정된 기기" | M6에서 검증 + 결함 ② 수정 완료 → 항목 제거 |
+| 진행 중인 변경 | "iOS `getScreenSize`는 **항상 실패**" | M3의 WDA `/window/size`로 해소 → 섹션 재작성 |
+| 로드맵 | WDA 교체 / 열거 1회화 / e2e 검증 | 3건 완료 → 제거, 남은 항목만 유지 |
+
+### 미검증 (Gaps)
+
+1. **§E.3은 run-phase에서 작성되지 않았다.** sync-phase에서 §E.2를 근거로 소급
+   작성했다(사용자 결정). 관측 시점 ≠ 서명 시점이라는 사실을 §E.3 본문에 남겼다.
+2. **`moai spec close` 자동 경로는 쓰지 않았다.** 이 명령은 `§E.5 Mx-phase`를
+   전제조건으로 요구하는데(실행 확인: `precondition not met — missing §E.5`),
+   현행 3단계 close에서 §E.5는 폐지된 칸이다. 상태 전환은 손으로 했다.
+3. **`sync_commit_sha`는 이 커밋 다음에 backfill한다.** 커밋은 자기 자신의 SHA를
+   알 수 없다.
+
+### 잔여 위험
+
+1. **A3(AC-VISION-015)의 근사 조건이 실제 WDA 중단과 다르게 동작할 수 있다.**
+   포트 오유도는 "연결 거부"이고, WDA 프로세스 중단은 "응답 없음"일 수 있다.
+   두 경로가 같은 오류 코드로 수렴하는지는 관측하지 않았다.
+2. **B1을 이월한 채 닫으면 무선 mDNS 이름 충돌 기기는 여전히 조작 불가다.**
+   회피책(`adb connect IP:PORT` 직결)은 있으나 사용자가 알아야만 쓸 수 있다.
+3. **결함 ② 수정의 영향 범위를 `tap` 경로에서 직접 재지 않았다.** `scroll`의
+   계산 좌표로 판정했다(§E.2 M6 Gaps 3과 동일).
 
 ---
 

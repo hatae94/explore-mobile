@@ -6,9 +6,9 @@ Android는 `adb`, iOS는 실기기 경로를 통해 동작하며, AI 에이전�
 최종 목표는 모바일 테스트 자동화, 특히 여러 기기가 서로 주고받는 상호작용
 테스트다.
 
-> **현재 상태**: Android 경로는 실기기에서 검증됐다. iOS 경로는
-> `SPEC-VISION-001`에 따라 **idb → WebDriverAgent(WDA) 교체가 진행 중**이며,
-> 그 구간의 제약은 [진행 중인 변경](#진행-중인-변경)에 적어 뒀다.
+> **현재 상태**: Android와 iOS 모두 실기기에서 검증됐다. `SPEC-VISION-001`이
+> iOS 경로를 **idb → WebDriverAgent(WDA)로 교체 완료**했고 idb 잔재는 전부
+> 제거됐다. 남아 있는 제약은 [알려진 제약](#알려진-제약)에 적어 뒀다.
 > 실측 근거는 [현재 상태](#현재-상태)를 참고.
 
 ---
@@ -249,50 +249,85 @@ npx explore-mobile text --web "input#search" "검색어"
 
 ```
 $ pnpm test
-Test Files  29 passed (29)
-Tests  656 passed | 2 expected fail (658)
+Test Files  32 passed (32)
+Tests  690 passed | 2 expected fail (692)
+
+$ pnpm typecheck   → exit 0
+$ pnpm build       → exit 0
 ```
 
 **Android 실기기 검증** (SM-S938N / Android 16 / 1440×3120 / density 600):
 
 | 항목 | 실측값 |
 |---|---|
-| 화면 크기 소스 | `adb shell wm size` → `Physical size: 1440x3120` |
+| 화면 크기 소스 | `adb shell wm size` → `Override size:` 우선, 없으면 `Physical size:` |
 | 캡처 해상도 | 1440×3120 → **배율 1.0** (캡처 = 화면 크기) |
+| 화면 크기 override | `wm size 1080x2340` 활성 시 캡처·좌표 모두 1080×2340을 따른다 (실측 확인) |
 | 터치 슬롭 | **30px** (8dp × 3.75). 이보다 짧은 스와이프는 무동작이 아니라 **탭**이다 |
 | 비전 루프 | 캡처 → 좌표 판정 → 탭 → 검증 캡처 전 경로 동작 확인 |
 | 한글+이모지 입력 | 동작 확인 |
 
-검증 기록과 스크린샷:
-`.moai/reports/android-verification/SPEC-VISION-001-multiapp-2026-08-03/`
+**iOS 실기기 검증** (iPhone16,2 / iOS 26.5.2 / 캡처 1290×2796):
+
+| 항목 | 실측값 |
+|---|---|
+| 화면 크기 소스 | WDA `GET /window/size` → `430×932` (세션 불필요) |
+| 배율 | 캡처 1290×2796 ÷ 창 430×932 = **정확히 3.0** — 상수가 아니라 도출값 |
+| 비전 루프 | 캡처 → 좌표 판정 → 탭 → 검증 캡처 전 경로 동작 확인 |
+| 한글+이모지 입력 | WDA `/wda/keys`로 우회 없이 전달, 동작 확인 |
+| 앱 종료 | terminate 응답이 유실돼도 앱 상태 재조회로 성공/실패를 확정한다 |
+
+검증 기록과 스크린샷: `.moai/reports/android-verification/` 아래
+`SPEC-VISION-001-multiapp-2026-08-03/` · `SPEC-VISION-001-m3-wda-2026-08-03/` ·
+`SPEC-VISION-001-m6-2026-08-03/` · `SPEC-VISION-001-web-2026-08-03/`
 
 **아직 검증하지 않은 것**:
 
-- `--web` 경로의 실기기 회귀 (브라우저 무대 미구성)
+- `--web` 경로는 **iOS 시뮬레이터에서만** 회귀를 확인했다 (실기기 미확인). 게다가
+  CLI가 스스로 띄운 프록시로는 실패하고 수동으로 미리 띄워야 성공한다 —
+  [알려진 제약](#알려진-제약) 참고
+- Android `wm size` **파싱 실패** 경로 — 실기기에서 유발할 방법을 찾지 못했다
+- WDA를 **실제로 중단시킨** 상태의 오류 응답 (틀린 포트로 유도해 근사 확인만 했다)
 - 분할화면·팝업뷰·프리폼 윈도우에서의 좌표계
-- 화면 크기 override(`wm size WxH`)가 설정된 기기
 - 폴더블·멀티 디스플레이 변형
+- iOS 배율은 3.0인 기기 한 대에서만 확인했다 (iPad 등 다른 배율 미확인)
 
-## 진행 중인 변경
+## 알려진 제약
 
-`SPEC-VISION-001`이 iOS 백엔드를 **idb에서 WebDriverAgent(WDA)로 교체**하는
-중이다. 완료 전까지 다음 제약이 있다.
+`SPEC-VISION-001`의 iOS 백엔드 교체는 끝났다. 남아 있는 제약은 다음과 같다.
 
-- **iOS의 `getScreenSize`는 항상 실패한다.** M2가 덤프 경로를 제거하면서 iOS는
-  화면 크기 출처가 없는 구간에 들어갔고, 추측 대신 거부를 택했다. 따라서 iOS
-  `scroll`은 `SCREEN_SIZE_UNKNOWN`을 반환한다. 잘못된 좌표로 되돌릴 수 없는
-  제스처를 보내지 않기 위해서다.
-- **iOS 시뮬레이터 경로는 이번 범위 밖이다.** 이 SPEC은 실기기만 요구한다.
-- WDA 경로는 사전에 WDA를 기동하고 `iproxy 8100:8100 -u <UDID>`가 떠 있어야
-  한다. 접속 실패는 흔한 정상 상태이므로 전용 오류 코드로 반환되며, 조용히 다른
-  경로로 대체되지 않는다.
+**iOS 사전 준비**
+
+- WDA를 미리 기동하고 `iproxy 8100:8100 -u <UDID>`가 떠 있어야 한다. 접속 실패는
+  흔한 정상 상태이므로 `WDA_UNREACHABLE`로 반환되며 복구 절차가 메시지에
+  들어간다. **조용히 다른 경로로 대체되지 않는다.**
+- iOS 기기를 2대 이상 붙일 때는 `EXPLORE_MOBILE_WDA_PORTS="<udid>=<port>,…"`로
+  기기↔포트를 선언해야 한다. WDA `/status`는 기기 **종류**만 알려주므로 CLI가
+  포트 너머 기기의 신원을 스스로 확인할 수 없다. 선언하면 미등록 serial은
+  `WDA_PORT_UNMAPPED`로 거부된다. **선언하지 않으면 기본 8100으로 흘려보내며
+  검증하지 못한다.**
+- **iOS 시뮬레이터는 `devices` 목록에 나오지 않는다.** iOS 열거는
+  `xcrun devicectl`만 쓴다(사용자 결정).
+
+**미해결 결함**
+
+- **`--web`은 CLI가 스스로 띄운 프록시로는 실패한다.** `ios_webkit_debug_proxy`를
+  수동으로 미리 띄우고(약 4초 대기) 실행하면 성공한다. 프록시 없이 호출하면
+  `NO_WEB_PAGE`로 3/3 실패했다. `src/webview/`는 `SPEC-WEBVIEW-001` 소관이라
+  이번 범위에서 손대지 않고 재현 조건만 기록했다.
+- **응답 유실 시 읽기 명령도 재시도가 막힌다.** `WDA_RESPONSE_LOST`가 조작
+  명령과 읽기 명령을 구분하지 않는다. `screenshot`은 멱등이라 다시 불러도
+  안전한데 "두 번 적용될 수 있다"는 메시지가 붙는다. 수동 재호출은 즉시 성공한다.
+- **무선 mDNS 이름이 충돌한 Android 기기는 조작할 수 없다.** 이름이 겹치면 adb가
+  serial에 ` (2)`를 붙여 **공백이 들어가고**, 파서가 이를 상태 문자열로 잘못
+  끊어 `offline`로 오인한다. 회피: `adb connect <IP>:<PORT>`로 직결하면 serial에
+  공백이 생기지 않는다. `SPEC-ANDROID-001` 소관으로 이월했다.
 
 ## 로드맵
 
-- iOS 백엔드 WDA 교체 완료 및 idb 잔재 제거
-- 명령당 기기 열거 1회화 (현재 2회)
-- 두 플랫폼 비전 루프 end-to-end 검증
 - 멀티기기 상호작용 테스트
+- 위 「미해결 결함」 3건 처리 (`--web` 프록시 기동 · 읽기 명령 재시도 정책 ·
+  serial 공백 파싱)
 
 ## 라이선스
 
