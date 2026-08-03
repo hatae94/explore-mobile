@@ -121,6 +121,80 @@ describe("WdaClient.request", () => {
     expect(mutating).toBe(1);
   });
 
+  /**
+   * SPEC-VISION-002 회귀 방지선. 조작 호출의 경고 문구는 M3 실측(응답 유실
+   * 4/4인데 효과는 적용됨)이 근거인 **정확한** 문장이다. 멱등 경로를 고치다가
+   * 이 문장을 약화시키면 회귀다 — 그래서 멱등 테스트보다 먼저 쓴다.
+   */
+  it("조작 호출의 유실 경고는 그대로 유지된다 (AC-WDAERR-003)", async () => {
+    const http: WdaHttpClient = async (url) => {
+      if (url.endsWith("/status")) return { status: 200, body: envelope({ ready: true }) };
+      throw new Error("socket hang up");
+    };
+    const client = new WdaClient("UDID-A", http, {}, noSleep);
+
+    const error = await client.request("POST", "/session/x/actions").catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(WdaResponseLostError);
+    expect((error as Error).message).toContain("조작이 적용됐을 수 있으니");
+    expect((error as Error).message).toContain("수행하지 않았습니다");
+  });
+
+  /**
+   * SPEC-VISION-002: 정책은 이미 읽기/조작을 구분한다(위 두 테스트가 고정). 틀린
+   * 것은 **문구**다 — 조작 기준으로 하드코딩돼 읽기 호출에서 두 문장 모두 거짓이
+   * 된다. 이 CLI는 에이전트가 읽는 것을 전제로 하므로 오류 메시지는 다음 행동을
+   * 정하는 입력이며, 거짓 안내는 하지도 않은 조작의 부작용을 확인하게 만든다.
+   */
+  it("멱등 읽기 호출의 유실 문구에 조작 경고를 붙이지 않는다 (AC-WDAERR-001)", async () => {
+    const http: WdaHttpClient = async (url) => {
+      if (url.endsWith("/status")) return { status: 200, body: envelope({ ready: true }) };
+      throw new Error("socket hang up");
+    };
+    const client = new WdaClient("UDID-A", http, {}, noSleep);
+
+    const error = await client
+      .request("GET", "/screenshot", undefined, { idempotent: true })
+      .catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(WdaResponseLostError);
+    // 읽기 호출에는 적용될 "조작"이 없다.
+    expect((error as Error).message).not.toContain("조작이 적용");
+  });
+
+  it("멱등 읽기 호출의 유실 문구가 재시도를 부정하지 않는다 (AC-WDAERR-002)", async () => {
+    const http: WdaHttpClient = async (url) => {
+      if (url.endsWith("/status")) return { status: 200, body: envelope({ ready: true }) };
+      throw new Error("socket hang up");
+    };
+    const client = new WdaClient("UDID-A", http, {}, noSleep);
+
+    const error = await client
+      .request("GET", "/screenshot", undefined, { idempotent: true })
+      .catch((err: unknown) => err);
+
+    // 실제로 3회 재시도했으므로 "수행하지 않았다"는 거짓이다.
+    expect((error as Error).message).not.toContain("수행하지 않았습니다");
+    // 수행한 사실이 드러나야 한다 (문자열 완전 일치가 아니라 취지 판정).
+    expect((error as Error).message).toContain("재시도");
+  });
+
+  it("멱등/비멱등 어느 쪽이든 오류 코드는 WDA_RESPONSE_LOST다 (AC-WDAERR-004)", async () => {
+    const http: WdaHttpClient = async (url) => {
+      if (url.endsWith("/status")) return { status: 200, body: envelope({ ready: true }) };
+      throw new Error("socket hang up");
+    };
+    const client = new WdaClient("UDID-A", http, {}, noSleep);
+
+    const readError = await client
+      .request("GET", "/screenshot", undefined, { idempotent: true })
+      .catch((err: unknown) => err);
+    const writeError = await client.request("POST", "/session/x/actions").catch((err: unknown) => err);
+
+    expect((readError as WdaResponseLostError).code).toBe("WDA_RESPONSE_LOST");
+    expect((writeError as WdaResponseLostError).code).toBe("WDA_RESPONSE_LOST");
+  });
+
   it("멱등 요청은 재시도한다", async () => {
     let attempts = 0;
     const http: WdaHttpClient = async () => {

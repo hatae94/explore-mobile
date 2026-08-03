@@ -236,9 +236,21 @@ export class WdaClient {
       throw new WdaUnreachableError(`${wdaRecoveryHint(this.serial, this.port)}\n원인: ${detail}`);
     }
 
+    // @MX:NOTE: 안내 문구는 **그 호출이 멱등이었는지**에 따라 갈린다. 하나로
+    // 고정하면 읽기 호출에서 두 문장 모두 거짓이 된다 — 적용될 조작이 없고,
+    // 재시도는 이미 수행됐기 때문이다. 이 CLI는 에이전트가 읽는 것을 전제로
+    // 하므로 오류 메시지는 장식이 아니라 다음 행동을 정하는 입력이다.
+    // @MX:REASON: SPEC-VISION-001 M6은 이 문구를 보고 "재시도 정책이 읽기/조작을
+    // 구분하지 않는다"고 진단했으나, 정책은 위 `idempotent ? 3 : 1`로 이미
+    // 구분하고 있었다. 문구에서 정책을 역추론한 오진이었다 — 틀린 것은 문구뿐.
+    // @MX:SPEC: SPEC-VISION-002 REQ-WDAERR-001/002
+    const guidance = idempotent
+      ? `읽기 호출이라 ${attempts}회 재시도했으나 모두 응답이 없었습니다 — 기기 상태를 바꾸지 않는 호출이므로 다시 불러도 안전합니다. `
+      : "조작이 적용됐을 수 있으니 스크린샷으로 확인하세요 — 자동 재시도는 두 번 적용될 위험이 있어 수행하지 않았습니다. ";
+
     throw new WdaResponseLostError(
       `WDA가 ${method} ${path} 요청의 응답을 돌려주지 않았습니다(요청은 전송됨, WDA는 이후 정상 응답). ` +
-        "조작이 적용됐을 수 있으니 스크린샷으로 확인하세요 — 자동 재시도는 두 번 적용될 위험이 있어 수행하지 않았습니다. " +
+        guidance +
         `원인: ${detail}`,
     );
   }

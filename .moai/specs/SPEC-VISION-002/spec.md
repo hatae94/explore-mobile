@@ -1,8 +1,8 @@
 ---
 id: SPEC-VISION-002
 title: "WDA_RESPONSE_LOST 안내 문구 정정 — 읽기 호출에서 두 문장이 모두 거짓이다"
-version: "0.1.0"
-status: draft
+version: "0.2.0"
+status: in-progress
 created: 2026-08-03
 updated: 2026-08-03
 author: hatae
@@ -22,6 +22,7 @@ depends_on: [SPEC-VISION-001]
 | 버전 | 날짜 | 작성자 | 변경 내용 |
 |------|------|--------|-----------|
 | 0.1.0 | 2026-08-03 | hatae | 최초 작성. `SPEC-VISION-001` M6이 「결함 ③」으로 기록한 항목의 **후속**이되, **진단을 정정한 상태로** 등록한다. M6은 오류 메시지 문구에서 "읽기/조작을 구분하지 않는 일괄 정책"을 역추론했으나, sync-phase 코드 대조에서 **정책은 이미 구분함이 확인**됐다(`SPEC-VISION-001/progress.md` §E.4 「결함 ③ 진단 정정」). 실제 결함은 정책이 아니라 **안내 문구**다. |
+| 0.2.0 | 2026-08-03 | hatae | AC-WDAERR-007의 판정 명령을 정정. 초안의 `grep -c 'idempotent ? 3 : 1'` → 0 방식은 **주석이 그 문구를 언급만 해도 실패**한다(착수 중 실제 발생). 문자열 존재가 아니라 할당문 변경 여부를 보도록 바꿨다. 이 SPEC의 주제와 같은 실수 — 텍스트 패턴을 판정으로 쓰면 의미가 아니라 문자열을 검사하게 된다. |
 
 ---
 
@@ -134,12 +135,26 @@ wda-doctor.ts:104    GET /status         { idempotent: true }
 | **AC-WDAERR-004** | 두 경우 모두 `code === "WDA_RESPONSE_LOST"` | **U** |
 | **AC-WDAERR-005** | 실기기에서 실제 응답 유실을 만나면 그 문구가 상황과 일치한다 | **D**. **유발 불가 시 명시적 미검증으로 닫는다** — M6에서 유실은 재현됐으나 의도적 유발 절차는 없다 |
 | **AC-WDAERR-006** | `src/cli/commands/types.ts`의 코드 설명 주석이 정정된 문구와 일치한다 | **G** grep |
-| **AC-WDAERR-007** | 재시도 정책(`idempotent ? 3 : 1`)이 **변경되지 않았다** | **G** `git diff`에 해당 라인 변경 0건 |
+| **AC-WDAERR-007** | 재시도 정책(`idempotent ? 3 : 1`)이 **변경되지 않았다** | **G** 아래 판정 명령 참조 |
 | **AC-WDAERR-008** | `pnpm test` / `typecheck` / `build` 전부 통과 | **G/U** exit 0 |
 
 **AC-WDAERR-007은 회귀 방지 장치다.** 이 SPEC의 가장 큰 위험은 "문구를 고치다가
 정책까지 건드리는 것"이다 — M6의 원래 진단이 정책 변경을 지시했기 때문에 그
 방향으로 끌려가기 쉽다.
+
+**판정 명령 (0.2.0 정정)**: 초안은 `git diff | grep -c 'idempotent ? 3 : 1'` → 0을
+지시했으나, **주석이 그 문구를 언급하기만 해도 실패로 나온다**(실제로 착수 중
+발생 — 오진 이력을 설명하는 `@MX:REASON` 주석이 그 문구를 인용했다). 문자열 존재가
+아니라 **할당문의 변경 여부**를 봐야 한다:
+
+```bash
+git diff -U0 src/backend/wda-client.ts \
+  | grep -E '^[-+].*(attempts *= *idempotent|idempotent *= *options)'
+# 기대: 출력 없음 (정책 할당문이 추가·삭제되지 않았다)
+```
+
+이 정정 자체가 이 SPEC의 주제와 같은 실수다 — **텍스트 패턴 일치를 판정으로
+쓰면 의미가 아니라 문자열을 검사하게 된다.**
 
 ### C.2 미확인 질문 (이 SPEC에서 닫지 않는다)
 

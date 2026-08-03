@@ -49,7 +49,10 @@ export function errorMessage(err: unknown): string {
  *
  * 구분해야 하는 이유(design.md §B.3, AC-VISION-015/016):
  *   - `WDA_UNREACHABLE`      → WDA를 띄워라 (사용자 행동이 필요)
- *   - `WDA_RESPONSE_LOST`    → 적용됐을 수 있다, 스크린샷으로 확인하라
+ *   - `WDA_RESPONSE_LOST`    → 응답만 유실됐다. 조작 호출이면 적용됐을 수 있으니
+ *                              스크린샷으로 확인하고, 읽기 호출이면 상태가
+ *                              바뀌지 않았으니 다시 불러도 된다 (SPEC-VISION-002 —
+ *                              메시지가 어느 쪽인지 알려준다)
  *   - `WDA_PORT_UNMAPPED`    → 포트 매핑에 이 기기를 추가하라
  *   - `UNSUPPORTED_KEY_ON_IOS` → 이 키는 iOS에 대응 동작이 없다 (재시도 무의미)
  * 넷을 하나로 뭉개면 호출자는 "왜 안 되는지 모르는 상태"에 놓인다.
