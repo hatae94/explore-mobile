@@ -148,7 +148,7 @@ $ pnpm build       → exit 0
 run_status: audit-ready
 run_complete_at: 2026-08-03
 milestones: M1 (완료)
-run_commit_sha: pending-backfill-2026-08-03
+run_commit_sha: e5d4b98
 gates: pnpm test 32 files / 692 passed | 2 expected fail
        pnpm typecheck exit 0 · pnpm build exit 0
 ac: 7/7 PASS (미충족 0건)
