@@ -1,1230 +1,300 @@
 # explore-mobile
 
-Agent-agnostic CLI for driving mobile devices — Android (via `adb`) and
-iOS Simulator (via `idb`) — so an AI agent (or any automation script) can
-control an emulator, simulator, or real device through a single, stable
-**JSON in/out** command surface. The end goal is mobile test automation,
-including multi-device interaction testing.
+모바일 기기를 **JSON 명령 하나로** 조작하는 에이전트 친화 CLI.
+Android는 `adb`, iOS는 실기기 경로를 통해 동작하며, AI 에이전트나 자동화
+스크립트가 에뮬레이터·시뮬레이터·실기기를 같은 명령 표면으로 제어한다.
+최종 목표는 모바일 테스트 자동화, 특히 여러 기기가 서로 주고받는 상호작용
+테스트다.
 
-> **Status**: core Android/adb primitives + environment bootstrap, the
-> iOS Simulator/idb backend, gesture primitives (`swipe`/`scroll`), and
-> the iOS **web content** path are implemented and unit/mock-tested (702
-> tests, all green). The **iOS backend has been verified end-to-end
-> against a booted simulator** (2026-07-26, iPhone 17 Pro / iOS 26.0):
-> launch Safari, dump the element tree, tap by selector, type, send
-> keys, screenshot, navigate. The **`--web` path was verified on the
-> same simulator** (2026-07-27): read a page's DOM, tap a link by CSS
-> selector, and type Korean into a field. **Gesture primitives were
-> verified on the same simulator** (2026-07-27): `swipe`/`scroll` moved
-> the screen, and `tap --web` reached a below-the-fold link with a real
-> touch. **`swipe`/`scroll` were also verified against a real Android
-> device** (2026-07-28, Samsung SM-S938N, Android 16, 600 dpi) — the
-> gesture-movement threshold below which the OS treats a swipe as a tap
-> is now derived per platform instead of a single constant, and (as of a
-> follow-up 0.7.0 measurement) reads whichever `wm density` line
-> actually governs the device's touch behavior rather than always its
-> physical one; see [Status](#status) below for exactly what "verified"
-> covers here (one device, one density) before relying on this in
-> production. **Every other Android command was verified against the
-> same device** (2026-07-29): `tap`, `text`, `key`, `stop`, `doctor`,
-> `reset`, `screenshot`, and `dump` all behave as specified — and the
-> round found **two real defects** (`launch` cannot open apps whose
-> launcher activity omits `category.DEFAULT`; non-ASCII `text` silently
-> inputs nothing when it has to install ADBKeyBoard in the same call),
-> both **found and fixed in the 0.3.0 amendment** (`launch` now resolves
-> and starts the launcher component explicitly; `text` now waits for the
-> IME to actually bind before sending). A third, quieter defect surfaced
-> while verifying that second fix — `ime enable` can itself fail right
-> after a fresh install because the input-method service hasn't
-> registered it yet — and is fixed the same amendment with a bounded
-> retry. **Two more real defects surfaced the same day, found by
-> changing the venue rather than repeating it** — driving a Chrome web
-> page instead of the Settings app, and running with two connected
-> devices instead of one: non-ASCII `text` erased the very string it had
-> just typed on a Chrome page input (its own keyboard-hide keystroke was
-> delivered to the page as a cancel action), and an unconnected iOS
-> simulator was counted as connected, so error messages named a false
-> device count and the documented auto-select path could never fire.
-> Both are **found and fixed in the 0.4.0 amendment**. All five defects
-> are described under [Status](#status). The Unicode-IME APK
-> (ADBKeyBoard, GPL-2.0) is never bundled — `doctor` downloads it from
-> its official release on first use, now confirmed end-to-end against
-> real hardware.
+> **현재 상태**: Android 경로는 실기기에서 검증됐다. iOS 경로는
+> `SPEC-VISION-001`에 따라 **idb → WebDriverAgent(WDA) 교체가 진행 중**이며,
+> 그 구간의 제약은 [진행 중인 변경](#진행-중인-변경)에 적어 뒀다.
+> 실측 근거는 [현재 상태](#현재-상태)를 참고.
 
-## Why
+---
 
-- Prompts, not scripts, should be able to drive a device: every command
-  speaks JSON in, JSON out — no screen-scraping free text.
-- No install step for the agent calling it — run via `npx`.
-- Android and iOS share one command surface: a common element schema
-  and a `DeviceBackend` interface let a `BackendRegistry` auto-route
-  `--device <serial>` to the owning platform, with no per-platform flag
-  (see [Roadmap](#roadmap)).
-- Korean, emoji, and other non-ASCII text input — usually the hard part
-  of automating Android input — is handled automatically.
+## 왜 이 도구인가
 
-## Requirements
+- **스크립트가 아니라 프롬프트가 기기를 몰 수 있어야 한다.** 모든 명령이
+  JSON을 받고 JSON을 뱉는다. 자유 텍스트를 긁어 파싱할 일이 없다.
+- **호출하는 쪽에 설치 단계가 없다.** `npx`로 바로 실행한다.
+- **Android와 iOS가 같은 명령 표면을 쓴다.** `DeviceBackend` 인터페이스와
+  `BackendRegistry`가 `--device <serial>`을 소유 플랫폼으로 자동 라우팅하므로
+  플랫폼별 플래그가 없다.
+- **한글·이모지 입력이 자동으로 처리된다.** Android 입력 자동화에서 가장
+  까다로운 부분인데, 호출자가 경로를 고를 필요가 없다.
+- **화면을 읽는 수단은 스크린샷 하나다.** UI 계층 덤프와 네이티브 셀렉터
+  경로는 제거됐다 — 이유는 [읽기 경로](#읽기-경로는-스크린샷-하나다) 참고.
 
-- **Node.js >= 22** — raised from `>= 20`. The iOS web path uses Node's
-  built-in `WebSocket` (available from 22.4) rather than adding a
-  dependency for it.
-- **adb** (Android SDK Platform Tools) on `PATH` — install it yourself,
-  or let `doctor` do it (see [`doctor`](#doctor-yesinstall-clean) below)
-- **ios-webkit-debug-proxy** — only for the iOS
-  [`--web` commands](#web-content-on-the-ios-simulator). Install with
-  `brew install ios-webkit-debug-proxy`; `doctor` reports whether it is
-  present. Everything else works without it.
+## 요구사항
 
-## Install & Usage
+- **Node.js >= 22** — iOS 웹 경로가 Node 내장 `WebSocket`(22.4+)을 쓴다.
+  이것 때문에 의존성을 추가하지 않으려고 버전을 올렸다.
+- **adb** (Android SDK Platform Tools)가 `PATH`에 있어야 한다. 직접 설치하거나
+  [`doctor`](#doctor)에게 맡기면 된다.
 
-Once published to the npm registry, run any command with `npx` — no
-global install needed:
+  > **주의**: CLI는 바이너리 이름을 `"adb"`로 고정해 `PATH`에서 찾는다.
+  > macOS에서 Android Studio로 설치하면 보통
+  > `~/Library/Android/sdk/platform-tools/adb`에 있고 **`PATH`에는 없다.**
+  > 이 상태에서는 Android 기기가 하나도 보이지 않는다. `doctor`가
+  > `adb: {installed: false}`와 복구 안내를 정확히 반환하므로 조용히 실패하지는
+  > 않지만, 세션 시작 시 확인하는 편이 빠르다.
+
+- **ios-webkit-debug-proxy** — iOS [`--web` 경로](#ios-웹-콘텐츠---web)에만
+  필요하다. `brew install ios-webkit-debug-proxy`로 설치하며, `doctor`가
+  설치 여부를 보고한다. 나머지 기능은 이것 없이 동작한다.
+
+## 설치와 실행
+
+npm 레지스트리에 게시된 뒤에는 전역 설치 없이 `npx`로 실행한다.
 
 ```bash
-npx explore-mobile <command> [args...] [--device <serial>]
+npx explore-mobile <명령> [인자...] [--device <serial>]
 ```
 
-During local development (before the first npm publish), build and run
-from the checkout:
+로컬 개발 중(첫 npm 게시 전)에는 체크아웃에서 빌드해 실행한다.
 
 ```bash
 pnpm install
 pnpm build
-node dist/cli/bin.js <command> [args...] [--device <serial>]
+node dist/cli/bin.js <명령> [인자...] [--device <serial>]
 ```
 
-Every invocation prints **exactly one JSON document to stdout** and sets
-a matching process exit code (`0` success, `1` error). Never parse free
-text — the JSON body is the only contract:
+## 출력 계약
+
+모든 호출은 **stdout에 정확히 JSON 문서 하나**를 출력하고, 그에 맞는 종료
+코드를 설정한다(`0` 성공, `1` 오류). 자유 텍스트는 절대 파싱하지 말 것 —
+JSON 본문이 유일한 계약이다.
 
 ```json
-// success
-{ "ok": true, "command": "<name>", "data": { ... } }
+// 성공
+{ "ok": true, "command": "<이름>", "data": { } }
 
-// error (never free-text, always structured)
-{ "ok": false, "command": "<name>", "error": { "code": "...", "message": "...", "details": { ... } } }
+// 오류 — 자유 텍스트가 아니라 항상 구조화된 형태
+{ "ok": false, "command": "<이름>", "error": { "code": "...", "message": "...", "details": { } } }
 ```
 
-## Commands
+주요 오류 코드:
 
-| Command | Purpose |
+| 코드 | 의미 |
 |---|---|
-| [`devices`](#devices) | List connected devices. |
-| [`launch <package>`](#launch-package) | Start an app by package name. |
-| [`stop <package>`](#stop-package) | Force-stop an app by package name. |
-| [`screenshot [--out <path>]`](#screenshot---out-path) | Capture a PNG. |
-| [`tap <x> <y>`](#tap-x-y) | Tap a device-pixel coordinate. |
-| [`key <alias>`](#key-alias) | Send a key event. |
-| [`text "<string>"`](#text-string) | Type text (ASCII or Unicode — see below). |
-| [`dump`](#dump) | Dump the current UI hierarchy, normalized. |
-| [`swipe <x1> <y1> <x2> <y2> [--duration <ms>]`](#swipe-x1-y1-x2-y2-duration-ms) | Send a raw swipe gesture between two coordinates. |
-| [`scroll <up\|down\|left\|right> [--amount <ratio>]`](#scroll-updownleftright-amount-ratio) | Scroll the screen a direction/ratio, without needing its pixel size. |
-| [`doctor [--yes\|--install] [--clean]`](#doctor-yesinstall-clean) | Diagnose / bootstrap the environment. |
-| [`reset`](#reset) | Restore the device to its pre-`doctor` state. |
+| `AMBIGUOUS_DEVICE` | 연결된 기기가 2대 이상인데 `--device`를 생략했다 |
+| `DEVICE_NOT_FOUND` | 그 시리얼이 목록에 아예 없다 |
+| `DEVICE_NOT_CONNECTED` | 목록에는 있으나 연결 상태가 아니다 |
+| `SCREEN_SIZE_UNKNOWN` | 화면 크기를 알 수 없다. **추측하지 않고 거부한다** |
+| `INVALID_ARGS` | 알 수 없는 옵션이거나 인자 형식이 틀렸다 |
+| `INVALID_COORDINATES` | 좌표가 화면 범위를 벗어났거나 형식이 틀렸다 |
+| `AMOUNT_TOO_SMALL` | 스와이프 거리가 터치 슬롭 이하다(탭으로 새는 것을 막는다) |
+| `LAUNCHER_ACTIVITY_NOT_FOUND` | 실행할 액티비티를 찾지 못했다. 인텐트를 보내지 않는다 |
+| `IME_RESTORE_FAILED` | 원래 키보드 복원에 실패했다. `details.originalImeId` 포함 |
+| `APK_DOWNLOAD_FAILED` | ADBKeyBoard 내려받기 실패. 기기는 호출 전 상태로 남는다 |
 
-`dump`, `tap`, and `text` also accept
-[`--web`](#web-content-on-the-ios-simulator) to reach **web page content**
-on the iOS Simulator, which the native accessibility tree does not expose.
+## 명령
 
-Every device-facing command accepts `--device <serial>`. Omit it when
-exactly one device is **connected** — it is auto-selected. With 2+
-connected devices and `--device` omitted, the command returns an
-`AMBIGUOUS_DEVICE` error listing all connected serials instead of
-silently guessing.
+| 명령 | 하는 일 |
+|---|---|
+| `devices` | 연결된 기기 목록 |
+| `launch <package>` | 패키지 이름으로 앱 실행 |
+| `stop <package>` | 패키지 이름으로 앱 강제 종료 |
+| `screenshot [--out <path>]` | PNG 캡처 |
+| `tap <x> <y>` | 기기 픽셀 좌표를 탭 |
+| `key <alias>` | 키 이벤트 전송 |
+| `text "<문자열>"` | 텍스트 입력 (ASCII / 유니코드 자동 분기) |
+| `swipe <x1> <y1> <x2> <y2> [--duration <ms>]` | 두 좌표 사이 원시 스와이프 |
+| `scroll <up\|down\|left\|right> [--amount <비율>]` | 화면 크기를 몰라도 되는 스크롤 |
+| `doctor [--yes\|--install] [--clean]` | 환경 진단 및 부트스트랩 |
+| `reset` | `doctor` 이전 상태로 기기 복원 |
 
-A device is **connected** iff `devices` reports its `connectionState` as
-`"device"` — `offline`/`unauthorized` entries do not count toward the
-auto-select/ambiguity check, even though `devices` still lists them (see
-below). On any Mac with Xcode installed, `devices` can list dozens of
-un-booted iOS simulator entries alongside the devices you actually
-intend to target; those entries are excluded from counting, auto-select,
-and error messages, but they are never hidden from `devices` itself —
-compare against its output to see the full picture. `--device
-<serial>` against an entry that exists but is not connected returns a
-dedicated `DEVICE_NOT_CONNECTED` error (distinct from `DEVICE_NOT_FOUND`,
-which means the serial isn't in the list at all) without sending any
-command to the device.
+`tap`과 `text`는 [`--web`](#ios-웹-콘텐츠---web)을 함께 받아 iOS의 **웹 페이지
+콘텐츠**에 닿을 수 있다. 네이티브 접근성 트리가 노출하지 않는 영역이다.
 
-### `devices`
+### 사용 예
 
 ```bash
 $ npx explore-mobile devices
-{"ok":true,"command":"devices","data":[{"serial":"emulator-5554","model":"sdk_gphone64_arm64","osVersion":"14","connectionState":"device","isEmulator":true}]}
-```
+{"ok":true,"command":"devices","data":[{"serial":"R3CY106LKVX","model":"SM_S938N",
+ "osVersion":"16","connectionState":"device","isEmulator":false,"platform":"android"}]}
 
-### `launch <package>`
-
-```bash
 $ npx explore-mobile launch com.android.settings
-{"ok":true,"command":"launch","data":{"serial":"emulator-5554","package":"com.android.settings"}}
-```
+{"ok":true,"command":"launch","data":{"serial":"R3CY106LKVX","package":"com.android.settings"}}
 
-### `stop <package>`
-
-```bash
-$ npx explore-mobile stop com.android.settings
-{"ok":true,"command":"stop","data":{"serial":"emulator-5554","package":"com.android.settings"}}
-```
-
-### `screenshot [--out <path>]`
-
-Never leaves a file on the device — the PNG is streamed host-side via
-`adb exec-out`. Without `--out`, the PNG is embedded as base64:
-
-```bash
-$ npx explore-mobile screenshot
-{"ok":true,"command":"screenshot","data":{"serial":"emulator-5554","byteLength":48213,"pngBase64":"iVBORw0KGgo..."}}
-```
-
-With `--out <path>`, the PNG is written to that host path instead and the
-response is a small pointer:
-
-```bash
 $ npx explore-mobile screenshot --out ./shot.png
-{"ok":true,"command":"screenshot","data":{"serial":"emulator-5554","savedTo":"./shot.png","byteLength":48213}}
-```
+{"ok":true,"command":"screenshot","data":{"serial":"R3CY106LKVX","savedTo":"./shot.png","byteLength":198784}}
 
-### `tap <x> <y>` / `tap --id|--text [--index <n>]`
+$ npx explore-mobile tap 226 2566
+{"ok":true,"command":"tap","data":{"serial":"R3CY106LKVX","x":226,"y":2566}}
 
-Coordinates, or an element selector matched against the normalized tree —
-`--id` against `CommonElement.id` (Android `resource-id`, iOS
-`AXUniqueId`), `--text` against its text (Android `text` or
-`content-desc`, iOS `AXLabel`), and `--index <n>` to pick the n-th of
-several matches. Selector mode taps the matched element's center, so it
-survives layout shifts that break hardcoded coordinates. Coordinates and
-a selector together are rejected with `TARGET_CONFLICT` rather than one
-silently winning; an unmatched selector returns `ELEMENT_NOT_FOUND`
-rather than tapping the wrong place.
-
-```bash
-$ npx explore-mobile tap 540 1200
-{"ok":true,"command":"tap","data":{"serial":"emulator-5554","x":540,"y":1200}}
-
-$ npx explore-mobile tap --text "로그인"
-{"ok":true,"command":"tap","data":{"serial":"emulator-5554","x":540,"y":1180,"selector":{"text":"로그인"}}}
-```
-
-A matched element that is not `tappable` is still tapped, with a
-`warnings` entry in the response — an automation script may legitimately
-want to poke a disabled control to confirm it does *not* respond.
-
-Selector mode is platform-agnostic: the same flags work against an
-Android device and an iOS simulator, because each backend normalizes its
-own tree before the selector runs.
-
-These selectors match the **native** tree. To tap something inside a web
-page, use [`tap --web "<CSS>"`](#web-content-on-the-ios-simulator).
-
-### `key <alias>`
-
-Supported aliases: `back`, `home`, `enter`, `menu`, `app_switch`, `up`,
-`down`, `left`, `right`, `del`, `tab`, `power`, `volume_up`,
-`volume_down`. An unsupported alias is rejected with a graceful
-`UNSUPPORTED_KEY` error, never a silent no-op.
-
-```bash
-$ npx explore-mobile key back
-{"ok":true,"command":"key","data":{"serial":"emulator-5554","key":"back"}}
-```
-
-### `text "<string>" [--id|--text [--index <n>]] [--keep-keyboard]`
-
-```bash
-$ npx explore-mobile text "hello world"
-{"ok":true,"command":"text","data":{"serial":"emulator-5554"}}
-
-$ npx explore-mobile text "hello" --id com.example:id/search_field
-{"ok":true,"command":"text","data":{"serial":"emulator-5554"}}
-```
-
-The same selector flags as `tap` may be given to **focus a field before
-typing** — the element is tapped first, then the text is sent. If the
-selector matches nothing, the text is **not** sent at all: the caller gets
-`ELEMENT_NOT_FOUND` instead of the string landing in whatever happened to
-be focused already.
-
-After sending, the soft keyboard is dismissed by default so it does not
-cover the next element you want to tap, by sending `KEYCODE_BACK` only
-after confirming the keyboard is actually shown. This dismisses the
-keyboard without disturbing what was just typed, on both a native field
-and a web page input reached via [`--web`](#web-content-on-the-ios-simulator)
-— an earlier version sent `KEYCODE_ESCAPE` instead, which a web page
-receives as its own input-cancel key and silently erases the text `text`
-had just sent, while still returning `{"ok":true}` (see
-[Status](#status)). Pass `--keep-keyboard` to skip the dismissal (and the
-keyboard-visibility check) entirely.
-
-See [Korean / emoji / Unicode text input](#korean--emoji--unicode-text-input)
-below for how non-ASCII strings are handled.
-
-To type into a field inside a web page, use
-[`text "<string>" --web "<CSS>"`](#web-content-on-the-ios-simulator).
-
-### `dump`
-
-Dumps the current UI hierarchy and normalizes it to the common element
-schema shared across backends (`{ role, text, id, bounds, tappable,
-enabled, children }`):
-
-```bash
-$ npx explore-mobile dump
-{"ok":true,"command":"dump","data":{"serial":"emulator-5554","elements":[{"role":"android.widget.Button","text":"OK","id":"com.example:id/btn_ok","bounds":{"x":0,"y":0,"w":100,"h":50},"tappable":true,"enabled":true,"children":[]}]}}
-```
-
-This is the **native** tree. Web page content does not appear in it — use
-[`dump --web`](#web-content-on-the-ios-simulator) on the iOS Simulator to
-read the page's DOM instead.
-
-### `swipe <x1> <y1> <x2> <y2> [--duration <ms>]`
-
-Sends a raw swipe/drag gesture from one device-pixel coordinate to
-another. `--duration` is **milliseconds** — the CLI's one contract unit
-regardless of backend; omit it to use the platform default duration (see
-the reliability caveat below before relying on the default).
-
-```bash
-$ npx explore-mobile swipe 200 700 200 300 --duration 500
-{"ok":true,"command":"swipe","data":{"serial":"D0B3A18C-…","from":{"x":200,"y":700},"to":{"x":200,"y":300},"durationMs":500}}
-```
-
-Internally, `AdbBackend` passes `--duration` straight through to
-`adb shell input swipe` (already milliseconds); `IdbBackend` converts it
-to seconds before building `idb ui swipe`'s argv, because `idb`'s own
-`--duration` is seconds, not milliseconds. Both conversions are handled
-for you — a caller never has to know which platform it is talking to.
-**Both platforms are confirmed against real hardware**: the syntax above
-was verified against a real Android device (2026-07-28, Samsung
-SM-S938N, Android 16) — a raw `adb shell input swipe` call and the
-CLI's own `swipe` command both moved the screen, with the millisecond
-duration argument accepted exactly as documented — and iOS is confirmed
-end-to-end against a real simulator (see [Status](#status)). This is
-one Android device at one density; it is not a claim about every
-Android device, manufacturer, or OS version.
-
-**A swipe shorter than the platform's movement threshold is not a
-no-op — it can be a tap.** Below that distance, Android does not just
-ignore the gesture; it interprets it as a tap and activates whatever
-sits under the starting point. This is exactly what
-[`scroll`](#scroll-updownleftright-amount-ratio)'s `AMOUNT_TOO_SMALL`
-rejection exists to prevent — see there for the measured threshold and
-why this makes the rejection more important, not less.
-
-**Omitting `--duration` is unreliable — measured, not assumed.** On a
-static page, repeated trials moved the screen 3 out of 5 times in one
-session and 5 out of 5 times in a separate session: the omitted path is
-session-variable, neither a dependable default nor a guaranteed no-op.
-Pass an explicit `--duration <ms>` value when the caller needs the
-gesture to actually happen — `500` is confirmed 5/5 across both
-measurement sessions. [`scroll`](#scroll-updownleftright-amount-ratio)
-below is unaffected by this: it always sends its own internal, fixed
-duration, precisely because a convenience layer has to guarantee real
-movement — `swipe` itself stays a raw primitive and deliberately never
-injects a hidden default (design decision D1,
-`.moai/specs/SPEC-GESTURE-001/spec.md` §A.3).
-
-`--duration` must be a **positive** integer: `0` is rejected — a
-zero-duration gesture cannot move anything — the same as an unparseable
-or empty value, both returning `INVALID_DURATION`. A value that *looks*
-negative (`--duration -100`) is instead caught earlier by the argument
-parser as `INVALID_ARGS`. `--duration` also has an **upper bound of
-60,000 ms (60s)**. Unlike the touch-slop floor `scroll` measures (see
-below), this ceiling is a **design choice, not a measurement**: beyond
-a minute a gesture stops being a swipe and becomes a long-press-drag,
-which is already out of scope for this command, and the ceiling's only
-job is to rule out an unbounded hang — before it existed,
-`--duration 1e24` was measured to hang the command indefinitely,
-requiring a forced kill. Every rejection — zero, too large, unparseable,
-or empty — sends zero gestures. Coordinates follow a *separate* rule and
-keep `0` as valid (e.g. `swipe 0 0 0 100` is legitimate) — only
-`--duration`'s own parser treats `0` as invalid:
-
-```bash
-$ npx explore-mobile swipe 200 700 200 300 --duration 0
-{"ok":false,"command":"swipe","error":{"code":"INVALID_DURATION","message":"swipe --duration requires a positive integer number of milliseconds, at most 60000.","details":{"received":"0"}}}
-
-$ npx explore-mobile swipe 200 700 200 300 --duration 60001
-{"ok":false,"command":"swipe","error":{"code":"INVALID_DURATION","message":"swipe --duration requires a positive integer number of milliseconds, at most 60000.","details":{"received":"60001"}}}
-```
-
-The four coordinates follow the same non-negative-integer rule as `tap`,
-returning `INVALID_COORDINATES` (or `INVALID_ARGS` for a negative
-literal).
-
-See [`scroll`](#scroll-updownleftright-amount-ratio) for a direction/ratio
-convenience layer built on this same command, and
-[`tap --web`](#web-content-on-the-ios-simulator) for reaching an
-off-viewport **web** element with a real touch.
-
-### `scroll <up|down|left|right> [--amount <ratio>]`
-
-Scrolls the screen a direction and a ratio of its size, without the
-caller needing to know the screen's pixel dimensions — a convenience
-layer over [`swipe`](#swipe-x1-y1-x2-y2-duration-ms), not a new backend
-capability.
-
-```bash
 $ npx explore-mobile scroll down
-{"ok":true,"command":"scroll","data":{"serial":"D0B3A18C-…","direction":"down","from":{"x":201,"y":634},"to":{"x":201,"y":240}}}
+{"ok":true,"command":"scroll","data":{"serial":"R3CY106LKVX","direction":"down",
+ "from":{"x":720,"y":2262},"to":{"x":720,"y":858}}}
 ```
 
-**`scroll down` means "show the content below" — the finger moves *up*.**
-This is the single most silently-invertible thing about this command: get
-it backwards and it still returns `ok: true`. The response always carries
-both the `direction` and the real `from`/`to` points, precisely so a
-caller can check `to.y < from.y` (down) at a glance instead of trusting
-the label alone.
+### `doctor`
 
-Screen size is derived from the existing [`dump`](#dump) result — there
-is no separate backend method to query it. The rule is deliberately
-strict: the maximum extent of every top-level element's bounds is a
-*candidate* size, but it is accepted only when one of those elements'
-bounds exactly spans `{0, 0, width, height}` (a "witness"). Without a
-witness, `scroll` refuses with `SCREEN_SIZE_UNKNOWN` rather than guess —
-a bare max-extent check would happily accept the bounding box of a
-handful of unrelated status-bar fragments as "the screen", which is a
-real state Safari can be in.
+환경을 진단하고, 필요하면 부트스트랩한다.
 
-`--amount` scales the swipe distance and must be greater than 0 and at
-most 1 (default `0.5` — half a screen). An out-of-range or unparseable
-value is `INVALID_AMOUNT`; a value that looks negative
-(`--amount -0.5`) is instead caught by the argument parser as
-`INVALID_ARGS`. Both send zero gestures.
-
-A ratio *inside* that valid range can still be rejected: the platform
-has a **touch slop** — a minimum drag distance below which the OS
-treats a gesture as a tap rather than a scroll, not something this CLI
-invents. Below that many device pixels, movement is **unreliable, not
-guaranteed absent** — iOS measurement found occasional movement even
-under the floor (9pt moved 1 time in 15, 10pt moved 2 times in 15; see
-[`spec.md` §C.1-⑭](.moai/specs/SPEC-GESTURE-001/spec.md)) — while on
-Android something *else* happens instead of nothing — see the tap
-warning under [`swipe`](#swipe-x1-y1-x2-y2-duration-ms) above — even
-though the coordinates genuinely differ. `scroll` asks the connected
-device's own backend for this floor and rejects any ratio whose resulting distance
-falls under it, before sending anything. That case returns
-`AMOUNT_TOO_SMALL` — a **different** code from `INVALID_AMOUNT`,
-because the ratio itself is not out of contract (a larger screen would
-accept the same ratio without complaint; the rejection depends on this
-screen's size converting the ratio to fewer pixels than the floor,
-which only the geometry step knows). The response's
-`details.minValidRatio` reports the smallest ratio that *would* clear
-the floor on this specific screen, so a caller knows what to retry with
-instead of guessing. **On a screen small enough that no ratio clears the
-floor at all — even `--amount 1`, a full screen's worth — `minValidRatio`
-and `minValidRatioBasis` are omitted from the response entirely**, rather
-than carrying a value that would itself be rejected if retried. A caller
-must handle both fields being absent, not assume they always accompany
-`AMOUNT_TOO_SMALL`. The rejection itself, and the no-gesture-sent
-guarantee, are unaffected either way. The distance is centre-symmetric, so it always
-grows in steps of two device pixels around the screen's own centre —
-and the parity of those steps (odd or even) tracks the **screen axis'
-own length**, not the floor's. An even-length axis (e.g. 402×874) can
-only produce even distances; an odd-length axis (e.g. 393×852's own
-width, or 375×667 on both axes) can only produce odd ones. Whether the
-accepted distance lands exactly on the floor is therefore a question of
-whether that parity happens to match the floor's own parity, not of
-which platform is involved: against iOS's 11px floor (itself odd), an
-even axis jumps straight from a rejected 10px distance to an accepted
-12px one — never landing on 11 itself — but an odd axis lands on it
-exactly, since 11 is itself one of that axis' achievable odd distances
-(confirmed by direct recomputation against the built module: on
-393×852's odd width and on 375×667's two odd axes, achievable distances
-step 1, 3, 5, …, 11, 13, … and the accepted one is 11px exactly; see
-[`spec.md` REQ-GEST-SCROLL-007](.moai/specs/SPEC-GESTURE-001/spec.md)).
-The same rule holds for Android's derived floor in reverse — even on
-this device (32px), it lands exactly on an even axis and would instead
-clear it one pixel later on an odd one — though only even Android
-screen axes have actually been checked so far.
-
-**The floor is not one value shared by every device — it is asked of
-the connected device's own backend, and the answer says how it was
-obtained.** iOS and Android arrive at this number in fundamentally
-different ways, and a bare number cannot tell a caller which kind it
-got. That distinction is not theoretical: an Android real-device check
-found exactly this failure shipped once (see [Status](#status) for the
-full account) — a single platform-independent constant, measured on
-iOS, that never once moved the connected Android device's screen. The
-response's `details.minValidRatioBasis` now names the source directly:
-
-- `"device-query"` — Android. **Not** a value read off the device — a
-  fixed platform rule, `floor(8dp × density) + 2px`, with one free
-  parameter (density) that this device supplies via a `wm density`
-  query at call time (8dp is Android's own documented touch-slop
-  constant; the +2px margin sits above the raw slop boundary, since the
-  pixel or two right at that boundary was measured to be probabilistic,
-  not a clean cutoff — a design choice, not a further measurement). The
-  density used is whichever line `wm density` reports as actually
-  governing the device's own touch behavior — the `Override density:`
-  line when the device has one (set by a user changing the Display size
-  setting), falling back to `Physical density:` otherwise (see below for
-  why this distinction matters). What changes with the device is the
-  parameter, not the rule.
-- `"measured-constant"` — iOS. A fixed 11pt, measured once on one
-  simulator (see the provenance note below) and returned unchanged, with
-  no query against whichever device is actually connected.
-
-```bash
-$ npx explore-mobile scroll down --amount 0.001 --device <ios-simulator>
-{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"scroll --amount is too small to move the screen at this size; no gesture was sent.","details":{"requestedRatio":0.001,"minValidRatio":0.013984236866235733,"minValidRatioBasis":"measured-constant"}}}
-
-$ npx explore-mobile scroll down --amount 0.001 --device <android-device>
-{"ok":false,"command":"scroll","error":{"code":"AMOUNT_TOO_SMALL","message":"scroll --amount is too small to move the screen at this size; no gesture was sent.","details":{"requestedRatio":0.001,"minValidRatio":0.011039886623620987,"minValidRatioBasis":"device-query"}}}
-
-$ npx explore-mobile scroll down --amount 0.014 --device <ios-simulator>
-{"ok":true,"command":"scroll","data":{"serial":"D0B3A18C-…","direction":"down","from":{"x":201,"y":443},"to":{"x":201,"y":431}}}
-```
-
-No gesture is sent when `AMOUNT_TOO_SMALL` is returned.
-
-**Neither floor is a chosen value — both are measured, or derived from
-a measured platform rule.** iOS's 11pt came from one iPhone 17 Pro
-simulator running iOS 26.0 — binary search across repeated trials,
-judged by comparing before/after screenshots with the status bar
-cropped out (see
-[`spec.md` §C.1-⑭](.moai/specs/SPEC-GESTURE-001/spec.md) for the full
-trial record). It is **not** established for real iOS hardware or other
-iOS device models. Android's derivation rule (`8dp × density`) was
-confirmed on one real device — a Samsung SM-S938N at 600 dpi, where the
-measured touch-slop boundary (30px) matched `8dp × 3.75` exactly and
-the resulting floor (32px) moved the screen 3 out of 3 times on every
-retry, in all four directions (2026-07-28; see
-[`spec.md` §C.1-⑰](.moai/specs/SPEC-GESTURE-001/spec.md)) — though the
-underlying boundary measurement itself found the horizontal axis less
-settled than that round-trip alone suggests: vertically, 32px measured
-a clean 8 out of 8, but horizontally it measured only 5 out of 6, so the
-floor is **not** established as fully reliable on that axis, and the
-residual band is recorded as unresolved rather than papered over (see
-[`spec.md` §C.3](.moai/specs/SPEC-GESTURE-001/spec.md)). `8dp` is
-Android's own documented default, so the rule is expected to generalize
-across densities, but only this one device's density, at one
-manufacturer, has actually been measured — a device that ships a
-different slop default is unconfirmed. **Neither platform's value is
-evidence for the other's**: the iOS constant (11pt) never once moved
-this Android device (0 out of 5 vertical trials, 0 out of 6 horizontal)
-— exactly the failure this basis-tagged design exists to prevent.
-
-**Android's floor reads the *effective* density — not always the
-physical one.** A follow-up measurement (2026-07-28, with the user's
-consent, on the same device, its Display size setting temporarily
-changed and then restored) found that `wm density` reports a second
-`Override density:` line whenever that setting has been changed, and it
-is that value — not `Physical density:` — that actually governs the
-device's own touch-slop behavior. The distinction is not academic:
-reading only `Physical density:` derives a floor that can sit *below*
-the real slop when the display is set to an enlarged size, and a
-`scroll` inside that gap is not a no-op — it is accepted, sent, and
-Android interprets it as a **tap** on whatever sits under the starting
-point (see the tap warning under
-[`swipe`](#swipe-x1-y1-x2-y2-duration-ms) above). The measurement:
-`Physical 600` alone still derives 32px, unchanged; `Physical 600` with
-a shrunk `Override 480` moved the screen at 25px 4 out of 6 times,
-which would have been impossible if a Physical-only 30px slop actually
-governed. The derivation now reads whichever line actually governs,
-falling back to `Physical density:` when no `Override` line is present.
-This closes a question the 0.6.0 amendment above had left explicitly
-open, but only partway: it pins the shrunk-display slop down to a
-range — `[22, 25)` px, from three tried distances — not to a single
-pixel the way the 30px/31px physical-density boundary above was pinned
-down, and it did not measure the *enlarged*-display direction at all —
-the direction that actually matters, since that is the direction that
-can push the derived floor below the real slop. The one direction that
-was tried predicts the same floor under either "Override governs" or
-"the smaller of the two governs", so it rules out only "Physical
-governs"; the enlarged-display floor this CLI ships today is derived
-from Android's own documented touch-slop rule, not from a direct
-measurement of an enlarged-display device.
-
-`scroll` cannot confirm the screen actually moved — like `swipe`, it
-sends the gesture and returns; re-run [`dump`](#dump) to check. It also
-always sends its swipe with a fixed, non-configurable internal duration
-(500ms), because omitting one was measured to be **unreliable** rather
-than a guaranteed no-op — see the reliability disclosure under
-[`swipe`](#swipe-x1-y1-x2-y2-duration-ms) above. A convenience layer has
-to guarantee real movement on the caller's behalf, so `scroll` never
-leaves this to chance the way `swipe` itself deliberately does.
-
-Like `swipe`, this command is confirmed against both a real iOS
-simulator and a real Android device — see
-[`swipe`](#swipe-x1-y1-x2-y2-duration-ms) above and
-[Status](#status) below for exactly what was verified.
-
-### `doctor [--yes|--install] [--clean]`
-
-Diagnoses (and, with consent, bootstraps) the device-control
-environment: `adb` install presence, adb daemon health, and the
-Korean/Unicode input IME (see next section).
+- `--yes` 또는 `--install` — Homebrew로 adb 자동 설치를 허용한다. 동의 없이는
+  설치하지 않고 수동 명령만 알려준다.
+- `--clean` — `reset`과 같다. 원래 키보드를 복원한다.
 
 ```bash
 $ npx explore-mobile doctor
-{"ok":true,"command":"doctor","data":{"adb":{"installed":true,"version":"Android Debug Bridge version 1.0.41"},"daemon":{"healthy":true},"devices":[{"serial":"emulator-5554","model":"sdk_gphone64_arm64","osVersion":"14","connectionState":"device","isEmulator":true}],"adbKeyboard":{"skipped":false,"alreadyInstalled":false,"installed":true,"enabled":true}}}
+{"ok":true,"command":"doctor","data":{
+  "adb":{"installed":true,"version":"Android Debug Bridge version 1.0.41"},
+  "daemon":{"healthy":true},
+  "devices":[...],
+  "adbKeyboard":{...}}}
 ```
 
-- `--yes` / `--install` — explicit consent to auto-install `adb` via
-  Homebrew. **macOS only**; auto-install is never silent. Linux/Windows
-  always print exact manual-install steps regardless of this flag.
-- `--clean` — performs the same restore as [`reset`](#reset).
+## 기기 지정 규칙
 
-`doctor` always reports (`ok: true`) with the diagnostic result nested
-under `data` — inspect `data.adb.installed`, `data.daemon.healthy`, and
-`data.adbKeyboard` rather than the top-level `ok` flag to see whether the
-environment itself is healthy.
+기기를 다루는 모든 명령은 `--device <serial>`을 받는다. **연결된** 기기가
+정확히 1대일 때만 생략할 수 있고, 그때는 자동 선택된다.
 
-With an **iOS** target, the report carries `data.idbEnvironment` instead
-of `adbKeyboard`, covering `idb`, `idb_companion`, whether a simulator is
-booted, and the web path's prerequisite:
+연결된 기기가 2대 이상인데 `--device`를 생략하면, 조용히 추측하는 대신
+`AMBIGUOUS_DEVICE` 오류가 연결된 시리얼 전부를 나열해 반환한다.
 
-```json
-"idbEnvironment": {
-  "idbInstalled": { "installed": true, "version": null },
-  "companion": { "present": true },
-  "simulatorBooted": { "booted": true },
-  "webInspectorProxy": { "installed": true, "liveSocketCount": 1 }
-}
-```
+**"연결됨"의 정의**: `devices`가 `connectionState`를 `"device"`로 보고하는
+경우만이다. `offline` / `unauthorized` 항목은 `devices` 목록에는 계속 나오지만
+자동 선택과 모호성 판정에서는 제외된다. Xcode가 설치된 Mac이라면 부팅되지 않은
+iOS 시뮬레이터 수십 개가 목록에 함께 나오는데, 이들도 같은 이유로 계수에서
+빠진다. 다만 **목록 자체에서 숨기지는 않는다** — 전체 그림은 `devices` 출력과
+대조해 보면 된다.
 
-> **Caveat**: `doctor` checks `adb` first and returns early when it is
-> missing, so on a host with **no `adb` installed** the iOS section is
-> never reached — an iOS-only user does not see `idbEnvironment` at all.
-> This predates the web path; until it is fixed, put `adb` on `PATH` to
-> get the iOS report.
+목록에는 있으나 연결 상태가 아닌 시리얼을 `--device`로 지정하면,
+`DEVICE_NOT_CONNECTED`를 반환하며 **기기에 아무 명령도 보내지 않는다**
+(`DEVICE_NOT_FOUND`와 구분된다 — 후자는 목록에 아예 없다는 뜻).
 
-### `reset`
+기기별 상태(추적 중인 원래 IME, 임시 자원)는 시리얼 단위로 격리되므로, 두 기기를
+동시에 몰아도 서로의 입력기 상태를 오염시키지 않는다.
 
-Restores the device to its pre-`doctor` state: disables and uninstalls
-the Unicode IME, and resets the active input method.
+## 한글·이모지·유니코드 입력
+
+`adb shell input text`는 유니코드를 보내지 못한다. 그래서 `text`가 경로를
+**스스로 고른다** — 호출자가 지정하지 않는다.
+
+- **ASCII 전용** 입력은 플랫폼 기본 경로를 그대로 쓴다.
+- **비 ASCII가 하나라도 있으면**(한글·이모지·혼합) Android에서는 유니코드
+  IME([ADBKeyBoard](https://github.com/senzhk/ADBKeyBoard))로 base64 브로드캐스트를
+  보내고, iOS에서는 기기 붙여넣기판을 거친다.
+- Android의 IME 전환은 **호출 단위가 아니라 세션 단위**다. 첫 비 ASCII `text`
+  호출이 기기의 실제 원래 키보드를 디스크에 기록하고 ADBKeyBoard로 전환하며,
+  이후 호출은 그 세션을 재사용한다. 원래 키보드를 되돌리는 것은 `reset`
+  (또는 `doctor --clean`)이다. CLI 호출마다 프로세스가 새로 뜨므로 세션 기록은
+  디스크에 남는다.
+- 복원이 실패하면 `IME_RESTORE_FAILED`와 `details.originalImeId`가 함께 나온다.
+  손으로 되돌릴 수 있게 하기 위해서다 — 조용한 실패는 없다.
 
 ```bash
-$ npx explore-mobile reset
-{"ok":true,"command":"reset","data":{"serial":"emulator-5554","imeReset":true,"adbKeyboardDisabled":true,"adbKeyboardUninstalled":true,"warnings":[]}}
+$ npx explore-mobile text "안녕하세요 반갑습니다 🙂"
+{"ok":true,"command":"text","data":{"serial":"R3CY106LKVX"}}
+
+$ npx explore-mobile reset      # 원래 키보드 복원
+{"ok":true,"command":"reset","data":{"serial":"R3CY106LKVX",...}}
 ```
 
-### Error shape
+> **알려진 함정**: 편집 가능한 요소에 포커스가 없으면 `text`가 `ok:true`를
+> 반환하면서 **입력이 조용히 사라진다.** 비어 있는 입력란은 한 줄 높이만
+> 차지하는 경우가 많아, 편집 영역 한가운데를 탭했는데도 입력란 바깥일 수 있다.
+> 판정은 반드시 **스크린샷이나 앱 상태**로 하고 `ok:true`를 믿지 말 것.
+> 기계적 검출 방법은 아직 확정되지 않았다.
 
-Errors are always structured JSON, never free text:
+**ADBKeyBoard는 이 패키지에 동봉하지 않는다 — 의도적이다.** ADBKeyBoard는
+GPL-2.0이고 이 패키지는 MIT라 재배포하지 않는다. 대신 최초 사용 시 공식 GitHub
+릴리스에서(고정된 태그로, `master`가 아니라) 내려받아 검증하고 로컬에 캐시한다.
+`text`는 **스스로 복구한다** — 비 ASCII 문자열이 들어왔는데 ADBKeyBoard가 없으면
+`text`가 직접 내려받아 설치하므로, `doctor`를 먼저 돌리는 건 편할 뿐 필수는
+아니다. 네트워크 실패·404·잘못된 다운로드는 모두 `APK_DOWNLOAD_FAILED`와 수동
+설치 안내로 우아하게 실패하며, **기기는 호출 전 상태로 남는다.** 절반만 적용된
+IME 전환은 생기지 않는다.
+
+iOS에는 위 내용이 적용되지 않는다 — 전환할 IME도, APK도, 세션 상태도 없다.
+
+## 읽기 경로는 스크린샷 하나다
+
+`SPEC-VISION-001`에 따라 **UI 계층 덤프(`dump`)와 네이티브 셀렉터
+(`--id` / `--text`) 경로가 제거됐다.** 화면을 읽는 수단은 스크린샷 하나로
+좁혀졌고, 조작은 좌표로 한다.
+
+이유: 덤프는 플랫폼마다 결과가 다르고, 웹 콘텐츠를 보지 못하며(Android Chrome은
+네이티브 크롬 요소만 반환), iOS 실기기에서는 아예 동작하지 않았다. 스크린샷은
+세 조건 모두에서 동일하게 동작한다.
+
+**제거된 플래그는 조용히 좌표 탭으로 대체되지 않는다.** `tap --id foo` 같은
+호출은 `INVALID_ARGS`로 거부된다.
+
+이 선택의 대가도 적어 둔다 — 좌표를 스크린샷에서 눈으로 읽어야 하므로, 표시용
+축소 이미지를 쓴다면 **배율을 곱해야 한다.** 예를 들어 1440×3120 화면을
+923×2000으로 축소해 보고 있다면 좌표에 1.56을 곱해야 실제 좌표가 된다. 배율을
+빠뜨리면 조용히 다른 곳을 탭한다.
+
+## iOS 웹 콘텐츠 (`--web`)
+
+iOS의 네이티브 접근성 트리는 웹 페이지 내부를 노출하지 않는다. `tap`과 `text`에
+`--web <CSS 셀렉터>`를 주면 CSS 셀렉터로 페이지 요소에 닿을 수 있다.
 
 ```bash
-$ npx explore-mobile tap 10 10
-{"ok":false,"command":"tap","error":{"code":"AMBIGUOUS_DEVICE","message":"2 devices connected; specify --device <serial>.","details":{"availableDevices":[...]}}}
+npx explore-mobile tap --web "button.submit"
+npx explore-mobile text --web "input#search" "검색어"
 ```
 
-## Web content on the iOS Simulator
+- `--page <n>` — 열린 페이지가 여럿일 때 대상을 고른다. 생략하고 여럿이면
+  `AMBIGUOUS_PAGE`가 나온다.
+- `--index <n>` — CSS 셀렉터가 여러 개에 맞을 때 몇 번째를 조작할지 고른다.
+- `ios-webkit-debug-proxy`가 필요하다. 없으면 `IWDP_NOT_INSTALLED`.
 
-`dump` sees the **native** accessibility tree. With a web page open, that
-tree contains the browser chrome and nothing from the page — so a selector
-can never reach a link inside it, and only blind coordinate taps are left.
-`--web` closes that gap by reading the page's DOM directly.
+## 현재 상태
 
-Add `--web` to `dump`, `tap`, or `text`. It targets the **iOS Simulator
-only**; against an Android device it is refused with
-`UNSUPPORTED_ON_PLATFORM` (Android WebView speaks a different protocol and
-is a separate SPEC). Without `--web`, every command behaves exactly as
-before.
+**테스트** (2026-08-03 실측):
 
-```bash
-# every interactive element on the page, in the common element schema
-$ npx explore-mobile dump --web
-{"ok":true,"command":"dump","data":{"serial":"D0B3A18C-…","mode":"web","elements":[{"role":"input","text":"검색어를 입력해 주세요.","id":"query","bounds":{"x":62,"y":10,"w":282,"h":52},"tappable":true,"enabled":true,"children":[]}]}}
-
-# narrow it with a CSS selector
-$ npx explore-mobile dump --web "a[href*='news']"
-
-# tap an element by CSS selector
-$ npx explore-mobile tap --web "a[href*='shopping.naver.com']"
-{"ok":true,"command":"tap","data":{"serial":"D0B3A18C-…","selector":{"css":"a[href*='shopping.naver.com']","index":0},"tappable":true,"method":"native","x":183,"y":434}}
-
-# type into a field (Korean included — same input path as the native `text`)
-$ npx explore-mobile text "네이버 웹뷰" --web "#query"
-{"ok":true,"command":"text","data":{"serial":"D0B3A18C-…","selector":{"css":"#query","index":0},"method":"native","x":203,"y":98}}
+```
+$ pnpm test
+Test Files  29 passed (29)
+Tests  656 passed | 2 expected fail (658)
 ```
 
-`--index <n>` picks the n-th match when a selector matches several
-elements, exactly like the native selector flags.
+**Android 실기기 검증** (SM-S938N / Android 16 / 1440×3120 / density 600):
 
-### How an element is reached, and why the response says so
-
-A web element is tapped **natively by default** — its position is
-converted to a device coordinate and a real touch is sent, so sites that
-require genuine touch events behave normally. When the element sits
-outside the viewport, that conversion cannot be trusted — so the command
-scrolls the element into view (`scrollIntoView`), **re-measures its
-position**, and retries the native tap against the fresh coordinate.
-Only if it is *still* unconvertible after that does it fall back to an
-in-page `click()`.
-
-The response always reports which of four paths ran, so neither the
-scroll nor the fallback is ever silent:
-
-| `method` | What happened |
+| 항목 | 실측값 |
 |---|---|
-| `native` | Tapped directly — the page never moved. |
-| `native-scrolled` | Scrolled into view, re-measured, then tapped natively. |
-| `js-click` | JS fallback, no scroll needed. |
-| `js-click-scrolled` | Scrolled, still unconvertible, JS fallback. |
+| 화면 크기 소스 | `adb shell wm size` → `Physical size: 1440x3120` |
+| 캡처 해상도 | 1440×3120 → **배율 1.0** (캡처 = 화면 크기) |
+| 터치 슬롭 | **30px** (8dp × 3.75). 이보다 짧은 스와이프는 무동작이 아니라 **탭**이다 |
+| 비전 루프 | 캡처 → 좌표 판정 → 탭 → 검증 캡처 전 경로 동작 확인 |
+| 한글+이모지 입력 | 동작 확인 |
 
-The `-scrolled` suffix is set only when the target element is
-**measured to have actually moved** — its own `getBoundingClientRect()`
-compared immediately before and after the `scrollIntoView` call, inside
-the same JS expression. `scrollIntoView` running without error only
-confirms the target node existed; it says nothing about whether
-anything moved (an already-visible element, or one inside a
-non-scrolling off-canvas container, leaves its rect unchanged). An
-earlier version of this feature set `-scrolled` from that weaker
-existence signal alone, so a tap on such an element could be reported
-as `native-scrolled` or `js-click-scrolled` even though nothing moved —
-fixed in the SPEC-GESTURE-001 0.4.0 amendment after an independent
-review reproduced it live.
+검증 기록과 스크린샷:
+`.moai/reports/android-verification/SPEC-VISION-001-multiapp-2026-08-03/`
 
-That 0.4.0 fix itself compared `window.scrollY`, which has its own
-blind spot: an element scrolling inside an `overflow:auto`
-**container** moves on screen without the window itself ever scrolling,
-so `scrollY` stays unchanged and the response wrongly reported no
-movement (`native` instead of `native-scrolled`) — a regression the
-0.4.0 fix introduced while closing the first gap. A 0.5.0 amendment
-replaced the `scrollY` comparison with the element's own bounding-rect
-comparison shown above, which covers window scroll, container scroll,
-and horizontal scroll with a single predicate; see
-[CHANGELOG](CHANGELOG.md) for the exact defects in both rounds.
+**아직 검증하지 않은 것**:
 
-A third defect sat one step earlier than either round above: **the
-sample was taken before the scroll had actually finished.** On a page
-(or container) declaring CSS `scroll-behavior: smooth`,
-`scrollIntoView` completes asynchronously — the call returns
-immediately, but the animation itself finishes moments later.
-Re-measuring the element's rect *immediately* after the call therefore
-reads the pre-scroll position even while a real scroll is under way:
-measured, `moved` read `false` (`containerScrollTop` unchanged)
-immediately after the call, with the scroll only completing roughly 11
-seconds afterward. Two things followed from that stale sample: a scroll
-that genuinely happened went unreported (no `-scrolled` suffix), and —
-worse — the same stale rectangle was reused to convert the tap
-coordinate, silently degrading a native touch into the JS `click()`
-fallback. A 0.7.0 amendment fixes this by calling
-`scrollIntoView({block: "center", behavior: "instant"})`, forcing a
-synchronous scroll regardless of the page's own CSS, so the rectangle
-sampled right after the call always reflects the true post-scroll
-position. This deliberately ignores the page's own animation — the
-point of this scroll is a trustworthy coordinate, not visual fidelity —
-and waiting for the animation to finish instead was rejected because
-there is no standard completion signal to poll for, which would reopen
-the same unbounded-wait hazard the `--duration` ceiling above already
-closed.
+- `--web` 경로의 실기기 회귀 (브라우저 무대 미구성)
+- 분할화면·팝업뷰·프리폼 윈도우에서의 좌표계
+- 화면 크기 override(`wm size WxH`)가 설정된 기기
+- 폴더블·멀티 디스플레이 변형
 
-**A 0.8.0 amendment added a fallback for WebKit builds that reject
-`behavior: "instant"` as an enum member.** WebKit validates
-`ScrollBehavior`, so a WebKit that predates `"instant"` (Safari < 17.4)
-throws rather than ignoring the value; left uncaught, that throw could
-fail the whole command. The call is now wrapped in a `try`/`catch`: on a
-throw, the fallback re-issues `scrollIntoView({block: "center"})` with
-**no `behavior` argument at all**, letting the page's own CSS
-`scroll-behavior` govern. **This is an improvement over throwing, not an
-equivalent to the primary call above** — without an explicit `behavior`,
-a page or container declaring `scroll-behavior: smooth` makes the
-fallback scroll asynchronous again, reopening the exact stale-sample
-behavior the instant-scroll fix above exists to close, on this one
-narrower path (old WebKit *and* a smooth-scrolling page/container). This
-codebase's SPEC deliberately declares no minimum WebKit/iOS version (a
-version floor would be a claim about configurations nothing here has
-tested), so this fallback — not a version check — is the mitigation. No
-currently-supported simulator (iOS 18.6, 26.0) exercises the fallback
-path; the enum-throw itself was confirmed live against a connected
-simulator, but which of two possible pre-fix failure shapes it would
-have produced (an outright command failure, or a silent `js-click`
-degrade) was not re-verified in this same session.
+## 진행 중인 변경
 
-```bash
-$ npx explore-mobile tap --web 'a[href*="Netscape"]' --page 1
-{"ok":true,"command":"tap","data":{...,"method":"native-scrolled","x":243,"y":419}}
-```
+`SPEC-VISION-001`이 iOS 백엔드를 **idb에서 WebDriverAgent(WDA)로 교체**하는
+중이다. 완료 전까지 다음 제약이 있다.
 
-(The target sat at `y ≈ 1247` against a viewport ≈714px tall — well
-below the fold. It was scrolled into view, re-measured to `y:419`,
-tapped natively, and the browser genuinely navigated to the linked
-page.)
+- **iOS의 `getScreenSize`는 항상 실패한다.** M2가 덤프 경로를 제거하면서 iOS는
+  화면 크기 출처가 없는 구간에 들어갔고, 추측 대신 거부를 택했다. 따라서 iOS
+  `scroll`은 `SCREEN_SIZE_UNKNOWN`을 반환한다. 잘못된 좌표로 되돌릴 수 없는
+  제스처를 보내지 않기 위해서다.
+- **iOS 시뮬레이터 경로는 이번 범위 밖이다.** 이 SPEC은 실기기만 요구한다.
+- WDA 경로는 사전에 WDA를 기동하고 `iproxy 8100:8100 -u <UDID>`가 떠 있어야
+  한다. 접속 실패는 흔한 정상 상태이므로 전용 오류 코드로 반환되며, 조용히 다른
+  경로로 대체되지 않는다.
 
-The coordinate conversion needs the height of the browser chrome above
-the page. That number is **measured on the device at runtime**, not
-hardcoded: it is one device's status-bar height, not a property of iOS.
-The measurement covers the page with a transparent overlay first, so the
-probe tap cannot reach any real element, and the result is cached per
-device and re-measured automatically whenever the page geometry changes
-(rotation, chrome resize). On a cache hit nothing is injected into the
-page and no probe tap is sent.
+## 로드맵
 
-### Which page? — `--page <n>`
+- iOS 백엔드 WDA 교체 완료 및 idb 잔재 제거
+- 명령당 기기 열거 1회화 (현재 2회)
+- 두 플랫폼 비전 루프 end-to-end 검증
+- 멀티기기 상호작용 테스트
 
-Safari can expose more than one debuggable page, and **one link tap is
-enough to create a second**. The proxy does not report which of them is on
-screen, so the CLI does not choose for you: with two or more pages it
-refuses and lists them, exactly as it refuses to guess between two
-connected devices.
+## 라이선스
 
-```bash
-$ npx explore-mobile dump --web
-{"ok":false,"command":"dump","error":{"code":"AMBIGUOUS_PAGE","message":"2 debuggable pages are open; specify --page <n>. …","details":{"pages":[{"index":0,"title":"NAVER","url":"https://m.naver.com/"},{"index":1,"title":"여름에만 느낄 수 있는 풍경","url":"https://clip.naver.com/…"}]}}}
-
-$ npx explore-mobile dump --web --page 1
-{"ok":true,"command":"dump","data":{"serial":"D0B3A18C-…","mode":"web","page":{"index":1,"title":"여름에만 느낄 수 있는 풍경","url":"https://clip.naver.com/…"},"elements":[…]}}
-```
-
-Every successful web command reports the page it acted on under
-`data.page` — **including when there is only one**. Leaving that out is
-what let an earlier version read the wrong page without anyone noticing.
-
-**Known instability across separate CLI invocations.** Even against a
-single open page, consecutive `--web` calls have been observed to
-alternate between success, `AMBIGUOUS_PAGE`, and `NO_WEB_PAGE` (rarely
-`WEB_INSPECTOR_UNREACHABLE`) — a proxy attach/detach timing issue, not
-only page-count ambiguity, and it is unresolved (out of
-SPEC-GESTURE-001's scope; it belongs to SPEC-WEBVIEW-001's proxy
-lifecycle). This has cost real verification time across multiple
-independent sessions, not just a single occurrence. Three things helped
-in practice: pass `--page <n>` explicitly rather than relying on
-disambiguation; leave roughly five seconds between consecutive `--web`
-calls; and if a call still wedges, kill the proxy directly
-(`pkill -f ios_webkit_debug_proxy`) and retry — a proxy this CLI did not
-start is not touched by its own cleanup (see Proxy lifecycle below), so
-a wedged externally-running proxy will not restart on its own. An agent
-driving `--web` in a loop should expect and retry on these errors rather
-than treat any single one as fatal.
-
-### Proxy lifecycle
-
-`ios_webkit_debug_proxy` is started and stopped for you. A proxy that is
-**already running is reused and left running** — only a proxy this CLI
-started is stopped, and that cleanup runs even when the command fails, so
-a failure does not leave one behind. This also means a proxy left over
-from a previous wedged invocation is *not* automatically restarted by a
-later CLI call — see the manual `pkill` mitigation above.
-
-### Errors
-
-| Code | Meaning |
-|---|---|
-| `IWDP_NOT_INSTALLED` | `ios_webkit_debug_proxy` is not on `PATH`; the message carries the install command. |
-| `NO_WEB_PAGE` | No simulator is exposing a Web Inspector socket, or none has a page open. |
-| `AMBIGUOUS_PAGE` | Two or more pages are debuggable and no `--page <n>` was given; `details.pages` lists them. Also returned for an out-of-range `--page`. |
-| `INVALID_PAGE` | `--page` was not a non-negative integer. |
-| `ELEMENT_NOT_FOUND` | The CSS selector matched no visible element. Nothing is tapped and, for `text`, nothing is typed. |
-| `TARGET_CONFLICT` | `--web` was combined with coordinates or `--id`/`--text`; one is not silently dropped. |
-| `MISSING_SELECTOR` | `tap`/`text` was given `--web` with no CSS selector. |
-| `UNSUPPORTED_ON_PLATFORM` | `--web` was aimed at an Android device. |
-
-### Scope
-
-Safari on the **iOS Simulator**, where Web Inspector is on by default.
-Not covered: Android WebView, iOS physical devices (USB transport plus
-manual Web Inspector activation), and app-embedded webviews that do not
-opt into debugging. An off-viewport element **is** reached with a real
-touch — see
-[How an element is reached](#how-an-element-is-reached-and-why-the-response-says-so)
-above.
-
-## Korean / emoji / Unicode text input
-
-`adb shell input text` cannot send Unicode, so `text` picks its path
-automatically — callers never choose it themselves:
-
-- **ASCII-only** input uses the platform's native fast path directly.
-- **Any non-ASCII** input (Korean, emoji, or mixed) is routed through a
-  Unicode IME ([ADBKeyBoard](https://github.com/senzhk/ADBKeyBoard)) via
-  a base64 broadcast on Android, and through the device pasteboard on iOS.
-- On Android the IME switch is **session-scoped, not per-call**: the first
-  non-ASCII `text` call records the device's real original keyboard to disk
-  and switches to ADBKeyBoard; subsequent calls reuse that session instead
-  of switching back and forth. `reset` (or `doctor --clean`) is what
-  restores the original keyboard. The session record survives process
-  exit, because each CLI invocation is a separate process — an earlier
-  in-memory-only version lost the original keyboard between the `text` call
-  and the later `reset`.
-- If keyboard restoration fails during `reset`, the error surfaces with
-  `error.code: "IME_RESTORE_FAILED"` and `error.details.originalImeId` so
-  you can restore it by hand — never a silent failure.
-
-```bash
-$ npx explore-mobile text "안녕하세요 😸"
-{"ok":true,"command":"text","data":{"serial":"emulator-5554"}}
-
-$ npx explore-mobile reset      # restores the original keyboard
-{"ok":true,"command":"reset","data":{"serial":"emulator-5554",...}}
-```
-
-**ADBKeyBoard is not bundled with this package — by design.** ADBKeyBoard
-is licensed GPL-2.0; this package is MIT, so we do not redistribute it.
-Instead it is downloaded from its official GitHub release on first use (a
-pinned tag, never `master`), validated, and cached locally. `text`
-**self-heals**: when a non-ASCII string is sent and ADBKeyBoard is not
-installed, `text` performs that download-and-install itself, so running
-`doctor` first is convenient but not required. A network failure, a 404, or
-an invalid download all fail gracefully with
-`error.code: "APK_DOWNLOAD_FAILED"` and manual-install instructions — and
-the device is left in its pre-call state, with no half-applied IME switch.
-See [`vendor/adbkeyboard/README.md`](vendor/adbkeyboard/README.md) for the
-full license-compliance rationale.
-
-On iOS none of this applies: there is no IME to switch, no APK, and no
-session state — see the iOS notes in [Status](#status).
-
-## Multi-device
-
-Every device-facing command accepts `--device <serial>`:
-
-```bash
-npx explore-mobile devices
-npx explore-mobile --device emulator-5554 tap 100 200   # explicit target
-```
-
-Per-device state (the tracked original IME, temporary resources) is
-isolated by serial, so driving two devices concurrently doesn't cross
-contaminate either device's input-method state.
-
-## Status
-
-Android (SPEC-ANDROID-001, all 8 milestones plus the 0.2.0, 0.3.0, and
-0.4.0 amendments), the iOS Simulator backend (SPEC-IOS-001), the iOS web
-content path (SPEC-WEBVIEW-001), and gesture primitives
-(SPEC-GESTURE-001, including its 0.4.0, 0.5.0, 0.6.0, 0.7.0, 0.8.0, and
-0.9.0 amendments) are implemented, with 702 unit/mock tests green.
-
-**iOS: verified against a real simulator** (2026-07-26, iPhone 17 Pro /
-iOS 26.0, fb-idb 1.1.7). A full Safari journey — `doctor` → `devices` →
-`launch` → `dump` → selector `tap` → `text` → `key enter` →
-`screenshot` → in-page navigation — ran end to end. The three idb
-behaviors that had been confirmed only against documented examples were
-all checked, and **all three turned out to be wrong** and are now fixed:
-`list-targets --json` emits JSONL rather than a JSON array, the
-emulator discriminator field is `type` (not `target_type`), and
-`screenshot` requires a `dest_path` positional. A fourth defect surfaced
-in the same run: `idb --version` does not exist in fb-idb 1.1.7, so the
-presence probe reported "not installed" and the registry skipped the
-entire iOS backend.
-
-Known iOS limitations found during that run:
-
-- `idb ui text` cannot type non-ASCII (its keycode table covers only
-  printable ASCII plus newline). Korean and emoji go through the device
-  pasteboard instead — handled automatically by `text`.
-- The ASCII path follows the simulator's **active keyboard layout**: with
-  a Korean layout selected, `text "naver"` silently lands as `ㅜㅁㅍㄷㄱ`.
-  idb exposes no way to read or set the input mode.
-- `dump` sees native UI only. With a web page loaded, it returns the
-  browser chrome alone — web content is not in the accessibility tree.
-  This is what
-  [`--web`](#web-content-on-the-ios-simulator) (SPEC-WEBVIEW-001) now
-  addresses.
-
-**iOS web path: verified against the same simulator** (2026-07-27). On
-naver.com: `dump --web` returned 333 visible elements out of 508 matched
-(175 were zero-size and dropped); a selector tap navigated to
-`shopping.naver.com` and was confirmed by screenshot; an element below
-the fold fell back to an in-page click and navigated (SPEC-WEBVIEW-001-era
-behavior; SPEC-GESTURE-001 below later reaches it with a real touch
-instead); and
-`text "네이버 웹뷰" --web "#query"` was confirmed by reading the field's
-value back. `IWDP_NOT_INSTALLED` and `NO_WEB_PAGE` were both reproduced
-on the real device, and no proxy leaked when a command failed.
-
-The protocol turned out **not** to be the Chrome DevTools Protocol, as
-the roadmap had assumed: bare `Runtime.evaluate` / `DOM.getDocument` /
-`Page.enable` are all rejected with `'<domain>' domain was not found`.
-It is the WebKit Inspector Protocol multiplexed through
-`Target.sendMessageToTarget`, and a thrown value is signalled by
-`wasThrown` rather than CDP's `exceptionDetails` — a CDP-shaped reader
-reports a thrown error as success. This was found by a throwaway spike
-before the SPEC was written, not during implementation.
-
-One web-path criterion is **not** device-verified: rejecting `--web`
-against an Android device (`UNSUPPORTED_ON_PLATFORM`) is covered by unit
-tests only, because no Android device was connected during the run.
-
-**Gesture primitives verified against the same simulator** (2026-07-27,
-same session as the SPEC-WEBVIEW-001 e2e run): `swipe` moved the screen,
-with `--duration 500` confirmed to run in well under a second rather than
-500 seconds — the ms→seconds conversion holds end-to-end; `scroll down`
-then `scroll up` moved a feed down and then back to its starting point,
-confirming both the derived screen size and the "down means the finger
-moves up" direction semantics; and the off-viewport `tap --web` case
-above (`method: "native-scrolled"`) is from this same verification run.
-
-**Gesture primitives verified against a real Android device** (2026-07-28,
-Samsung SM-S938N / Galaxy S25 Ultra, Android 16, 1440×3120, 600 dpi,
-wireless ADB). An earlier release note here claimed `adb` itself was not
-installed on the development machine; that was wrong — `adb` was
-installed, just not on `PATH` (`command -v adb` tests reachability, not
-presence). Once found and put on `PATH`, both `adb shell input swipe`'s
-syntax and its millisecond duration argument (§C.1-⑥ of the SPEC) were
-confirmed against the real device, and `scroll` moved the screen in all
-four directions, with the response's `minValidRatio` fed back
-successfully 3 out of 3 times per direction. This also promotes
-AC-GEST-006 (Android real-device swipe) from PARTIAL to PASS.
-
-That same session found the gesture-movement threshold shipping as a
-single platform-independent constant (11pt, measured on iOS) was a real,
-shipped defect on Android: it never once moved the connected device's
-screen (0 out of 5 vertical trials, 0 out of 6 horizontal) — this
-device's actual touch slop was roughly three times larger. The
-threshold is now derived per platform through a new backend method
-instead of a shared constant (`floor(8dp × density) + 2px` on Android,
-queried live via `wm density`; the same measured 11pt constant on iOS,
-never re-queried) — see
-[`scroll`](#scroll-updownleftright-amount-ratio) above for the full
-mechanism and the `minValidRatioBasis` field this introduced.
-
-The same session also corrected a claim this SPEC's own reasoning had
-made: a swipe shorter than the movement threshold was assumed to most
-likely do nothing. It does not — Android interprets it as a tap and
-activates whatever sits under the starting point (observed: repeated
-short swipes on a Settings row opened a device-pairing bottom sheet).
-This makes the `AMOUNT_TOO_SMALL` rejection *more* necessary, not less:
-it exists to prevent an unintended tap, not merely a wasted call.
-
-All of the above is verified on this one device at this one density;
-other Android densities, manufacturers, and OS versions remain
-unmeasured, though the derivation rule (`8dp` is Android's own
-documented default) is expected to generalize. Real-device verification
-of every other Android command — `tap`/`text`/`key`/`stop`/`doctor`/
-`reset` — is still outstanding; this session specifically confirmed
-`devices`, `screenshot`, `dump`, `launch`, `swipe`, and `scroll`.
-
-**A 0.4.0 amendment fixed four `ok:true`-with-no-effect defects**, found
-by an independent post-close review after this SPEC's initial (0.3.0)
-close: a near-zero `--amount` that rounded to no movement (now
-`AMOUNT_TOO_SMALL`, above), a `--duration 0` that was silently accepted
-(now `INVALID_DURATION`, above), and a `tap --web` response that could
-report `-scrolled` when the page had not actually moved (now gated on a
-movement comparison, refined further below). The fourth defect was a
-documentation gap rather than a code defect: `swipe --duration` omission
-being unreliable, not a settled default, is now disclosed directly under
-[`swipe`](#swipe-x1-y1-x2-y2-duration-ms) instead of only here.
-
-**A second independent review found the 0.4.0 fixes themselves
-incomplete**, and a 0.5.0 amendment closed three more defects in the
-same failure family: the 0.4.0 degenerate-swipe guard tested
-`from === to`, a predicate that can only fire when a screen dimension
-is **even** — an odd-length axis has a half-integer centre, so rounding
-always splits the two endpoints apart and the guard never triggered,
-letting through exactly the 1px swipes 0.4.0 had just declared refused.
-`minValidRatio` inherited the same defect, reporting the smallest ratio
-whose endpoints merely *differ* rather than one that actually moves the
-screen. And the 0.4.0 `-scrolled` fix's own `window.scrollY` comparison
-missed a `overflow:auto` **container** scrolling into view, wrongly
-reporting no movement. All three are closed by the measured touch-slop
-floor and the element-rect comparison described above — see
-[CHANGELOG](CHANGELOG.md) for the full account of both rounds.
-
-**A 0.7.0 amendment closed two more issues — the third time this SPEC
-has found and closed a defect in the same "reports success with no
-effect, or with an unintended effect" family.** The first two times were
-an independent post-close audit (0.4.0/0.5.0 above) and a real Android
-device (0.6.0 above); this time it was a follow-up measurement of a
-question the SPEC had knowingly left open. One issue was found by
-further independent review: the element-rect comparison the 0.5.0
-amendment introduced was still sampled *before* an animated scroll had
-actually finished on a page declaring CSS `scroll-behavior: smooth` —
-see [`tap --web`](#how-an-element-is-reached-and-why-the-response-says-so)
-above for the fix and the measured timing that motivated it. The other
-was found by measurement, not review: the SPEC's own text had recorded,
-honestly and explicitly, that it did not yet know whether Android's
-touch-slop floor should be derived from `wm density`'s `Physical` or
-`Override` density line when a device reports both — see
-[`scroll`](#scroll-updownleftright-amount-ratio) above for what a
-follow-up measurement found, what changed, and exactly how far that
-measurement does (and does not) reach. Both fixes made the guard this
-SPEC is built around stricter rather than looser.
-
-**A 0.8.0 amendment is a debt sweep, not a new capability.** A fifth
-independent review found zero must-fix defects and, for the first time
-across five rounds, agreed with every acceptance-criteria claim — but
-its closing observation was that carried-over low-priority findings
-were not being cleared even while a documentation pass was already
-open. This amendment clears that backlog in one pass rather than
-deferring it again: an acceptance-criteria count that had drifted from
-its own implementation is corrected, the Android post-scroll settle
-delay is now recorded in the SPEC body instead of only the run log, and
-the `minValidRatioBasis` wording above is corrected to stop describing
-Android's derivation as a value read off the device rather than what it
-is — a platform rule parameterized by one. No response schema, error
-code, or `basis` token changed.
-
-Final tally across all six amendments: **33 PASS / 1 PARTIAL / 0 FAIL
-across 34 acceptance criteria** in
-`.moai/specs/SPEC-GESTURE-001/progress.md`. The 0.9.0 amendment is not
-narrated above because it added no acceptance criteria and no
-user-facing change — it reverted an internal per-serial threshold cache
-introduced by 0.8.0, leaving every returned value byte-identical, so
-the tally is unchanged by it. AC-GEST-006 (Android
-real-device swipe) is now PASS, promoted by the 0.6.0 amendment above.
-The one remaining PARTIAL is AC-GEST-020 (the `--duration` omission
-reliability measurement — it is intermittent by nature, so a fixed
-pass/fail verdict would misstate it). One further item, AC-GEST-021
-(the `-scrolled` evidence fix from the 0.4.0 amendment), is confirmed
-by unit tests that reproduce the exact defect condition, but its
-real-device reproduction was never completed — recorded as an open gap,
-not claimed as verified.
-
-The `--web` proxy session (SPEC-WEBVIEW-001, unrelated to
-SPEC-GESTURE-001's own changes) was found to still be unstable across
-separate CLI invocations during this verification run — alternating
-between success, `AMBIGUOUS_PAGE`, and `NO_WEB_PAGE` even against a
-single browser tab. Spacing calls a few seconds apart was the only
-reliable mitigation found; a real fix is out of scope here.
-
-Two real-device defects were found finishing this verification round,
-and both were **fixed in the 0.3.0 amendment** — before the fix, both
-returned `{"ok":true}` (or a package-not-found-shaped error) while doing
-nothing useful, and neither was reachable by the unit/mock suite, which
-asserts the shape of the `adb` command line rather than how a device
-resolves or times it. Full evidence as originally found (pre-fix):
-`.moai/reports/android-verification/remaining-commands-android-2026-07-29.md`.
-
-- **`launch <package>` failed for apps whose launcher activity does not
-  declare `android.intent.category.DEFAULT`.** `launchApp` sent
-  `am start -a MAIN -c LAUNCHER -p <package>`, and `-p` is *implicit*
-  intent resolution, which requires `DEFAULT`. A real launcher uses the
-  explicit component instead. Measured: `com.android.settings` succeeded
-  (`isDefault=true`); Samsung Calculator and Clock both failed, though
-  their launcher activities resolve fine and open when tapped by hand —
-  and both start correctly via `am start -n <package>/<activity>`.
-  **Fix (0.3.0)**: `launch` now resolves the launcher component first —
-  judged by the resolve command's stdout, not its exit code, since a
-  resolve failure still exits 0 — and starts that component explicitly,
-  the same way the real launcher does. A resolve failure now returns a
-  dedicated `LAUNCHER_ACTIVITY_NOT_FOUND` code with no start intent
-  sent (the message states both possible causes, since "no launcher
-  activity" and "package not installed" produce identical resolve
-  output), and task-resume semantics — bringing an already-running
-  app's task forward instead of starting a new instance — are
-  unchanged.
-- **Non-ASCII `text` silently input nothing when ADBKeyBoard had to be
-  installed during that same call.** The install and the IME switch both
-  succeeded, the command returned `ok:true`, and no text reached the
-  focused field. The IME *switch* was not the cause — a call that only
-  switches worked. This hit the first Korean/emoji input after `doctor`,
-  and the self-heal path after any `reset` (which uninstalls
-  ADBKeyBoard), so it was not a rare state. A second call then worked.
-  **Fix (0.3.0)**: `text` now waits for the IME to actually *bind*
-  before broadcasting — polling `dumpsys input_method` for
-  `mBoundToMethod=true`, bounded at 5 seconds (a design ceiling, not a
-  measurement). On timeout it now sends nothing and returns `ok:false`
-  with a new `IME_BIND_TIMEOUT` code — **a deliberate response-contract
-  change**: this exact path used to return `ok:true` and no longer
-  does, chosen because a loud failure beats a silent one. The warm path
-  (IME already switched and bound) is unchanged — it still sends
-  immediately with no wait.
-- **A third, quieter defect surfaced while verifying the fix above**:
-  right after a fresh ADBKeyBoard install, `ime enable` could itself
-  fail with `Unknown input method com.android.adbkeyboard/.AdbIME
-  cannot be enabled for user #0`, because the input-method service had
-  not yet registered the just-installed IME — a transient registration
-  race, not a missing-package error (the package had, in fact, just
-  finished installing). Unlike the two defects above, this one was
-  never silent — it already returned `ok:false` with a clear message —
-  so **the fix (0.3.0)** is a narrower bounded retry (up to 4 attempts,
-  500ms apart) scoped to that exact failure shape only; any other `ime
-  enable` failure (permissions, API level, device state) still surfaces
-  immediately with zero retries, and no new error code was added.
-  Measured baseline before the fix: 3 failures in 8 consecutive cold
-  attempts with a focused input field (0 failures in 11 attempts
-  without focus); after the fix, 8 consecutive cold-with-focus attempts
-  all landed their text with zero natural `ime enable` failures —
-  evidence the frequency dropped below a calculable level, not proof
-  the race is gone.
-
-Two more real-device defects were found the same day, this time by
-changing the venue rather than repeating it — driving a Chrome web page
-instead of the Settings app, and running with two connected devices (an
-Android phone plus a booted iOS simulator) instead of one. Both were
-**found and fixed in the 0.4.0 amendment**.
-
-- **`text` erased the very string it had just typed, on a Chrome web
-  page input.** After sending, `text` dismissed the soft keyboard by
-  sending `KEYCODE_ESCAPE` (111); on a native `EditText` this only hides
-  the keyboard, which is why every prior real-device check (all against
-  the Settings app) had passed. On a Chrome page, ESCAPE is delivered to
-  the page itself, where it is the browser's own input-cancel key. A
-  three-step isolation confirmed ESCAPE alone was responsible: text
-  landed and stayed after typing, then vanished back to the placeholder
-  the moment a bare `keyevent 111` was sent with nothing else happening.
-  **Fix (0.4.0)**: `hideKeyboard` now sends `KEYCODE_BACK` (4) instead,
-  which dismisses the keyboard on both a web input and a native
-  `EditText` while preserving the typed text on both surfaces, and only
-  after confirming `dumpsys input_method` reports `mInputShown=true` —
-  a precautionary guard, not one forced by measurement: the one
-  real-device trial with the keyboard already hidden did not observe
-  navigation, but a single trial doesn't establish that it never would.
-  Best-effort semantics are unchanged — a failed visibility probe or a
-  failed hide keycode still leaves `text` at `ok:true`, and
-  `--keep-keyboard` still skips the probe entirely.
-- **An unconnected device counted as connected, so error messages named
-  a false device count and the documented auto-select path could never
-  fire.** `resolveTargetDevice` never read `connectionState`, so
-  counting, auto-selection, and error messages all used the raw device
-  list length. On a Mac with Xcode installed, that list includes every
-  registered-but-not-booted iOS simulator — on the machine this was
-  found on, 23 entries total, only 2 actually connected. The
-  `AMBIGUOUS_DEVICE` message read `23 devices connected`, which was
-  false — the envelope's `ok:false` was honest, but the message's own
-  claim wasn't — and auto-select (see [Commands](#commands) above) was
-  unreachable on any such machine, since the raw list length is never 1.
-  **Fix (0.4.0)**: a device now counts as connected only when its
-  `connectionState` is `"device"`; counting, auto-select, and error
-  `details.availableDevices` all use that filtered set, disconnected
-  entries are summarized only by count, and naming a serial that exists
-  but isn't connected now returns a dedicated `DEVICE_NOT_CONNECTED`
-  before any backend command runs, instead of failing one layer later
-  with a generic backend error. `devices` itself is untouched and still
-  lists every entry, connected or not.
-- 702 tests now pass (up from 690). Unlike the three 0.3.0 defects
-  above, the device-targeting fix is judged entirely by unit tests —
-  `resolveTargetDevice` is a pure function over the device list, with no
-  device interpretation, timing, or screen effect involved — while the
-  keyboard-erasure fix needed real-hardware confirmation on both a
-  Chrome web input (`m.naver.com`) and a native Settings search field
-  (Galaxy S25 Ultra SM-S938N). See
-  `.moai/specs/SPEC-ANDROID-001/progress.md` for the verbatim device
-  evidence.
-
-Still pending before this is production-ready:
-
-- Real-device verification of the remaining Android commands: `tap`,
-  `text` (ASCII and Korean), `key`, `stop`, `doctor`, `reset`, and
-  `launch` are **now verified against a real device**, as are
-  `screenshot` PNG validity and `dump` — joining `swipe`/`scroll` from
-  the previous round. `launch` verification now covers both the
-  DEFAULT-declaring and non-declaring cases from the defect above (fixed
-  in 0.3.0), plus task-resume semantics. Three key aliases (`power`,
-  `volume_up`, `volume_down`) were deliberately not exercised — turning
-  off the screen or changing the volume is a poor trade for the
-  coverage — and multi-device isolation still needs two physically
-  connected devices. `adb` itself turned out to be installed on the
-  build machine, just not on `PATH`, so it is no longer the blocker it
-  was previously recorded as.
-- ~~Verifying the runtime ADBKeyBoard download end-to-end against a real
-  device~~ — **done.** With the local cache moved aside, `doctor`
-  downloaded the APK from its pinned tag
-  (`.../ADBKeyBoard/raw/v2.4-dev/ADBKeyboard.apk`, `cached:false`),
-  installed it, and enabled the IME; the re-downloaded file is
-  SHA-256-identical to the previously cached one.
-- A published npm package (`npx explore-mobile` will work once this
-  ships to the registry — today it only runs from a local checkout).
-
-## Roadmap
-
-| SPEC | Title | Status |
-|---|---|---|
-| SPEC-ANDROID-001 | Android/adb device-control primitives + environment bootstrap | Completed — core primitives verified on a real Android device; 0.3.0 and 0.4.0 together found and fixed 5 real-device defects (see [Status](#status)). 3 key aliases, multi-device dual-connect, and npm publish remain open |
-| SPEC-IOS-001 | iOS Simulator backend (`idb`) — common schema + registry extension | Completed, verified on a real simulator |
-| SPEC-WEBVIEW-001 | iOS Simulator web content — DOM recognition + interaction (`ios-webkit-debug-proxy`) | Completed, verified on a real simulator |
-| SPEC-GESTURE-001 | `swipe`/`scroll` gesture primitives + off-viewport web element reach | Completed — verified on a real iOS simulator and a real Android device (one device/density each) |
-| SPEC-04 | Prompt-driven exploration loop + multi-device scenario orchestration | Committed |
-| SPEC-05 | Codex skill wrapper + broader packaging | Committed |
-| — | Android WebView (CDP over `adb forward`) and iOS **physical-device** webviews | Committed — separate transports, separate SPECs |
-
-The common element schema and the device-backend interface were
-designed so the iOS backend could plug in without a redesign of the CLI
-or normalization layers — see the field-mapping notes in
-`.moai/specs/SPEC-ANDROID-001/plan.md` §F.9 (original design) and
-`.moai/specs/SPEC-IOS-001/plan.md` (implementation).
-
-## License
-
-[MIT](https://opensource.org/licenses/MIT)
+MIT. ADBKeyBoard(GPL-2.0)는 동봉하지 않고 최초 사용 시 공식 릴리스에서
+내려받는다. 근거는 [`vendor/adbkeyboard/README.md`](vendor/adbkeyboard/README.md).
