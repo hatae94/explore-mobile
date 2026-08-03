@@ -2,7 +2,7 @@
 id: SPEC-VISION-002
 title: "WDA_RESPONSE_LOST 안내 문구 정정 — 읽기 호출에서 두 문장이 모두 거짓이다"
 version: "0.2.0"
-status: in-progress
+status: completed
 created: 2026-08-03
 updated: 2026-08-03
 author: hatae

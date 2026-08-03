@@ -155,7 +155,19 @@ ac: 7/8 PASS · 1 명시적 미검증 (AC-WDAERR-005, D 등급)
 
 ## §E.4 Sync-phase Audit-Ready Signal
 
-(sync-phase 완료 시 작성)
+```
+sync_status: audit-ready
+sync_complete_at: 2026-08-03
+sync_commit_sha: pending-backfill-2026-08-03
+artifacts_updated: CHANGELOG.md, README.md, progress.md (§E.4), spec.md (frontmatter)
+ac: 7/8 PASS · 1 명시적 미검증 (AC-WDAERR-005, D 등급)
+```
+
+### 문서 동기화
+
+- `CHANGELOG.md` **Fixed**: 이 결함 항목 추가
+- `README.md` 「알려진 제약」: 해결된 항목 제거, 로드맵 갱신
+
 
 ---
 
