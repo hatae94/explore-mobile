@@ -815,9 +815,9 @@ export class AdbBackend implements DeviceBackend {
    * The two failure modes stay distinguishable, per `getScreenSize`'s
    * contract in `device-backend.ts`: a non-zero exit throws via
    * `assertSuccess` (surfaced as `BACKEND_COMMAND_FAILED`), while a
-   * successful command whose output does not carry a parseable
-   * `Physical size:` line returns `undefined` (surfaced as
-   * `SCREEN_SIZE_UNKNOWN`).
+   * successful command whose output carries neither a parseable
+   * `Override size:` nor `Physical size:` line returns `undefined`
+   * (surfaced as `SCREEN_SIZE_UNKNOWN`).
    */
   async getScreenSize(serial: string): Promise<ScreenSize | undefined> {
     const result = await this.exec(["-s", serial, "shell", "wm", "size"]);
