@@ -161,7 +161,7 @@ ac: 7/7 PASS (미충족 0건)
 ```
 sync_status: audit-ready
 sync_complete_at: 2026-08-03
-sync_commit_sha: pending-backfill-2026-08-03
+sync_commit_sha: a40d8e2
 artifacts_updated: CHANGELOG.md, README.md, progress.md (§E.4), spec.md (frontmatter)
 ac: 7/7 PASS · 미충족 0건
 ```

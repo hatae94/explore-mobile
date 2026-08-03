@@ -158,7 +158,7 @@ ac: 7/8 PASS · 1 명시적 미검증 (AC-WDAERR-005, D 등급)
 ```
 sync_status: audit-ready
 sync_complete_at: 2026-08-03
-sync_commit_sha: pending-backfill-2026-08-03
+sync_commit_sha: e31a7ca
 artifacts_updated: CHANGELOG.md, README.md, progress.md (§E.4), spec.md (frontmatter)
 ac: 7/8 PASS · 1 명시적 미검증 (AC-WDAERR-005, D 등급)
 ```
