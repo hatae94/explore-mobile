@@ -55,6 +55,56 @@ describe("parseAdbDevicesList", () => {
     ]);
   });
 
+  // SPEC-ANDROID-002: 무선 mDNS 이름이 충돌하면 adb가 " (2)"를 붙여 serial 안에
+  // 공백이 생긴다. 아래 두 픽스처는 2026-08-03 실기기(SM-S938N) `od -c` 관측을
+  // 그대로 옮긴 것이다 — `-l`에는 탭이 없고 공백 1개로만 구분된다.
+  it("keeps a space-containing serial intact and reads the real state (SPEC-ANDROID-002, `-l` form)", () => {
+    const raw = [
+      "List of devices attached",
+      "192.168.219.106:36807  device product:pa3qksx model:SM_S938N device:pa3q transport_id:124",
+      "adb-R3CY106LKVX-xtn5zd (2)._adb-tls-connect._tcp device product:pa3qksx model:SM_S938N device:pa3q transport_id:125",
+    ].join("\n");
+
+    const result = parseAdbDevicesList(raw);
+
+    expect(result).toEqual([
+      {
+        serial: "192.168.219.106:36807",
+        state: "device",
+        model: "SM_S938N",
+        isEmulator: false,
+      },
+      {
+        // 공백을 포함한 채 온전히 보존돼야 한다 — 잘리면 기기가 offline로 오인된다.
+        serial: "adb-R3CY106LKVX-xtn5zd (2)._adb-tls-connect._tcp",
+        state: "device",
+        // 부가 필드의 `device:pa3q`를 상태로 오인하지 않아야 `model:`도 옳게 읽힌다.
+        model: "SM_S938N",
+        isEmulator: false,
+      },
+    ]);
+  });
+
+  it("parses the tab-separated form (`adb devices`, no -l) with the same rule (SPEC-ANDROID-002)", () => {
+    const raw = [
+      "List of devices attached",
+      "192.168.219.106:36807\tdevice",
+      "adb-R3CY106LKVX-xtn5zd (2)._adb-tls-connect._tcp\tdevice",
+    ].join("\n");
+
+    const result = parseAdbDevicesList(raw);
+
+    expect(result).toEqual([
+      { serial: "192.168.219.106:36807", state: "device", model: "", isEmulator: false },
+      {
+        serial: "adb-R3CY106LKVX-xtn5zd (2)._adb-tls-connect._tcp",
+        state: "device",
+        model: "",
+        isEmulator: false,
+      },
+    ]);
+  });
+
   it("never throws on empty or malformed input", () => {
     expect(() => parseAdbDevicesList("")).not.toThrow();
     expect(parseAdbDevicesList("")).toEqual([]);

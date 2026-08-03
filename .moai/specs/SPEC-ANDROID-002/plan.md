@@ -27,44 +27,50 @@ branch: master
 
 ## §B. 마일스톤
 
-### M1 — 탭 우선 분리 + 폴백
+### M1 — 상태 토큰 분리 + 폴백
+
+> 0.2.0 개정: 「탭 우선」 방안은 착수 직전 실측으로 반증됐다(spec.md §A.2).
+> `-l`에는 탭이 없다.
 
 **RED**
 
-1. `device-list-parser.test.ts`에 실기기 `od -c` 관측 그대로의 픽스처를 추가한다:
-   `adb-R3CY106LKVX-xtn5zd (2)._adb-tls-connect._tcp\tdevice`
-   기대: `serial`이 온전히 보존되고 `state === "device"` (AC-SERIAL-001)
-2. 탭 없이 공백만 있는 줄의 폴백 픽스처를 추가한다 (AC-SERIAL-003)
-3. 공백 포함 serial + `-l` 롱포맷 `model:` 픽스처를 추가한다 (AC-SERIAL-004)
-4. `pnpm test`로 **RED 확인** — 1번이 실패해야 한다. 실패하지 않으면 픽스처가
+1. `device-list-parser.test.ts`에 실기기 `adb devices -l` 관측 그대로의 픽스처를
+   추가한다 (**탭 없음, 공백 1개**):
+   `adb-R3CY106LKVX-xtn5zd (2)._adb-tls-connect._tcp device product:pa3qksx model:SM_S938N device:pa3q transport_id:124`
+   기대: serial 온전 보존 + `state === "device"` + `model === "SM_S938N"`
+   (AC-SERIAL-001 / 004 — `device:pa3q`를 상태로 오인하지 않는지 함께 본다)
+2. 탭 구분 형식(`adb devices`) 픽스처를 추가한다 (AC-SERIAL-003)
+3. `pnpm test`로 **RED 확인** — 1번이 실패해야 한다. 실패하지 않으면 픽스처가
    결함을 재현하지 못한 것이므로 픽스처부터 고친다
 
 **GREEN**
 
-5. `device-list-parser.ts:38`의 분리 규칙을 바꾼다. 탭이 있으면 탭 기준, 없으면
-   기존 공백 기준으로 폴백한다 (REQ-SERIAL-001 / 002)
-6. `pnpm test` — 신규 3건 통과 + **기존 6종 무수정 통과** (AC-SERIAL-002)
+4. `device-list-parser.ts:38`의 분리 규칙을 상태 토큰 탐색으로 바꾼다.
+   상태 토큰을 못 찾으면 기존 정규식으로 폴백 (REQ-SERIAL-001 / 002)
+5. `pnpm test` — 신규 통과 + **기존 6종 무수정 통과** (AC-SERIAL-002)
 
 **REFACTOR**
 
-7. `@MX:NOTE`를 갱신한다 — 왜 탭이 실제 구분자인지, 폴백을 왜 남겼는지.
-   근거(실기기 `od -c` 관측)를 주석에 남긴다
-8. `pnpm typecheck` / `pnpm build` (AC-SERIAL-007)
+6. `@MX:NOTE`를 갱신한다 — 왜 탭이 아니라 상태 토큰인지, `-l`에 탭이 없다는
+   실측 근거와 폴백을 남긴 이유를 적는다
+7. `pnpm typecheck` / `pnpm build` (AC-SERIAL-007)
 
-**D 판정 시도**
+**D 판정 (유발 가능 — 0.2.0)**
 
-9. mDNS 이름 충돌 상태를 만들 수 있는지 시도한다. 성공하면 실기기에서 `devices`
-   출력과 명령 1건을 관측해 AC-SERIAL-006을 닫는다
-10. 유발하지 못하면 **「명시적 미검증」으로 기록**하고 닫는다. 유발 절차를
-    progress.md에 남겨 다음 사람이 다시 조사하지 않게 한다
+8. 충돌 기기가 연결된 상태에서 `node dist/cli/bin.js devices`를 재실행해,
+   serial이 온전하고 `connectionState: "device"`인지 확인한다 (AC-SERIAL-006)
+9. 수정 전 출력을 progress.md에 함께 남겨 전후 대조가 되게 한다
 
 ### 위험
 
-- **폴백 분기가 새 표면을 만든다.** 탭/공백 두 경로가 생기므로, 기존 픽스처가
-  폴백 경로로 흘러 들어가는지 확인해야 한다 — 기존 6종이 전부 통과하는 것이
-  그 확인이다
-- **`\s+`를 그냥 `\t+`로 바꾸면 회귀한다.** 탭 없이 공백만 쓰는 adb 출력이
-  존재할 가능성을 관측으로 배제하지 않았다. 폴백은 선택이 아니라 필수다
+- **`device:<value>`를 상태로 오인할 수 있다.** `-l` 부가 필드에 `device:pa3q`가
+  있다. 상태 토큰 매칭은 **단독 토큰**만 잡아야 한다(뒤에 콜론이 오면 제외).
+  AC-SERIAL-004가 이 대조를 담당한다
+- **폴백 분기가 새 표면을 만든다.** 기존 6종이 어느 경로로 흐르든 결과가 같아야
+  한다 — 무수정 통과가 그 확인이다
+- **상태 열거값을 좁게 잡으면 조용히 폴백된다.** 폴백은 기존 동작이라 터지지
+  않고 조용히 예전처럼 잘린다. 열거에 없는 상태가 나오면 그 줄은 개선 없이
+  통과한다는 뜻 — `no permissions`가 그 예이며 범위 밖으로 명시했다
 
 ---
 
