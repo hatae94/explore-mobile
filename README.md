@@ -292,7 +292,7 @@ $ pnpm build       → exit 0
 
 ## 로드맵
 
-- 스킬 래퍼(`.claude/skills/explore-mobile/`)를 현재 명령 표면에 맞추기
+- 기기별 IME 세션 격리 (`SPEC-IMESTATE-001`) — 멀티기기 테스트의 선행 조건
 - 멀티기기 상호작용 테스트
 
 ## 라이선스
