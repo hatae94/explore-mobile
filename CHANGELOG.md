@@ -299,6 +299,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A wireless Android device whose mDNS name collided was reported as
+  `offline` and could not be driven at all** (SPEC-ANDROID-002). When the
+  mDNS name is already taken, `adb` appends ` (2)` — putting a **space
+  inside the serial**. `device-list-parser.ts` split on arbitrary
+  whitespace, so the serial was truncated at that space and its remainder
+  (`(2)._adb-tls-connect._tcp`) was read as the connection state. Not
+  being `device`, the entry became `offline`, and every command against
+  that device was refused with `DEVICE_NOT_CONNECTED`. No fixture with a
+  spaced serial existed — this is squarely outside what a mock can see,
+  and it surfaced only during SPEC-VISION-001's real-device work.
+  The fix does **not** split on a delimiter character at all: the initial
+  plan to "split on the tab" was disproved before implementation, because
+  `adb devices -l` — the form this parser actually consumes — emits no tab
+  and pads with a variable number of spaces (measured: two spaces after a
+  21-character serial, one after a 47-character serial). Instead the
+  parser locates the first **bare connection-state token** and treats
+  everything before it as the serial; a trailing lookahead keeps the
+  long-format `device:pa3q` field from being mistaken for the state. One
+  rule now covers both `adb devices` (tab) and `adb devices -l` (spaces),
+  and lines with no recognized state token fall back to the previous
+  behavior. Verified on the real colliding device: the serial came back
+  intact with state `device`, and a screenshot through that serial
+  returned a 1440×3120 PNG.
+- **`WDA_RESPONSE_LOST` told read-only callers two things that were not
+  true** (SPEC-VISION-002). The retry policy itself was always correct and
+  already distinguished reads from mutations — three attempts when the
+  caller passes `idempotent: true`, one otherwise — but the **message**
+  was hardcoded for the mutating case. A lost `GET /screenshot` therefore
+  reported "the action may have been applied — check with a screenshot"
+  (nothing is applied by a screenshot) and "no automatic retry was
+  performed, to avoid applying it twice" (three retries had just run).
+  Since this CLI is built to be read by an agent, an error message is not
+  decoration — it is the input to the next decision, and a false one sends
+  the caller looking for side effects that never happened. The guidance
+  sentence now branches on whether the call was idempotent and states the
+  actual retry count; the mutating wording is unchanged, because it rests
+  on a real measurement (four of four lost responses whose effect *had*
+  landed). **This entry also corrects the original diagnosis**, which
+  inferred a blanket no-retry policy from the message text without reading
+  the branch.
 - **Android screen size was read from the wrong line when a display
   override was active** (SPEC-VISION-001). `parseScreenSize` read only
   `Physical size:`, but `adb shell wm size` emits a second `Override

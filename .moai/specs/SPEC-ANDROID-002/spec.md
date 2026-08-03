@@ -2,7 +2,7 @@
 id: SPEC-ANDROID-002
 title: "adb serial 공백 파싱 — mDNS 이름 충돌 기기가 offline로 오인되는 결함"
 version: "0.2.0"
-status: in-progress
+status: completed
 created: 2026-08-03
 updated: 2026-08-03
 author: hatae
