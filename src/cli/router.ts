@@ -12,6 +12,7 @@
 import { AdbDoctor } from "../backend/doctor.js";
 import { IdbDoctor } from "../backend/idb-doctor.js";
 import type { DeviceBackend } from "../schema/device-backend.js";
+import { toDeviceSource, type DeviceSource } from "./device-targeting.js";
 import { parseCommandArgs } from "./args.js";
 import { devicesCommand } from "./commands/devices.js";
 import { doctorCommand } from "./commands/doctor.js";
@@ -62,7 +63,7 @@ function errorMessage(err: unknown): string {
  */
 export async function runCli(
   argv: string[],
-  backend: DeviceBackend,
+  backend: DeviceBackend | DeviceSource,
   envServices: EnvServices = { android: new AdbDoctor(), ios: new IdbDoctor() },
 ): Promise<CommandResult> {
   const [commandName, ...rest] = argv;
@@ -85,7 +86,9 @@ export async function runCli(
   }
 
   try {
-    return await handler(args, backend, envServices);
+    // M5(REQ-VISION-005): 맨 `DeviceBackend`든 `BackendRegistry`든 핸들러는
+    // 하나의 `DeviceSource`만 본다 — 열거 지점이 한 곳으로 모인다.
+    return await handler(args, toDeviceSource(backend), envServices);
   } catch (err) {
     // Defense in depth: a handler bug still degrades to graceful JSON,
     // never an uncaught exception / non-JSON stack trace.

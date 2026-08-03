@@ -21,6 +21,7 @@ import { AmbiguousWebPageError, IwdpNotInstalledError } from "../../webview/webk
 import type { WebInspectorClient } from "../../webview/inspector-client.js";
 import type { WebProxySession } from "../../webview/proxy-service.js";
 import { parseCommandArgs } from "../args.js";
+import { toDeviceSource } from "../device-targeting.js";
 import { buildScrollIntoViewExpression, runWebTap, runWebText, type WebRunDeps } from "./web-support.js";
 
 const IOS_DEVICE: DeviceInfo = {
@@ -195,13 +196,13 @@ function harness(
 describe("session lifecycle (was exercised via runWebDump before SPEC-VISION-001 M2)", () => {
   it("emits a single parseable JSON document (AC-WEB-018)", async () => {
     const h = harness();
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
     expect(() => JSON.parse(JSON.stringify(result))).not.toThrow();
   });
 
   it("always releases the proxy and the connection", async () => {
     const h = harness();
-    await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
     expect(h.disposed()).toBe(true);
     expect(h.clientClosed()).toBe(true);
   });
@@ -210,8 +211,8 @@ describe("session lifecycle (was exercised via runWebDump before SPEC-VISION-001
 describe("page selection (0.2.0 amendment, AC-WEB-021..023)", () => {
   it("names the page it acted on in every success response", async () => {
     const h = harness();
-    const tapped = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
-    const typed = await runWebText(parseCommandArgs(["안녕", "--web", "a"]), h.backend, h.deps);
+    const tapped = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
+    const typed = await runWebText(parseCommandArgs(["안녕", "--web", "a"]), toDeviceSource(h.backend), h.deps);
 
     for (const result of [tapped, typed]) {
       expect(result.ok).toBe(true);
@@ -231,7 +232,7 @@ describe("page selection (0.2.0 amendment, AC-WEB-021..023)", () => {
       { index: 1, title: "클립", url: "https://clip.naver.com/" },
     ];
     const h = harness({ proxyError: new AmbiguousWebPageError("2 debuggable pages are open", pages) });
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -242,21 +243,21 @@ describe("page selection (0.2.0 amendment, AC-WEB-021..023)", () => {
   it("passes --page through to the proxy", async () => {
     const seen: { pageIndex?: number }[] = [];
     const h = harness({ onOpenProxy: (opts) => seen.push(opts) });
-    await runWebTap(parseCommandArgs(["--web", "a", "--page", "1"]), h.backend, h.deps);
+    await runWebTap(parseCommandArgs(["--web", "a", "--page", "1"]), toDeviceSource(h.backend), h.deps);
     expect(seen[0]?.pageIndex).toBe(1);
   });
 
   it("omits pageIndex entirely when --page is absent", async () => {
     const seen: { pageIndex?: number }[] = [];
     const h = harness({ onOpenProxy: (opts) => seen.push(opts) });
-    await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
     expect(seen[0]?.pageIndex).toBeUndefined();
   });
 
   it("rejects a non-numeric --page without opening a proxy", async () => {
     const seen: { pageIndex?: number }[] = [];
     const h = harness({ onOpenProxy: (opts) => seen.push(opts) });
-    const result = await runWebTap(parseCommandArgs(["--web", "a", "--page", "abc"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a", "--page", "abc"]), toDeviceSource(h.backend), h.deps);
 
     expect(!result.ok && result.error.code).toBe("INVALID_PAGE");
     expect(seen).toEqual([]);
@@ -266,7 +267,7 @@ describe("page selection (0.2.0 amendment, AC-WEB-021..023)", () => {
 describe("platform guard (REQ-WEB-CLI-003, AC-WEB-019)", () => {
   it("refuses --web against an Android device", async () => {
     const h = harness({ device: ANDROID_DEVICE });
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -275,7 +276,7 @@ describe("platform guard (REQ-WEB-CLI-003, AC-WEB-019)", () => {
 
   it("does not open a proxy for an unsupported platform", async () => {
     const h = harness({ device: ANDROID_DEVICE, proxyError: new Error("must not be reached") });
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
     expect(result.ok).toBe(false);
   });
 });
@@ -283,7 +284,7 @@ describe("platform guard (REQ-WEB-CLI-003, AC-WEB-019)", () => {
 describe("runWebTap", () => {
   it("taps the converted device coordinate natively (AC-WEB-012)", async () => {
     const h = harness();
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(true);
     // rect {20,348,66,48} -> centre (53,372) -> +62 -> (53,434)
@@ -293,7 +294,7 @@ describe("runWebTap", () => {
 
   it("reports the coordinate it used", async () => {
     const h = harness();
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
     expect(result.ok && result.data).toMatchObject({ x: 53, y: 434 });
   });
 
@@ -306,7 +307,7 @@ describe("runWebTap", () => {
     // label gains the `-scrolled` suffix (REQ-GEST-WEB-002) to record that a
     // scroll was attempted. See AC-GEST-014 below for the dedicated M4 test.
     const h = harness({ collected: [rawEl({ rect: { x: 719, y: 142, w: 64, h: 45 } })] });
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(true);
     expect(result.ok && (result.data as { method: string }).method).toBe("js-click-scrolled");
@@ -315,7 +316,7 @@ describe("runWebTap", () => {
 
   it("rejects an unmatched selector without tapping or clicking (AC-WEB-015)", async () => {
     const h = harness({ collected: [] });
-    const result = await runWebTap(parseCommandArgs(["--web", "a.nope"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a.nope"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -326,14 +327,14 @@ describe("runWebTap", () => {
 
   it("treats an all-invisible match set as not found", async () => {
     const h = harness({ collected: [rawEl({ rect: { x: 0, y: 0, w: 0, h: 0 } })] });
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error.code).toBe("ELEMENT_NOT_FOUND");
   });
 
   it("requires a selector", async () => {
     const h = harness();
-    const result = await runWebTap(parseCommandArgs(["--web"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web"]), toDeviceSource(h.backend), h.deps);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.code).toBe("MISSING_SELECTOR");
@@ -348,7 +349,7 @@ describe("runWebTap", () => {
       ],
     });
     // --index 1 selects the second VISIBLE element, which is raw index 2.
-    const result = await runWebTap(parseCommandArgs(["--web", "a", "--index", "1"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a", "--index", "1"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(true);
     const clickExpr = h.evaluated.find((e) => e.includes(".click()")) ?? "";
@@ -357,13 +358,13 @@ describe("runWebTap", () => {
 
   it("rejects an out-of-range index", async () => {
     const h = harness();
-    const result = await runWebTap(parseCommandArgs(["--web", "a", "--index", "5"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a", "--index", "5"]), toDeviceSource(h.backend), h.deps);
     expect(!result.ok && result.error.code).toBe("ELEMENT_NOT_FOUND");
   });
 
   it("refuses to combine --web with coordinates rather than ignoring one of them", async () => {
     const h = harness();
-    const result = await runWebTap(parseCommandArgs(["100", "200", "--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["100", "200", "--web", "a"]), toDeviceSource(h.backend), h.deps);
     expect(!result.ok && result.error.code).toBe("TARGET_CONFLICT");
     expect(h.taps).toEqual([]);
   });
@@ -380,7 +381,7 @@ describe("runWebTap", () => {
 
   it("surfaces a proxy failure with its own code (AC-WEB-003)", async () => {
     const h = harness({ proxyError: new IwdpNotInstalledError("not installed") });
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -394,7 +395,7 @@ describe("runWebTap — off-viewport scroll (SPEC-GESTURE-001 M4, REQ-GEST-WEB-0
       collected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })], // centerY 2020 > innerHeight 714 -> off-viewport
       postScrollCollected: [rawEl({ rect: { x: 20, y: 300, w: 60, h: 40 } })], // centre (50,320) -> +62 -> (50,382)
     });
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(true);
     expect(result.ok && (result.data as { method: string }).method).toBe("native-scrolled");
@@ -404,13 +405,17 @@ describe("runWebTap — off-viewport scroll (SPEC-GESTURE-001 M4, REQ-GEST-WEB-0
 
   it("reports a scrolled-then-tapped response that is not the same as a tapped-directly response (AC-GEST-013)", async () => {
     const direct = harness();
-    const directResult = await runWebTap(parseCommandArgs(["--web", "a"]), direct.backend, direct.deps);
+    const directResult = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(direct.backend), direct.deps);
 
     const scrolled = harness({
       collected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })],
       postScrollCollected: [rawEl({ rect: { x: 20, y: 300, w: 60, h: 40 } })],
     });
-    const scrolledResult = await runWebTap(parseCommandArgs(["--web", "a"]), scrolled.backend, scrolled.deps);
+    const scrolledResult = await runWebTap(
+      parseCommandArgs(["--web", "a"]),
+      toDeviceSource(scrolled.backend),
+      scrolled.deps,
+    );
 
     expect(directResult.ok && (directResult.data as { method: string }).method).toBe("native");
     expect(scrolledResult.ok && (scrolledResult.data as { method: string }).method).toBe("native-scrolled");
@@ -422,7 +427,7 @@ describe("runWebTap — off-viewport scroll (SPEC-GESTURE-001 M4, REQ-GEST-WEB-0
       collected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })],
       postScrollCollected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })], // unchanged -- still off-viewport
     });
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(true);
     expect(result.ok && (result.data as { method: string }).method).toBe("js-click-scrolled");
@@ -434,7 +439,7 @@ describe("runWebTap — off-viewport scroll (SPEC-GESTURE-001 M4, REQ-GEST-WEB-0
       collected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })],
       scrollResult: false,
     });
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(true);
     expect(result.ok && (result.data as { method: string }).method).toBe("js-click");
@@ -452,7 +457,7 @@ describe("runWebTap — off-viewport scroll (SPEC-GESTURE-001 M4, REQ-GEST-WEB-0
       postScrollCollected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })], // unchanged -- the page never moved
       scrollResult: { found: true, moved: false },
     });
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(true);
     expect(result.ok && (result.data as { method: string }).method).toBe("js-click");
@@ -465,7 +470,7 @@ describe("runWebTap — off-viewport scroll (SPEC-GESTURE-001 M4, REQ-GEST-WEB-0
       postScrollCollected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })],
       scrollResult: { found: true, moved: true },
     });
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(true);
     expect(result.ok && (result.data as { method: string }).method).toBe("js-click-scrolled");
@@ -477,7 +482,7 @@ describe("runWebTap — off-viewport scroll (SPEC-GESTURE-001 M4, REQ-GEST-WEB-0
       postScrollCollected: [rawEl({ rect: { x: 20, y: 300, w: 60, h: 40 } })],
       scrollResult: { found: true, moved: false },
     });
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(true);
     expect(result.ok && (result.data as { method: string }).method).toBe("native");
@@ -486,7 +491,7 @@ describe("runWebTap — off-viewport scroll (SPEC-GESTURE-001 M4, REQ-GEST-WEB-0
 
   it("does not attempt a scroll for an element already inside the viewport (regression, B-3)", async () => {
     const h = harness();
-    await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
     expect(h.evaluated.some((e) => e.includes("scrollIntoView"))).toBe(false);
   });
 
@@ -495,7 +500,7 @@ describe("runWebTap — off-viewport scroll (SPEC-GESTURE-001 M4, REQ-GEST-WEB-0
       collected: [rawEl({ rect: { x: 20, y: 2000, w: 60, h: 40 } })],
       postScrollCollected: [rawEl({ rect: { x: 20, y: 300, w: 60, h: 40 } })],
     });
-    const result = await runWebTap(parseCommandArgs(["--web", "a"]), h.backend, h.deps);
+    const result = await runWebTap(parseCommandArgs(["--web", "a"]), toDeviceSource(h.backend), h.deps);
     expect(() => JSON.parse(JSON.stringify(result))).not.toThrow();
   });
 });
@@ -503,7 +508,7 @@ describe("runWebTap — off-viewport scroll (SPEC-GESTURE-001 M4, REQ-GEST-WEB-0
 describe("runWebText", () => {
   it("activates the element, then types (REQ-WEB-ACT-003)", async () => {
     const h = harness({ collected: [rawEl({ tag: "input", placeholder: "검색" })] });
-    const result = await runWebText(parseCommandArgs(["안녕하세요", "--web", "#query"]), h.backend, h.deps);
+    const result = await runWebText(parseCommandArgs(["안녕하세요", "--web", "#query"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(true);
     expect(h.taps).toEqual([{ x: 53, y: 434 }]);
@@ -512,7 +517,7 @@ describe("runWebText", () => {
 
   it("does not type when the selector matched nothing (AC-WEB-015)", async () => {
     const h = harness({ collected: [] });
-    const result = await runWebText(parseCommandArgs(["안녕", "--web", "#nope"]), h.backend, h.deps);
+    const result = await runWebText(parseCommandArgs(["안녕", "--web", "#nope"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error.code).toBe("ELEMENT_NOT_FOUND");
@@ -521,7 +526,7 @@ describe("runWebText", () => {
 
   it("requires the text positional", async () => {
     const h = harness();
-    const result = await runWebText(parseCommandArgs(["--web", "#query"]), h.backend, h.deps);
+    const result = await runWebText(parseCommandArgs(["--web", "#query"]), toDeviceSource(h.backend), h.deps);
     expect(!result.ok && result.error.code).toBe("MISSING_TEXT");
   });
 
@@ -533,7 +538,7 @@ describe("runWebText", () => {
 
   it("releases the session even when the selector fails", async () => {
     const h = harness({ collected: [] });
-    await runWebText(parseCommandArgs(["안녕", "--web", "#nope"]), h.backend, h.deps);
+    await runWebText(parseCommandArgs(["안녕", "--web", "#nope"]), toDeviceSource(h.backend), h.deps);
     expect(h.disposed()).toBe(true);
     expect(h.clientClosed()).toBe(true);
   });
@@ -543,7 +548,7 @@ describe("runWebText", () => {
       collected: [rawEl({ tag: "input", placeholder: "검색", rect: { x: 20, y: 2000, w: 60, h: 40 } })],
       postScrollCollected: [rawEl({ tag: "input", placeholder: "검색", rect: { x: 20, y: 300, w: 60, h: 40 } })],
     });
-    const result = await runWebText(parseCommandArgs(["안녕", "--web", "#query"]), h.backend, h.deps);
+    const result = await runWebText(parseCommandArgs(["안녕", "--web", "#query"]), toDeviceSource(h.backend), h.deps);
 
     expect(result.ok).toBe(true);
     expect(result.ok && (result.data as { method: string }).method).toBe("native-scrolled");

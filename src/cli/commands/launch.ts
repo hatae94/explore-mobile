@@ -6,7 +6,7 @@ import { failure, success } from "../envelope.js";
 import { isValidPackageName } from "../validators.js";
 import { errorMessage, type CommandHandler } from "./types.js";
 
-export const launchCommand: CommandHandler = async (args, backend) => {
+export const launchCommand: CommandHandler = async (args, source) => {
   const packageId = args.positionals[0];
   if (!packageId || !isValidPackageName(packageId)) {
     return failure(
@@ -17,12 +17,12 @@ export const launchCommand: CommandHandler = async (args, backend) => {
     );
   }
 
-  const devices = await backend.listDevices();
-  const target = resolveTargetDevice(devices, args.device);
+  const devices = await source.listAllDevices();
+  const target = resolveTargetDevice(devices, args.device, source);
   if (!target.ok) return failure("launch", target.code, target.message, target.details);
 
   try {
-    await backend.launchApp(target.serial, packageId);
+    await target.backend.launchApp(target.serial, packageId);
   } catch (err) {
     if (err instanceof LauncherActivityNotFoundError) {
       // REQ-APP-001 개정 0.3.0 / AC-ANDROID-028: a distinct code from

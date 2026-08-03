@@ -32,7 +32,7 @@
 import { AdbBackend } from "../../backend/adb-backend.js";
 import type { DeviceBackend } from "../../schema/device-backend.js";
 import { BackendRegistry } from "../../backend/registry.js";
-import { resolveTargetDevice } from "../device-targeting.js";
+import { resolveTargetDevice, type DeviceSource } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import type { ParsedCommandArgs } from "../args.js";
 import type { CommandResult } from "../envelope.js";
@@ -47,36 +47,28 @@ import type { CommandHandler } from "./types.js";
  * when `serial` is owned by a non-Android backend (e.g. `IdbBackend`) or
  * cannot be resolved.
  */
-async function resolveAdbBackend(backend: DeviceBackend, serial: string): Promise<AdbBackend | undefined> {
-  if (backend instanceof AdbBackend) return backend;
-  if (backend instanceof BackendRegistry) {
-    const resolved = await backend.resolveBackend(serial);
-    if (resolved?.backend instanceof AdbBackend) return resolved.backend;
-  }
-  return undefined;
-}
-
 export async function performReset(
   args: ParsedCommandArgs,
-  backend: DeviceBackend,
+  source: DeviceSource,
   envServices: EnvServices,
   commandName: string,
 ): Promise<CommandResult> {
-  const devices = await backend.listDevices();
-  const target = resolveTargetDevice(devices, args.device);
+  const devices = await source.listAllDevices();
+  const target = resolveTargetDevice(devices, args.device, source);
   if (!target.ok) return failure(commandName, target.code, target.message, target.details);
-
-  const resolvedDevice = devices.find((d) => d.serial === target.serial);
 
   // REQ-IOS-DOCTOR-003/004 (SPEC-IOS-001): iOS has no IME/APK state to
   // clean, so its reset is a near-no-op reported by IdbDoctor — the
   // Android-only IME-restore machinery below never runs for this branch.
-  if (resolvedDevice?.platform === "ios") {
+  if (target.device.platform === "ios") {
     const result = await envServices.ios.resetDevice(target.serial);
     return success(commandName, { serial: target.serial, ...result });
   }
 
-  const adbBackend = await resolveAdbBackend(backend, target.serial);
+  // M5(REQ-VISION-005): 소유 백엔드는 해석 단계가 이미 확정했다. 이전에는
+  // 여기서 `BackendRegistry.resolveBackend`를 다시 불러 **세 번째** 열거가
+  // 발생했다(핸들러 1회 + facade 1회 + 이 조회 1회).
+  const adbBackend = target.backend instanceof AdbBackend ? target.backend : undefined;
   const trackedOriginalIme = adbBackend ? await adbBackend.getTrackedOriginalIme(target.serial) : undefined;
 
   const result = await envServices.android.resetDevice(target.serial, trackedOriginalIme);
@@ -93,5 +85,5 @@ export async function performReset(
   return success(commandName, { serial: target.serial, ...result });
 }
 
-export const resetCommand: CommandHandler = (args, backend, envServices) =>
-  performReset(args, backend, envServices, "reset");
+export const resetCommand: CommandHandler = (args, source, envServices) =>
+  performReset(args, source, envServices, "reset");

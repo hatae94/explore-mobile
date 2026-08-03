@@ -21,22 +21,22 @@ import { failure, success } from "../envelope.js";
 import { errorMessage, type CommandHandler } from "./types.js";
 import { runWebText } from "./web-support.js";
 
-export const textCommand: CommandHandler = async (args, backend) => {
+export const textCommand: CommandHandler = async (args, source) => {
   // `--web` routes to the WebKit Inspector path (SPEC-WEBVIEW-001); without
   // it this handler behaves exactly as before (AC-WEB-017).
-  if (args.web !== undefined) return runWebText(args, backend);
+  if (args.web !== undefined) return runWebText(args, source);
 
   const text = args.positionals[0];
   if (text === undefined) {
     return failure("text", "MISSING_TEXT", 'text requires an input string: text "<...>".');
   }
 
-  const devices = await backend.listDevices();
-  const target = resolveTargetDevice(devices, args.device);
+  const devices = await source.listAllDevices();
+  const target = resolveTargetDevice(devices, args.device, source);
   if (!target.ok) return failure("text", target.code, target.message, target.details);
 
   try {
-    await backend.inputText(target.serial, text, { hideKeyboardAfter: !args.keepKeyboard });
+    await target.backend.inputText(target.serial, text, { hideKeyboardAfter: !args.keepKeyboard });
   } catch (err) {
     if (err instanceof ImeRestoreFailedError) {
       // REQ-ERR-001 / AC-ANDROID-015: never fail silently — surface the

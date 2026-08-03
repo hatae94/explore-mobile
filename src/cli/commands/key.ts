@@ -6,7 +6,7 @@ import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { errorMessage, type CommandHandler } from "./types.js";
 
-export const keyCommand: CommandHandler = async (args, backend) => {
+export const keyCommand: CommandHandler = async (args, source) => {
   const alias = args.positionals[0];
   if (!alias || !isKeyAlias(alias)) {
     return failure(
@@ -17,12 +17,12 @@ export const keyCommand: CommandHandler = async (args, backend) => {
     );
   }
 
-  const devices = await backend.listDevices();
-  const target = resolveTargetDevice(devices, args.device);
+  const devices = await source.listAllDevices();
+  const target = resolveTargetDevice(devices, args.device, source);
   if (!target.ok) return failure("key", target.code, target.message, target.details);
 
   try {
-    await backend.sendKeyEvent(target.serial, alias);
+    await target.backend.sendKeyEvent(target.serial, alias);
   } catch (err) {
     if (err instanceof UnsupportedKeyOnIosError) {
       // REQ-IOS-BACKEND-007 / AC-IOS-017 / D7 precedence (spec.md §C.3):

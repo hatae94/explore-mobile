@@ -8,6 +8,17 @@
  * concurrency safety across simultaneous commands) is M7 scope — this
  * function only answers "which serial do we pass to `adb -s`".
  *
+ * **SPEC-VISION-001 M5 (REQ-VISION-005)**: 해석 결과가 serial뿐 아니라
+ * **소유 백엔드까지** 포함한다(design.md §D.2). 호출자는 이미 열거해 둔
+ * 목록을 넘기고, 여기서 소유자가 함께 확정되므로 백엔드 재조회(=두 번째
+ * 열거)가 사라진다.
+ *
+ * **여기로 옮겨 온 안전장치**: serial 충돌 거부. 이전에는 `BackendRegistry`의
+ * `DeviceBackend` facade가 `resolveBackend`에서 `matches.length !== 1`을
+ * 확인해 잡았는데, M5가 그 facade를 제거하므로 검사도 함께 이 단계로
+ * 옮긴다. 옮기지 않았다면 충돌 시 `find`가 첫 항목을 골라 **조용히 잘못된
+ * 백엔드로 라우팅**됐을 것이다.
+ *
  * @MX:NOTE — platform-neutral (REQ-MULTIDEV-001 개정 0.4.0): this module
  * serves BOTH backends (Android/adb, iOS/idb) — do not narrow "connected"
  * handling to the Android path. Every `connectionState !== "device"` entry
@@ -16,11 +27,52 @@
  * actually booted.
  */
 
-import type { DeviceInfo } from "../schema/device-backend.js";
+import type { DeviceBackend, DeviceInfo } from "../schema/device-backend.js";
 import type { CommandErrorInfo } from "./envelope.js";
 
+/**
+ * 해석 단계가 소유 백엔드를 함께 확정하기 위해 필요한 최소 조회 능력
+ * (`BackendRegistry.backendFor`가 이를 만족한다). 이 모듈이 registry 구현에
+ * 직접 의존하지 않도록 인터페이스로만 받는다.
+ *
+ * 구현은 **동기여야 한다** — 여기서 기기를 다시 열거하면 M5가 없앤 중복이
+ * 되살아난다.
+ */
+export interface BackendOwnerLookup {
+  backendFor(device: DeviceInfo): DeviceBackend | undefined;
+}
+
+/**
+ * 명령 핸들러가 기기를 다루기 위해 필요한 최소 능력 — 한 번 열거하고
+ * (`listAllDevices`), 열거된 기기의 소유 백엔드를 찾는다(`backendFor`).
+ * `BackendRegistry`가 이 형태를 그대로 만족한다.
+ */
+export interface DeviceSource extends BackendOwnerLookup {
+  listAllDevices(): Promise<DeviceInfo[]>;
+}
+
+/**
+ * 맨 `DeviceBackend`도 `DeviceSource`로 다룰 수 있게 감싼다.
+ *
+ * registry 없이 단일 백엔드만 쓰는 경로(테스트 대부분과 `AdbBackend` 직접
+ * 사용)가 M5 이후에도 그대로 동작하게 하는 어댑터다. 감싼 소스의 소유
+ * 백엔드는 언제나 자기 자신이므로 추가 열거가 발생하지 않는다.
+ *
+ * 판별은 구조적으로 한다 — `BackendRegistry`를 import하면 registry가
+ * 이 모듈을 참조하게 될 때 순환이 생긴다.
+ */
+export function toDeviceSource(source: DeviceBackend | DeviceSource): DeviceSource {
+  if ("listAllDevices" in source && "backendFor" in source) return source;
+
+  const backend = source as DeviceBackend;
+  return {
+    listAllDevices: () => backend.listDevices(),
+    backendFor: () => backend,
+  };
+}
+
 export type DeviceTargetResolution =
-  | { ok: true; serial: string }
+  | { ok: true; serial: string; device: DeviceInfo; backend: DeviceBackend }
   | ({ ok: false } & CommandErrorInfo);
 
 /**
@@ -35,10 +87,34 @@ function connectedOnly(devices: DeviceInfo[]): DeviceInfo[] {
 }
 
 /**
- * Resolves the target device serial for a device-targeting command.
+ * 확정된 기기의 소유 백엔드를 붙인다. 소유자를 알 수 없으면 실패로
+ * 승격한다 — 아무 백엔드로나 보내지 않는다.
+ *
+ * 오류 코드는 M5 이전과 동일한 `BACKEND_COMMAND_FAILED`를 유지한다. 이전
+ * 구조에서는 facade가 같은 문구로 throw했고 핸들러가 이 코드로 감쌌으므로,
+ * 검출 시점만 앞당기고 사용자가 보는 계약은 바꾸지 않는다.
+ */
+function withOwner(device: DeviceInfo, lookup: BackendOwnerLookup): DeviceTargetResolution {
+  const backend = lookup.backendFor(device);
+  if (!backend) {
+    return {
+      ok: false,
+      code: "BACKEND_COMMAND_FAILED",
+      message: `No backend owns device serial '${device.serial}'.`,
+      details: { serial: device.serial, platform: device.platform },
+    };
+  }
+  return { ok: true, serial: device.serial, device, backend };
+}
+
+/**
+ * Resolves the target device for a device-targeting command.
  *
  * - `--device <serial>` given, absent from the list entirely:
  *   `DEVICE_NOT_FOUND` (acceptance.md §D.1 edge case).
+ * - `--device <serial>` given, matching MORE THAN ONE entry (serial
+ *   collision, design.md §C.3): `BACKEND_COMMAND_FAILED` — 소유자를 임의로
+ *   고르지 않는다. M5 이전 facade의 거부와 같은 코드·문구다.
  * - `--device <serial>` given, present in the list but not connected:
  *   `DEVICE_NOT_CONNECTED` — distinct from both `DEVICE_NOT_FOUND` (absent)
  *   and a late backend failure; no backend command runs for this serial
@@ -57,10 +133,12 @@ function connectedOnly(devices: DeviceInfo[]): DeviceInfo[] {
 export function resolveTargetDevice(
   devices: DeviceInfo[],
   requestedSerial: string | undefined,
+  lookup: BackendOwnerLookup,
 ): DeviceTargetResolution {
   if (requestedSerial !== undefined) {
-    const found = devices.find((d) => d.serial === requestedSerial);
-    if (!found) {
+    const matches = devices.filter((d) => d.serial === requestedSerial);
+
+    if (matches.length === 0) {
       return {
         ok: false,
         code: "DEVICE_NOT_FOUND",
@@ -68,6 +146,17 @@ export function resolveTargetDevice(
         details: { requestedSerial, availableDevices: connectedOnly(devices) },
       };
     }
+
+    if (matches.length > 1) {
+      return {
+        ok: false,
+        code: "BACKEND_COMMAND_FAILED",
+        message: `No backend owns device serial '${requestedSerial}'.`,
+        details: { requestedSerial, collidingEntries: matches.length },
+      };
+    }
+
+    const found = matches[0]!;
     if (found.connectionState !== "device") {
       return {
         ok: false,
@@ -76,7 +165,8 @@ export function resolveTargetDevice(
         details: { requestedSerial, connectionState: found.connectionState },
       };
     }
-    return { ok: true, serial: found.serial };
+
+    return withOwner(found, lookup);
   }
 
   const connected = connectedOnly(devices);
@@ -102,5 +192,5 @@ export function resolveTargetDevice(
     };
   }
 
-  return { ok: true, serial: connected[0]!.serial };
+  return withOwner(connected[0]!, lookup);
 }

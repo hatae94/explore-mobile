@@ -19,10 +19,10 @@ import { parseCoordinate } from "../validators.js";
 import { errorMessage, type CommandHandler } from "./types.js";
 import { runWebTap } from "./web-support.js";
 
-export const tapCommand: CommandHandler = async (args, backend) => {
+export const tapCommand: CommandHandler = async (args, source) => {
   // `--web` routes to the WebKit Inspector path (SPEC-WEBVIEW-001); without
   // it this handler behaves exactly as before (AC-WEB-017).
-  if (args.web !== undefined) return runWebTap(args, backend);
+  if (args.web !== undefined) return runWebTap(args, source);
 
   const [xRaw, yRaw] = args.positionals;
 
@@ -38,12 +38,12 @@ export const tapCommand: CommandHandler = async (args, backend) => {
     );
   }
 
-  const devices = await backend.listDevices();
-  const target = resolveTargetDevice(devices, args.device);
+  const devices = await source.listAllDevices();
+  const target = resolveTargetDevice(devices, args.device, source);
   if (!target.ok) return failure("tap", target.code, target.message, target.details);
 
   try {
-    await backend.tap(target.serial, x, y);
+    await target.backend.tap(target.serial, x, y);
   } catch (err) {
     return failure("tap", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }

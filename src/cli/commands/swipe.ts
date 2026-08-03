@@ -22,12 +22,12 @@
  */
 
 import type { DeviceBackend, SwipeOptions } from "../../schema/device-backend.js";
-import { resolveTargetDevice } from "../device-targeting.js";
+import { resolveTargetDevice, type DeviceSource } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { MAX_DURATION_MS, parseCoordinate, parseDurationMs } from "../validators.js";
 import { errorMessage, type CommandHandler } from "./types.js";
 
-export const swipeCommand: CommandHandler = async (args, backend: DeviceBackend) => {
+export const swipeCommand: CommandHandler = async (args, source: DeviceSource) => {
   const [x1Raw, y1Raw, x2Raw, y2Raw, ...rest] = args.positionals;
 
   if (rest.length > 0 || x1Raw === undefined || y1Raw === undefined || x2Raw === undefined || y2Raw === undefined) {
@@ -70,8 +70,8 @@ export const swipeCommand: CommandHandler = async (args, backend: DeviceBackend)
     }
   }
 
-  const devices = await backend.listDevices();
-  const target = resolveTargetDevice(devices, args.device);
+  const devices = await source.listAllDevices();
+  const target = resolveTargetDevice(devices, args.device, source);
   if (!target.ok) return failure("swipe", target.code, target.message, target.details);
 
   const from = { x: x1, y: y1 };
@@ -79,7 +79,7 @@ export const swipeCommand: CommandHandler = async (args, backend: DeviceBackend)
   const options: SwipeOptions | undefined = durationMs !== undefined ? { durationMs } : undefined;
 
   try {
-    await backend.swipe(target.serial, from, to, options);
+    await target.backend.swipe(target.serial, from, to, options);
   } catch (err) {
     return failure("swipe", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }

@@ -14,14 +14,14 @@ import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { errorMessage, type CommandHandler } from "./types.js";
 
-export const screenshotCommand: CommandHandler = async (args, backend) => {
-  const devices = await backend.listDevices();
-  const target = resolveTargetDevice(devices, args.device);
+export const screenshotCommand: CommandHandler = async (args, source) => {
+  const devices = await source.listAllDevices();
+  const target = resolveTargetDevice(devices, args.device, source);
   if (!target.ok) return failure("screenshot", target.code, target.message, target.details);
 
   let bytes: Uint8Array;
   try {
-    bytes = await backend.screenshot(target.serial);
+    bytes = await target.backend.screenshot(target.serial);
   } catch (err) {
     return failure("screenshot", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }

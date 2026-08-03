@@ -3,8 +3,8 @@
 import { failure, success } from "../envelope.js";
 import type { CommandHandler } from "./types.js";
 
-export const devicesCommand: CommandHandler = async (args, backend) => {
-  const all = await backend.listDevices();
+export const devicesCommand: CommandHandler = async (args, source) => {
+  const all = await source.listAllDevices();
 
   if (args.device === undefined) {
     return success("devices", all);

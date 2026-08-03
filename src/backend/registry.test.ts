@@ -151,94 +151,34 @@ describe("BackendRegistry", () => {
     });
   });
 
-  describe("DeviceBackend facade (registry-as-backend adapter, design.md §C.4)", () => {
-    it("listDevices() delegates to listAllDevices()", async () => {
+  describe("backendFor — 열거 없이 소유 백엔드를 돌려준다 (SPEC-VISION-001 M5)", () => {
+    // M5 이전에는 `DeviceBackend` facade가 per-serial 메서드마다 소유
+    // 백엔드를 다시 찾았고, 그 재조회가 명령당 두 번째 기기 열거를 만들었다.
+    // facade는 제거됐고, 같은 라우팅 보장이 아래 동기 조회로 옮겨 왔다.
+    it("기기의 platform에 맞는 백엔드를 돌려준다", () => {
       const android = registeredBackend("android", [androidDevice()]);
       const ios = registeredBackend("ios", [iosDevice()]);
-      const registry: DeviceBackend = new BackendRegistry([android, ios]);
+      const registry = new BackendRegistry([android, ios]);
 
-      await expect(registry.listDevices()).resolves.toEqual([androidDevice(), iosDevice()]);
+      expect(registry.backendFor(androidDevice())).toBe(android.backend);
+      expect(registry.backendFor(iosDevice())).toBe(ios.backend);
     });
 
-    // SPEC-VISION-001 M2 (REQ-VISION-002): the UI-tree facade method and its
-    // routing test were removed with the interface method. The per-serial
-    // routing rule they demonstrated is unchanged and still witnessed by the
-    // sibling `tap`/`screenshot`/`swipe` routing tests below.
-    it("tap(serial, x, y) routes to the owning backend with the exact arguments", async () => {
+    it("조회 자체가 기기를 열거하지 않는다 — 이것이 M5가 없앤 중복의 발생원이었다", () => {
       const android = registeredBackend("android", [androidDevice()]);
-      const ios = registeredBackend("ios", [iosDevice()]);
-      const registry: DeviceBackend = new BackendRegistry([android, ios]);
+      const registry = new BackendRegistry([android]);
 
-      await registry.tap(androidDevice().serial, 10, 20);
+      registry.backendFor(androidDevice());
 
-      expect(android.backend.tap).toHaveBeenCalledWith(androidDevice().serial, 10, 20);
-      expect(ios.backend.tap).not.toHaveBeenCalled();
+      expect(android.backend.listDevices).not.toHaveBeenCalled();
+      expect(android.isAvailable).not.toHaveBeenCalled();
     });
 
-    it("screenshot/inputText/sendKeyEvent/launchApp/stopApp all route to the owning backend", async () => {
+    it("해당 platform의 백엔드가 등록돼 있지 않으면 undefined — 임의 대체를 하지 않는다", () => {
       const android = registeredBackend("android", [androidDevice()]);
-      const ios = registeredBackend("ios", [iosDevice()]);
-      const registry: DeviceBackend = new BackendRegistry([android, ios]);
-      const serial = iosDevice().serial;
+      const registry = new BackendRegistry([android]);
 
-      await registry.screenshot(serial);
-      await registry.inputText(serial, "hello", { hideKeyboardAfter: true });
-      await registry.sendKeyEvent(serial, "enter");
-      await registry.launchApp(serial, "com.apple.Preferences");
-      await registry.stopApp(serial, "com.apple.Preferences");
-
-      expect(ios.backend.screenshot).toHaveBeenCalledWith(serial);
-      expect(ios.backend.inputText).toHaveBeenCalledWith(serial, "hello", { hideKeyboardAfter: true });
-      expect(ios.backend.sendKeyEvent).toHaveBeenCalledWith(serial, "enter");
-      expect(ios.backend.launchApp).toHaveBeenCalledWith(serial, "com.apple.Preferences");
-      expect(ios.backend.stopApp).toHaveBeenCalledWith(serial, "com.apple.Preferences");
-    });
-
-    it("throws (surfacing as BACKEND_COMMAND_FAILED at the CLI layer) when no backend owns the serial", async () => {
-      const android = registeredBackend("android", [androidDevice()]);
-      const registry: DeviceBackend = new BackendRegistry([android]);
-
-      await expect(registry.tap("does-not-exist", 1, 1)).rejects.toThrow(/No backend owns/);
-    });
-
-    it("swipe(serial, from, to, options) routes to the owning backend with the exact arguments (SPEC-GESTURE-001 M1, resolve-then-delegate like stopApp)", async () => {
-      const android = registeredBackend("android", [androidDevice()]);
-      const ios = registeredBackend("ios", [iosDevice()]);
-      const registry: DeviceBackend = new BackendRegistry([android, ios]);
-
-      await registry.swipe(iosDevice().serial, { x: 100, y: 800 }, { x: 100, y: 200 }, { durationMs: 500 });
-
-      expect(ios.backend.swipe).toHaveBeenCalledWith(
-        iosDevice().serial,
-        { x: 100, y: 800 },
-        { x: 100, y: 200 },
-        { durationMs: 500 },
-      );
-      expect(android.backend.swipe).not.toHaveBeenCalled();
-    });
-
-    it("getMinEffectiveSwipeThreshold(serial) routes to the owning backend (SPEC-GESTURE-001 M8, resolve-then-delegate like swipe/stopApp)", async () => {
-      const android = registeredBackend("android", [androidDevice()]);
-      const ios = registeredBackend("ios", [iosDevice()]);
-      const registry: DeviceBackend = new BackendRegistry([android, ios]);
-
-      const threshold = await registry.getMinEffectiveSwipeThreshold(iosDevice().serial);
-
-      expect(ios.backend.getMinEffectiveSwipeThreshold).toHaveBeenCalledWith(iosDevice().serial);
-      expect(android.backend.getMinEffectiveSwipeThreshold).not.toHaveBeenCalled();
-      expect(threshold).toEqual({ minEffectiveSwipePx: 11, basis: "measured-constant" });
-    });
-
-    it("getScreenSize(serial) routes to the owning backend (SPEC-VISION-001 M1, resolve-then-delegate like getMinEffectiveSwipeThreshold/swipe)", async () => {
-      const android = registeredBackend("android", [androidDevice()]);
-      const ios = registeredBackend("ios", [iosDevice()]);
-      const registry: DeviceBackend = new BackendRegistry([android, ios]);
-
-      const size = await registry.getScreenSize(iosDevice().serial);
-
-      expect(ios.backend.getScreenSize).toHaveBeenCalledWith(iosDevice().serial);
-      expect(android.backend.getScreenSize).not.toHaveBeenCalled();
-      expect(size).toEqual({ width: 1080, height: 1920 });
+      expect(registry.backendFor(iosDevice())).toBeUndefined();
     });
   });
 });

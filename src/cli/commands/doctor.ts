@@ -30,9 +30,9 @@ import { success } from "../envelope.js";
 import { performReset } from "./reset.js";
 import type { CommandHandler } from "./types.js";
 
-export const doctorCommand: CommandHandler = async (args, backend, envServices) => {
+export const doctorCommand: CommandHandler = async (args, source, envServices) => {
   if (args.clean) {
-    return performReset(args, backend, envServices, "doctor");
+    return performReset(args, source, envServices, "doctor");
   }
 
   const adb = await envServices.android.checkAdbInstalled();
@@ -57,8 +57,8 @@ export const doctorCommand: CommandHandler = async (args, backend, envServices) 
     });
   }
 
-  const devices = await backend.listDevices();
-  const target = resolveTargetDevice(devices, args.device);
+  const devices = await source.listAllDevices();
+  const target = resolveTargetDevice(devices, args.device, source);
 
   if (!target.ok) {
     return success("doctor", {

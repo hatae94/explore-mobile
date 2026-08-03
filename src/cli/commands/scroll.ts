@@ -24,7 +24,7 @@
  */
 
 import type { DeviceBackend, ScreenSize, SwipeThreshold } from "../../schema/device-backend.js";
-import { resolveTargetDevice } from "../device-targeting.js";
+import { resolveTargetDevice, type DeviceSource } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { parseRatio } from "../validators.js";
 import {
@@ -68,7 +68,7 @@ function isScrollDirection(value: string | undefined): value is ScrollDirection 
   return value !== undefined && DIRECTIONS.has(value);
 }
 
-export const scrollCommand: CommandHandler = async (args, backend: DeviceBackend) => {
+export const scrollCommand: CommandHandler = async (args, source: DeviceSource) => {
   const [directionRaw, ...rest] = args.positionals;
 
   if (rest.length > 0 || !isScrollDirection(directionRaw)) {
@@ -94,8 +94,8 @@ export const scrollCommand: CommandHandler = async (args, backend: DeviceBackend
     ratio = parsed;
   }
 
-  const devices = await backend.listDevices();
-  const target = resolveTargetDevice(devices, args.device);
+  const devices = await source.listAllDevices();
+  const target = resolveTargetDevice(devices, args.device, source);
   if (!target.ok) return failure("scroll", target.code, target.message, target.details);
 
   // REQ-VISION-001 (SPEC-VISION-001 M1): 화면 크기는 백엔드가 공급한다.
@@ -104,7 +104,7 @@ export const scrollCommand: CommandHandler = async (args, backend: DeviceBackend
   // 다르며, 호출자는 재시도가 의미 있는지 구분할 수 있어야 한다.
   let screen: ScreenSize | undefined;
   try {
-    screen = await backend.getScreenSize(target.serial);
+    screen = await target.backend.getScreenSize(target.serial);
   } catch (err) {
     return failure("scroll", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
@@ -127,7 +127,7 @@ export const scrollCommand: CommandHandler = async (args, backend: DeviceBackend
   // 쪽도 상대의 값을 빌리지 않는다(spec.md §C.1-⑰).
   let threshold: SwipeThreshold;
   try {
-    threshold = await backend.getMinEffectiveSwipeThreshold(target.serial);
+    threshold = await target.backend.getMinEffectiveSwipeThreshold(target.serial);
   } catch (err) {
     return failure("scroll", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
@@ -165,7 +165,7 @@ export const scrollCommand: CommandHandler = async (args, backend: DeviceBackend
   }
 
   try {
-    await backend.swipe(target.serial, from, to, { durationMs: SCROLL_SWIPE_DURATION_MS });
+    await target.backend.swipe(target.serial, from, to, { durationMs: SCROLL_SWIPE_DURATION_MS });
   } catch (err) {
     return failure("scroll", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }

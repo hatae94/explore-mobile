@@ -298,7 +298,9 @@ describe("runCli", () => {
           .mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
         getScreenSize: vi.fn().mockResolvedValue({ width: 1179, height: 2556 }),
       };
-      const registry: DeviceBackend = new BackendRegistry([
+      // M5(REQ-VISION-005): registry는 더 이상 `DeviceBackend`를 구현하지
+      // 않는다 — `runCli`가 `DeviceSource`로 받아 그대로 라우팅한다.
+      const registry = new BackendRegistry([
         { platform: "ios", backend: idbBackend, isAvailable: async () => true },
       ]);
 

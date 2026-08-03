@@ -38,7 +38,7 @@ import {
 } from "../../webview/proxy-service.js";
 import { AmbiguousWebPageError } from "../../webview/webkit-errors.js";
 import type { ParsedCommandArgs } from "../args.js";
-import { resolveTargetDevice } from "../device-targeting.js";
+import { resolveTargetDevice, type DeviceSource } from "../device-targeting.js";
 import { failure, success, type CommandError, type CommandResult } from "../envelope.js";
 import { parseIndex } from "../validators.js";
 import { errorMessage } from "./types.js";
@@ -63,6 +63,12 @@ export function defaultWebDeps(): WebRunDeps {
 
 interface WebContext {
   serial: string;
+  /**
+   * 대상 해석 단계가 확정한 소유 백엔드(SPEC-VISION-001 M5). 좌표 탭은
+   * 이 백엔드로 직접 나간다 — registry facade를 거치던 이전 경로는 호출마다
+   * 기기를 다시 열거했다.
+   */
+  backend: DeviceBackend;
   client: WebInspectorClient;
   /** Which page this command is acting on — echoed into every success response (REQ-WEB-CLI-004). */
   page: WebPageTarget;
@@ -86,49 +92,52 @@ function webFailure(command: string, err: unknown): CommandError {
   return failure(command, code, errorMessage(err));
 }
 
-type TargetResolution = { ok: true; serial: string } | { ok: false; error: CommandError };
+type TargetResolution =
+  | { ok: true; serial: string; backend: DeviceBackend }
+  | { ok: false; error: CommandError };
 
 /** Resolves the target device and refuses anything that is not iOS (REQ-WEB-CLI-003). */
 async function resolveIosTarget(
   command: string,
   args: ParsedCommandArgs,
-  backend: DeviceBackend,
+  source: DeviceSource,
 ): Promise<TargetResolution> {
   let devices: DeviceInfo[];
   try {
-    devices = await backend.listDevices();
+    devices = await source.listAllDevices();
   } catch (err) {
     return { ok: false, error: failure(command, "BACKEND_COMMAND_FAILED", errorMessage(err)) };
   }
 
-  const target = resolveTargetDevice(devices, args.device);
+  const target = resolveTargetDevice(devices, args.device, source);
   if (!target.ok) return { ok: false, error: failure(command, target.code, target.message, target.details) };
 
-  const device = devices.find((d) => d.serial === target.serial);
-  if (device === undefined || device.platform !== "ios") {
+  // M5: 해석 단계가 확정한 `target.device`를 그대로 쓴다 — 목록을 다시
+  // 훑어 같은 기기를 찾던 `devices.find(...)`가 사라졌다.
+  if (target.device.platform !== "ios") {
     return {
       ok: false,
       error: failure(
         command,
         "UNSUPPORTED_ON_PLATFORM",
         "--web is supported on the iOS simulator only; Android WebView uses a different protocol and is a separate SPEC.",
-        { serial: target.serial, platform: device?.platform ?? null },
+        { serial: target.serial, platform: target.device.platform },
       ),
     };
   }
 
-  return { ok: true, serial: target.serial };
+  return { ok: true, serial: target.serial, backend: target.backend };
 }
 
 /** Opens a proxy + page connection, runs `body`, and always releases both. */
 async function runInWebSession(
   command: string,
   args: ParsedCommandArgs,
-  backend: DeviceBackend,
+  source: DeviceSource,
   deps: WebRunDeps,
   body: (ctx: WebContext) => Promise<CommandResult>,
 ): Promise<CommandResult> {
-  const target = await resolveIosTarget(command, args, backend);
+  const target = await resolveIosTarget(command, args, source);
   if (!target.ok) return target.error;
 
   let pageIndex: number | undefined;
@@ -157,7 +166,7 @@ async function runInWebSession(
   }
 
   try {
-    return await body({ serial: target.serial, client, page: session.page });
+    return await body({ serial: target.serial, backend: target.backend, client, page: session.page });
   } catch (err) {
     return webFailure(command, err);
   } finally {
@@ -409,7 +418,7 @@ function coordinateTargetConflict(command: string, args: ParsedCommandArgs): Com
 /** `tap --web "<CSS>"` — native tap by default, JS click when the coordinate cannot be trusted. */
 export async function runWebTap(
   args: ParsedCommandArgs,
-  backend: DeviceBackend,
+  source: DeviceSource,
   deps: WebRunDeps = defaultWebDeps(),
 ): Promise<CommandResult> {
   const conflict = coordinateTargetConflict("tap", args);
@@ -418,7 +427,7 @@ export async function runWebTap(
   const selector = readSelector("tap", args);
   if (!selector.ok) return selector.error;
 
-  return runInWebSession("tap", args, backend, deps, async (ctx) => {
+  return runInWebSession("tap", args, source, deps, async (ctx) => {
     const entry = await findWebElement(ctx, selector.css, selector.index);
     if (entry === null) {
       return failure("tap", "ELEMENT_NOT_FOUND", NOT_FOUND_MESSAGE, {
@@ -429,11 +438,11 @@ export async function runWebTap(
     const viewport = await resolveViewport(
       ctx.serial,
       ctx.client,
-      (x, y) => backend.tap(ctx.serial, x, y),
+      (x, y) => ctx.backend.tap(ctx.serial, x, y),
       deps.store,
     );
 
-    const activation = await activateElement(ctx, backend, selector.css, entry, selector.index, viewport);
+    const activation = await activateElement(ctx, ctx.backend, selector.css, entry, selector.index, viewport);
     if (activation === null) {
       return failure("tap", "ELEMENT_NOT_FOUND", NOT_FOUND_MESSAGE, {
         selector: { css: selector.css, index: selector.index },
@@ -453,7 +462,7 @@ export async function runWebTap(
 /** `text "<string>" --web "<CSS>"` — activate the element to focus it, then type through the normal input path. */
 export async function runWebText(
   args: ParsedCommandArgs,
-  backend: DeviceBackend,
+  source: DeviceSource,
   deps: WebRunDeps = defaultWebDeps(),
 ): Promise<CommandResult> {
   const text = args.positionals[0];
@@ -464,7 +473,7 @@ export async function runWebText(
   const selector = readSelector("text", args);
   if (!selector.ok) return selector.error;
 
-  return runInWebSession("text", args, backend, deps, async (ctx) => {
+  return runInWebSession("text", args, source, deps, async (ctx) => {
     const entry = await findWebElement(ctx, selector.css, selector.index);
     if (entry === null) {
       return failure("text", "ELEMENT_NOT_FOUND", NOT_FOUND_MESSAGE, {
@@ -475,20 +484,20 @@ export async function runWebText(
     const viewport = await resolveViewport(
       ctx.serial,
       ctx.client,
-      (x, y) => backend.tap(ctx.serial, x, y),
+      (x, y) => ctx.backend.tap(ctx.serial, x, y),
       deps.store,
     );
 
     // Activating focuses the field. A native tap also raises the soft
     // keyboard, which a programmatic `focus()` does not reliably do on iOS.
-    const activation = await activateElement(ctx, backend, selector.css, entry, selector.index, viewport);
+    const activation = await activateElement(ctx, ctx.backend, selector.css, entry, selector.index, viewport);
     if (activation === null) {
       return failure("text", "ELEMENT_NOT_FOUND", NOT_FOUND_MESSAGE, {
         selector: { css: selector.css, index: selector.index },
       });
     }
 
-    await backend.inputText(ctx.serial, text, { hideKeyboardAfter: !args.keepKeyboard });
+    await ctx.backend.inputText(ctx.serial, text, { hideKeyboardAfter: !args.keepKeyboard });
 
     return success("text", {
       serial: ctx.serial,

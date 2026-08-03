@@ -5,7 +5,7 @@ import { failure, success } from "../envelope.js";
 import { isValidPackageName } from "../validators.js";
 import { errorMessage, type CommandHandler } from "./types.js";
 
-export const stopCommand: CommandHandler = async (args, backend) => {
+export const stopCommand: CommandHandler = async (args, source) => {
   const packageId = args.positionals[0];
   if (!packageId || !isValidPackageName(packageId)) {
     return failure(
@@ -16,12 +16,12 @@ export const stopCommand: CommandHandler = async (args, backend) => {
     );
   }
 
-  const devices = await backend.listDevices();
-  const target = resolveTargetDevice(devices, args.device);
+  const devices = await source.listAllDevices();
+  const target = resolveTargetDevice(devices, args.device, source);
   if (!target.ok) return failure("stop", target.code, target.message, target.details);
 
   try {
-    await backend.stopApp(target.serial, packageId);
+    await target.backend.stopApp(target.serial, packageId);
   } catch (err) {
     return failure("stop", "BACKEND_COMMAND_FAILED", errorMessage(err));
   }
