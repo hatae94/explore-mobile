@@ -8,6 +8,7 @@
  * device — the bytes are streamed host-side via `adb exec-out`.
  */
 
+import type { ScreenshotPayload } from "../../schema/command-payloads.js";
 import { writeFile } from "node:fs/promises";
 
 import { resolveTargetDevice } from "../device-targeting.js";
@@ -34,14 +35,14 @@ export const screenshotCommand: CommandHandler = async (args, source) => {
     } catch (err) {
       return failure("screenshot", "WRITE_FAILED", errorMessage(err), { path: args.out });
     }
-    return success("screenshot", {
+    return success<ScreenshotPayload>("screenshot", {
       serial: target.serial,
       savedTo: args.out,
       byteLength: buffer.length,
     });
   }
 
-  return success("screenshot", {
+  return success<ScreenshotPayload>("screenshot", {
     serial: target.serial,
     byteLength: buffer.length,
     pngBase64: buffer.toString("base64"),

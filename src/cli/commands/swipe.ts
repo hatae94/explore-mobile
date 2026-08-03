@@ -23,6 +23,7 @@
  * the `INVALID_COORDINATES`/`INVALID_DURATION` and `INVALID_ARGS` branches).
  */
 
+import type { SwipePayload } from "../../schema/command-payloads.js";
 import type { DeviceBackend, SwipeOptions } from "../../schema/device-backend.js";
 import { resolveTargetDevice, type DeviceSource } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
@@ -86,7 +87,7 @@ export const swipeCommand: CommandHandler = async (args, source: DeviceSource) =
     return backendFailure("swipe", err);
   }
 
-  return success("swipe", {
+  return success<SwipePayload>("swipe", {
     serial: target.serial,
     from,
     to,

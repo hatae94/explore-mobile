@@ -1,5 +1,6 @@
 /** `key <alias>` command (REQ-INPUT-005, REQ-IOS-BACKEND-007). */
 
+import type { KeyPayload } from "../../schema/command-payloads.js";
 import { KEY_ALIASES, isKeyAlias } from "../../schema/key-alias.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
@@ -33,5 +34,5 @@ export const keyCommand: CommandHandler = async (args, source) => {
     return backendFailure("key", err);
   }
 
-  return success("key", { serial: target.serial, key: alias });
+  return success<KeyPayload>("key", { serial: target.serial, key: alias });
 };

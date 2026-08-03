@@ -29,6 +29,7 @@
  * branch (near-no-op) is new.
  */
 
+import type { ResetPayload } from "../../schema/command-payloads.js";
 import { AdbBackend } from "../../backend/adb-backend.js";
 import type { DeviceBackend } from "../../schema/device-backend.js";
 import { BackendRegistry } from "../../backend/registry.js";
@@ -62,7 +63,7 @@ export async function performReset(
   // Android-only IME-restore machinery below never runs for this branch.
   if (target.device.platform === "ios") {
     const result = await envServices.ios.resetDevice(target.serial);
-    return success(commandName, { serial: target.serial, ...result });
+    return success<ResetPayload>(commandName, { serial: target.serial, ...result });
   }
 
   // M5(REQ-VISION-005): 소유 백엔드는 해석 단계가 이미 확정했다. 이전에는
@@ -82,7 +83,7 @@ export async function performReset(
     await adbBackend.clearTrackedOriginalIme(target.serial);
   }
 
-  return success(commandName, { serial: target.serial, ...result });
+  return success<ResetPayload>(commandName, { serial: target.serial, ...result });
 }
 
 export const resetCommand: CommandHandler = (args, source, envServices) =>

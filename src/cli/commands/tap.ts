@@ -18,6 +18,7 @@
  * REQ-WEBRM-003).
  */
 
+import type { TapPayload } from "../../schema/command-payloads.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { parseCoordinate } from "../validators.js";
@@ -48,5 +49,5 @@ export const tapCommand: CommandHandler = async (args, source) => {
     return backendFailure("tap", err);
   }
 
-  return success("tap", { serial: target.serial, x, y });
+  return success<TapPayload>("tap", { serial: target.serial, x, y });
 };

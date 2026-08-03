@@ -7,6 +7,7 @@ import { AdbBackend } from "../backend/adb-backend.js";
 import type { AdbExecResult, AdbExecutor } from "../backend/adb-executor.js";
 import type { ApkAcquirer } from "../backend/apk-downloader.js";
 import { AdbDoctor } from "../backend/doctor.js";
+import { WdaClient, type WdaHttpClient } from "../backend/wda-client.js";
 import { WdaDoctor } from "../backend/wda-doctor.js";
 import { AdbKeyboardInstallFailedError, ImeBindTimeoutError, ImeRestoreFailedError } from "../backend/ime-errors.js";
 import { WdaUnsupportedKeyError } from "../backend/wda-errors.js";
@@ -793,6 +794,97 @@ describe("runCli", () => {
         const data = result.data as { imeReset: boolean };
         expect(data.imeReset).toBe(true);
       }
+    });
+
+    /**
+     * 출력 계약의 **런타임** 보호 (SPEC-CONTRACT-001 REQ-CONTRACT-004).
+     *
+     * `command-payloads.test.ts`의 타입 수준 계약은 `pnpm typecheck`를 돌려야만
+     * 작동한다 — vitest는 타입을 지우고 실행하므로 `pnpm test`만으로는 걸리지
+     * 않는다. 아래 테스트가 그 구멍을 메운다: **실제로 나온 JSON의 키 집합**을
+     * 세므로 타입과 무관하게 걸린다.
+     *
+     * 그리고 타입만으로는 애초에 고정할 수 없는 것이 있다 — `doctor`는 갈래에
+     * 따라 선택 필드를 싣는데, "어느 갈래에서 무엇이 실리는가"는 타입이 아니라
+     * 실행이 정한다. `SPEC-WEBVIEW-002`에서 조용히 사라진 필드가 바로 그런
+     * 선택 필드였다.
+     */
+    describe("출력 키 집합 고정 (SPEC-CONTRACT-001)", () => {
+      it("adb 미설치 갈래 — installAttempt가 실리고 wdaEnvironment는 없다", async () => {
+        const backend = createMockBackend();
+        const adbExec = vi.fn<AdbExecutor>().mockRejectedValueOnce(new Error("spawn adb ENOENT"));
+        const doctor = await makeDoctor({ adbExec, platform: "darwin" });
+
+        const result = await runCli(["doctor"], backend, envServices(doctor));
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(Object.keys(result.data as object).sort()).toEqual(
+            ["adb", "adbKeyboard", "daemon", "devices", "installAttempt"].sort(),
+          );
+        }
+      });
+
+      it("데몬 비정상 갈래 — 항상 실리는 4개만", async () => {
+        const backend = createMockBackend();
+        const adbExec = vi
+          .fn<AdbExecutor>()
+          .mockResolvedValueOnce(adbOk("Android Debug Bridge version 1.0.41"))
+          .mockResolvedValueOnce(adbFail("cannot bind to 127.0.0.1:5037"));
+        const doctor = await makeDoctor({ adbExec });
+
+        const result = await runCli(["doctor"], backend, envServices(doctor));
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(Object.keys(result.data as object).sort()).toEqual(
+            ["adb", "adbKeyboard", "daemon", "devices"].sort(),
+          );
+        }
+      });
+
+      /**
+       * 이 테스트가 이 SPEC의 계기다. iOS 갈래의 `wdaEnvironment` 안에 있던
+       * 세 번째 필드가 사라졌을 때 아무것도 깨지지 않았다. 이제 깨진다.
+       */
+      it("iOS 갈래 — wdaEnvironment가 실리고 그 안은 { devicectl, wda }다", async () => {
+        const androidBackend = createMockBackend([]);
+        const iosBackend = createMockIosBackend();
+        (iosBackend.listDevices as ReturnType<typeof vi.fn>).mockResolvedValue([
+          device({ serial: "00008130-IOS", platform: "ios" }),
+        ]);
+        const registry = new BackendRegistry([
+          { platform: "android", backend: androidBackend, isAvailable: async () => false },
+          { platform: "ios", backend: iosBackend, isAvailable: async () => true },
+        ]);
+        const adbExec = vi.fn<AdbExecutor>().mockRejectedValue(new Error("spawn adb ENOENT"));
+        const doctor = await makeDoctor({ adbExec, platform: "darwin" });
+
+        // WdaDoctor에 가짜 HTTP/프로세스 실행기를 주입한다 — 주입하지 않으면
+        // 실제 WebDriverAgent에 요청을 보내려다 테스트가 멈춘다.
+        const http: WdaHttpClient = async () => ({ status: 200, body: JSON.stringify({ value: { ready: true } }) });
+        const wdaDoctor = new WdaDoctor(
+          vi.fn<ProcessExecutor>().mockResolvedValue({ stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 }),
+          "darwin",
+          {},
+          (serial) => new WdaClient(serial, http, {}, async () => undefined),
+        );
+
+        const result = await runCli(
+          ["doctor", "--device", "00008130-IOS"],
+          registry,
+          envServices(doctor, wdaDoctor),
+        );
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          const data = result.data as { wdaEnvironment: object };
+          expect(Object.keys(data).sort()).toEqual(
+            ["adb", "adbKeyboard", "daemon", "devices", "wdaEnvironment"].sort(),
+          );
+          expect(Object.keys(data.wdaEnvironment).sort()).toEqual(["devicectl", "wda"].sort());
+        }
+      });
     });
   });
 

@@ -297,6 +297,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version; real-device verification of the remaining Android commands
   (`tap`/`text`/`key`/`stop`/`doctor`/`reset`) is still outstanding.
 
+### Added
+
+- **Every command's success payload now has a declared type, and the shape is
+  pinned by tests** (SPEC-CONTRACT-001). `product.md` calls a stable JSON
+  contract the product's identity, but that contract was never written down in
+  code: `success<T>(command, data)` inferred `T` from whatever the handler
+  passed, so a field could disappear and both the compiler and the suite stayed
+  green. That is exactly what happened when SPEC-WEBVIEW-002 dropped
+  `wdaEnvironment.webInspectorProxy` — nothing broke, and the only surviving
+  record was a human-written CHANGELOG line.
+
+  Protection is two layers. `src/schema/command-payloads.ts` declares a payload
+  type per command and every handler names it, so **dropping a field from a
+  handler is a compile error**. `command-payloads.test.ts` then pins each
+  type's key set with a `Record<keyof T, true>` literal — a bidirectional
+  exhaustiveness check borrowed from the existing schema tests — so **editing
+  the type is a compile error too, unless the pin is edited alongside it**. The
+  goal is not to forbid shape changes but to make them deliberate and visible
+  in the diff.
+
+  Both layers were verified by deliberately breaking them, including a replay
+  of the original incident (editing the type and the handler together, which
+  the old setup let through silently). That replay also exposed a limit worth
+  stating: vitest strips types, so the type-level pin only fires under
+  `pnpm typecheck`, not `pnpm test` alone. `doctor` — five return shapes, and
+  the command the incident actually hit — therefore also gets runtime key-set
+  assertions per branch, which hold regardless of typechecking.
+
+  No output changed. Key sets captured from real devices before and after the
+  work are identical, field for field.
+
 ### Removed
 
 - **Dead code from two prior removals is cleared out** (SPEC-CLEAN-001).

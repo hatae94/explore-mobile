@@ -1,5 +1,6 @@
 /** `stop <package>` command (REQ-APP-002). */
 
+import type { AppCommandPayload } from "../../schema/command-payloads.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { isValidPackageName } from "../validators.js";
@@ -26,5 +27,5 @@ export const stopCommand: CommandHandler = async (args, source) => {
     return backendFailure("stop", err);
   }
 
-  return success("stop", { serial: target.serial, package: packageId });
+  return success<AppCommandPayload>("stop", { serial: target.serial, package: packageId });
 };

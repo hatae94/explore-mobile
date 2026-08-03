@@ -28,6 +28,7 @@
  * (design.md §B.3).
  */
 
+import type { DoctorPayload } from "../../schema/command-payloads.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { success } from "../envelope.js";
 import { performReset } from "./reset.js";
@@ -66,7 +67,7 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
       envServices.ios.checkDevicectl(),
       envServices.ios.checkWda(resolvedDevice.serial),
     ]);
-    return success("doctor", {
+    return success<DoctorPayload>("doctor", {
       adb,
       daemon,
       devices,
@@ -79,7 +80,7 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
 
   if (!adb.installed) {
     const installAttempt = await envServices.android.installMissingAdb(args.yes);
-    return success("doctor", {
+    return success<DoctorPayload>("doctor", {
       adb,
       daemon,
       installAttempt,
@@ -89,7 +90,7 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
   }
 
   if (!daemon.healthy) {
-    return success("doctor", {
+    return success<DoctorPayload>("doctor", {
       adb,
       daemon,
       devices,
@@ -98,7 +99,7 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
   }
 
   if (!target.ok) {
-    return success("doctor", {
+    return success<DoctorPayload>("doctor", {
       adb,
       daemon,
       devices,
@@ -108,7 +109,7 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
 
   const adbKeyboard = await envServices.android.ensureAdbKeyboard(target.serial);
 
-  return success("doctor", {
+  return success<DoctorPayload>("doctor", {
     adb,
     daemon,
     devices,

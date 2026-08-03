@@ -15,6 +15,7 @@
  * into the standard JSON envelope.
  */
 
+import type { TextPayload } from "../../schema/command-payloads.js";
 import { AdbKeyboardInstallFailedError, ImeBindTimeoutError, ImeRestoreFailedError } from "../../backend/ime-errors.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
@@ -59,5 +60,5 @@ export const textCommand: CommandHandler = async (args, source) => {
     return backendFailure("text", err);
   }
 
-  return success("text", { serial: target.serial });
+  return success<TextPayload>("text", { serial: target.serial });
 };

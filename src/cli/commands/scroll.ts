@@ -23,6 +23,7 @@
  * `swipe`는 호출되지 않는다.
  */
 
+import type { ScrollPayload } from "../../schema/command-payloads.js";
 import type { DeviceBackend, ScreenSize, SwipeThreshold } from "../../schema/device-backend.js";
 import { resolveTargetDevice, type DeviceSource } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
@@ -172,5 +173,5 @@ export const scrollCommand: CommandHandler = async (args, source: DeviceSource) 
 
   // REQ-GEST-SCROLL-005: 방향과 실제 좌표를 응답에 함께 실어, 호출자가
   // 응답만 보고 방향 의미가 맞는지 즉시 검증할 수 있게 한다(AC-GEST-016).
-  return success("scroll", { serial: target.serial, direction: directionRaw, from, to });
+  return success<ScrollPayload>("scroll", { serial: target.serial, direction: directionRaw, from, to });
 };

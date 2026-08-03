@@ -1,5 +1,6 @@
 /** `launch <package>` command (REQ-APP-001 개정 0.3.0 — 명시적 컴포넌트 시작, M11). */
 
+import type { AppCommandPayload } from "../../schema/command-payloads.js";
 import { LauncherActivityNotFoundError } from "../../backend/launch-errors.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
@@ -35,5 +36,5 @@ export const launchCommand: CommandHandler = async (args, source) => {
     return backendFailure("launch", err);
   }
 
-  return success("launch", { serial: target.serial, package: packageId });
+  return success<AppCommandPayload>("launch", { serial: target.serial, package: packageId });
 };
