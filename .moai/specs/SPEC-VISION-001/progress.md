@@ -1185,7 +1185,7 @@ gates: pnpm test 32 files / 690 passed | 2 expected fail
 ```
 sync_status: audit-ready
 sync_complete_at: 2026-08-03
-sync_commit_sha: pending-backfill-2026-08-03
+sync_commit_sha: 6bcd9aa651f7b9d6e7c32ccb99b70f5e9458b1f5
 artifacts_updated: CHANGELOG.md, README.md, progress.md (§E.3·§E.4), spec.md (frontmatter)
 ```
 
@@ -1256,8 +1256,9 @@ sync-phase에서 정정한 낡은 서술 5곳. 전부 **실행해서** 확인했
 2. **`moai spec close` 자동 경로는 쓰지 않았다.** 이 명령은 `§E.5 Mx-phase`를
    전제조건으로 요구하는데(실행 확인: `precondition not met — missing §E.5`),
    현행 3단계 close에서 §E.5는 폐지된 칸이다. 상태 전환은 손으로 했다.
-3. **`sync_commit_sha`는 이 커밋 다음에 backfill한다.** 커밋은 자기 자신의 SHA를
-   알 수 없다.
+3. **`sync_commit_sha`는 sync 커밋 다음 커밋에서 backfill했다.** 커밋은 자기
+   자신의 SHA를 알 수 없다 — 위 값 `6bcd9aa`는 sync 커밋의 SHA이고, 이 값을
+   적어 넣은 것은 그 뒤의 backfill 커밋이다.
 
 ### 잔여 위험
 
