@@ -305,10 +305,32 @@ describe("AdbBackend", () => {
       await expect(backend.getScreenSize("R3CY106LKVX")).rejects.toThrow(/device offline/);
     });
 
-    it("reads the Physical line even when an Override line is present -- pins the plan.md §B M1 parse target; whether a SIZE override governs the tap coordinate system was NOT observed in this SPEC (unlike density, spec.md §C.1-⑱) and is an M6 real-device item recorded in progress.md §G", async () => {
+    it("shrink override (Physical 1440x3120 / Override 1080x2340): reads the Override line, not Physical -- M6 measured that the screenshot follows the Override, so a Physical-only reader puts the capture and the coordinate source 0.75x apart (progress.md §E.2 M6 결함 ②)", async () => {
       const exec = vi
         .fn<AdbExecutor>()
         .mockResolvedValueOnce(ok("Physical size: 1440x3120\nOverride size: 1080x2340\n"));
+
+      const backend = new AdbBackend(exec);
+
+      // M6 실측(SM-S938N): override 1080x2340을 걸면 캡처가 1080x2340으로 나온다.
+      // 비전 루프는 캡처에서 좌표를 읽으므로 화면 크기도 같은 공간이어야 한다.
+      await expect(backend.getScreenSize("R3CY106LKVX")).resolves.toEqual({ width: 1080, height: 2340 });
+    });
+
+    it("enlarge override (Physical 1080x2340 / Override 1440x3120): reads the Override line in the opposite direction too -- the rule is 'effective size', not 'the smaller one'", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("Physical size: 1080x2340\nOverride size: 1440x3120\n"));
+
+      const backend = new AdbBackend(exec);
+
+      await expect(backend.getScreenSize("R3CY106LKVX")).resolves.toEqual({ width: 1440, height: 3120 });
+    });
+
+    it("Override line present but unparseable: falls back to the Physical line rather than returning undefined -- a readable Physical size beats no answer at all", async () => {
+      const exec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(ok("Physical size: 1440x3120\nOverride size: null\n"));
 
       const backend = new AdbBackend(exec);
 

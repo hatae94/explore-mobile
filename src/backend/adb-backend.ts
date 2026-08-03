@@ -194,16 +194,23 @@ function parseEffectiveDensity(output: string): number | undefined {
 }
 
 /**
- * Parses `wm size`'s output into a device-pixel screen size
- * (REQ-VISION-001, SPEC-VISION-001 M1). Returns `undefined` when the target
- * line is absent or unparseable, so the caller surfaces
- * `SCREEN_SIZE_UNKNOWN` rather than guessing a size — the same
- * never-guess policy `parseEffectiveDensity` above follows for the threshold.
+ * Parses `wm size`'s output into the EFFECTIVE device-pixel screen size
+ * (REQ-VISION-001, SPEC-VISION-001 M1). Reads the `Override size:` line when
+ * present; falls back to `Physical size:` otherwise — the same shape
+ * `parseEffectiveDensity` above uses for density. Returns `undefined` when
+ * neither line is present or parseable, so the caller surfaces
+ * `SCREEN_SIZE_UNKNOWN` rather than guessing a size.
  *
- * @MX:NOTE: [AUTO] 형제 파서 `parseEffectiveDensity`는 `Override density:`를 먼저 읽는다 -- Physical만 읽는 것이 override 활성 기기에서 틀린 것으로 실측됐기 때문이다(spec.md §C.1-⑱). 여기서는 `Physical size:`만 읽는데, 이는 plan.md §B M1(item 3 + 위험 항목)이 그 라인을 파싱 대상으로 명시했기 때문이다. 화면 크기 override가 탭 좌표계를 지배하는지는 SPEC-VISION-001에서 관측된 바 없다 -- 이 비대칭은 추론이 아니라 미검증 항목으로 progress.md §G에 기록되며 M6 실기기 검증 대상이다
+ * M1 -> M6: this function used to read ONLY the `Physical size:` line, because
+ * plan.md §B M1 named that line as the parse target and whether a SIZE
+ * override governs the coordinate system had not been observed. M6 observed
+ * it on a real device and the M1 default was the WRONG one.
+ *
+ * @MX:NOTE: [AUTO] M6 실측(2026-08-03, SM-S938N): override 1080x2340을 걸면 `screenshot`이 1080x2340으로 나온다 -- 캡처가 Override를 따른다. 비전 루프는 캡처에서 좌표를 읽으므로 화면 크기도 같은 공간이어야 하며, Physical만 읽으면 둘이 0.75배 어긋난다(`scroll` 계산값이 override 유무와 무관하게 {720,2262}로 동일했고 옳은 값은 {540,1697}이었다). 형제 파서 `parseEffectiveDensity`가 `Override density:`를 먼저 읽는 쪽이 옳았다. 근거·원본 관측: progress.md §E.2 M6 결함 ②, §G
  */
 function parseScreenSize(output: string): ScreenSize | undefined {
-  const match = /Physical size:\s*(\d+)x(\d+)/.exec(output);
+  const match =
+    /Override size:\s*(\d+)x(\d+)/.exec(output) ?? /Physical size:\s*(\d+)x(\d+)/.exec(output);
   if (!match) return undefined;
 
   const width = Number(match[1]);

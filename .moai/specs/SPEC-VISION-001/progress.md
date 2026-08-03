@@ -1074,7 +1074,7 @@ M3가 `stop` 경로에서 세운 계약(재시도 금지 + 상태 재확인으�
 | AC-VISION-035 (사전 캡처 절차) | D | **PASS** — 전 조작 사전 캡처. 단 실패 1건 기록(아래 Gaps 2) |
 | AC-VISION-036 (측정 조건 기록) | D | **PASS** — 위 측정 조건 블록 |
 | AC-VISION-037 (커버리지 대조) | G/U | **PASS** — 2회분 + 분모 변화 기록 |
-| AC-VISION-003 (`wm size` 파싱) | D | **부분 미충족** — override 미설정 기기에서는 정확, override 활성 시 **틀림**(결함 ②) |
+| AC-VISION-003 (`wm size` 파싱) | D | **PASS** — 최초 관측은 부분 미충족(결함 ②)이었고, 같은 마일스톤에서 수정 후 실기기 재측정으로 닫았다(아래 「결함 ② 수정」) |
 | AC-VISION-004 (Android 파싱 실패) | D | **명시적 미검증** — 유발 불가(a4) |
 
 #### 미검증 (Gaps)
@@ -1096,6 +1096,60 @@ M3가 `stop` 경로에서 세운 계약(재시도 금지 + 상태 재확인으�
    여전히 모른다. 약 40분 세션에서는 만나지 않았다.
 6. **htyong.com iOS 경로의 OAuth 진입 화면은 보지 못했다** — 이미 로그인된
    세션이라 `/login`을 거치지 않았다. OAuth 진입은 Android에서만 관측했다.
+
+#### 결함 ② 수정 (사용자 결정 2026-08-03)
+
+M6는 검증 전용 마일스톤이었으나, 결함 ②가 AC-VISION-003을 직접 미충족시키므로
+**같은 마일스톤에서 수정**하기로 사용자가 결정했다(결함 ①은 SPEC-ANDROID-001로
+이관, ③은 미결).
+
+**변경**: `src/backend/adb-backend.ts` `parseScreenSize` — `Physical size:`만 읽던
+것을 형제 파서 `parseEffectiveDensity`와 **같은 구조**로 바꿨다.
+
+```ts
+// 전
+const match = /Physical size:\s*(\d+)x(\d+)/.exec(output);
+// 후
+const match =
+  /Override size:\s*(\d+)x(\d+)/.exec(output) ?? /Physical size:\s*(\d+)x(\d+)/.exec(output);
+```
+
+`@MX:NOTE`도 갱신했다 — 기존 주석은 "override가 좌표계를 지배하는지 관측된 바
+없다 … M6 검증 대상"이라 적혀 있었고, M6가 관측한 지금 그대로 두면 낡은 서술이
+된다.
+
+**테스트 (TDD, 순증 +2)**: 현재 동작을 고정하던 픽스처를 올바른 기대값으로 먼저
+바꿔 RED를 확인한 뒤 고쳤다.
+
+| 픽스처 | 기대 |
+|---|---|
+| shrink override (Physical 1440x3120 / Override 1080x2340) | `{1080, 2340}` |
+| enlarge override (Physical 1080x2340 / Override 1440x3120) | `{1440, 3120}` |
+| Override 라인이 파싱 불가(`Override size: null`) | Physical로 폴백 `{1440, 3120}` |
+
+세 번째 픽스처는 **과잉 수정을 막는 음성 대조**다 — Override 우선이 "Physical을
+버린다"는 뜻이 되면 안 된다.
+
+**실기기 재측정 (AC-VISION-003 D 판정)**:
+
+```
+$ node dist/cli/bin.js scroll down --device 192.168.219.106:36807
+  override 없음 : {720,2262} → {720,858}    ← M1 이후 동작 그대로 (회귀 없음)
+
+$ adb shell wm size 1080x2340
+$ node dist/cli/bin.js scroll down --device 192.168.219.106:36807
+  override 활성 : {540,1697} → {540,644}    ← 기대값과 완전 일치
+  (기대값 계산  : {540,1697} → {540,644})
+
+$ adb shell wm size reset  → Physical size: 1440x3120 (Override 라인 부재)
+```
+
+**게이트**: `pnpm test` 690 passed | 2 expected fail · `pnpm typecheck` exit 0 ·
+`pnpm build` exit 0.
+
+**잔여 위험**: override 상태에서 `tap` 좌표가 실제로 명중하는 장면은 스크린샷으로
+잡지 않았다(위 Gaps 3과 동일). `scroll`의 계산 좌표가 캡처 공간과 일치함을
+확인한 것이며, 그 좌표로 실제 요소를 눌러 보지는 않았다.
 
 ---
 
