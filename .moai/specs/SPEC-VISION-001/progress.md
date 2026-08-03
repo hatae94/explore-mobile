@@ -1212,7 +1212,7 @@ $ moai spec lint   → 0 error(s), 3 warning(s)
 | A1 | **AC-VISION-004** (Android `wm size` 파싱 실패 경로) | **명시적 미검증** | 실기기에서 파싱 실패를 유발할 방법을 찾지 못했다. U는 통과하나 U 단독으로 닫지 않는다. §E.2 M6 「AC 판정」+ Gaps 1 |
 | A2 | **AC-VISION-008의 `--index` 절** | **명시적 미충족** | `--index`는 웹 전용 플래그로 **존치** 결정. 제거하면 SPEC-WEBVIEW-001이 깨진다. `--id` 절은 충족. §G 「`--index` 플래그 제거 여부」 |
 | A3 | **AC-VISION-015** (`WDA_UNREACHABLE`) | **조건 근사** | AC는 "WDA를 실제로 내린 뒤"를 요구하나, 실측은 **틀린 포트(8199) 유도**로 얻었다. 메시지의 복구 절차 포함은 확인. WDA 프로세스 실제 중단 조건은 미시험. §E.2 M3 「실패 경로 실측」 |
-| A4 | **결함 ③** — `WDA_RESPONSE_LOST`가 읽기 전용 호출도 막는다 | **미결** | `GET /screenshot`은 멱등이라 재시도가 안전한데, 조작 호출과 같은 정책이 걸린다. 메시지도 읽기 호출에서는 사실과 다르다. §E.2 M6 「새로 발견한 결함 3건 ③」 |
+| A4 | **결함 ③** — `WdaResponseLostError` 메시지가 읽기 호출에서 거짓이다 | **미결 (진단 정정됨)** | 아래 「결함 ③ 진단 정정」 참조. §E.2 M6 「새로 발견한 결함 3건 ③」의 "일괄 정책" 서술은 **코드 대조에서 반증됐다** |
 
 #### B. 다른 SPEC으로 이월
 
@@ -1220,6 +1220,40 @@ $ moai spec lint   → 0 error(s), 3 warning(s)
 |---|---|---|---|
 | B1 | **결함 ①** — Android serial에 공백이 들어가면 `offline`로 오인 | **SPEC-ANDROID-001** | `device-list-parser.ts:38`이 임의 공백으로 끊는다. 해당 파일은 `6e091be feat(SPEC-ANDROID-001): M4` 소유이며 본 SPEC은 건드린 적이 없다. 본 SPEC의 실기기 검증이 드러낸 **기존** 결함. §E.2 M6 「결함 ①」 |
 | B2 | **CLI 자체 프록시 기동 결함** — CLI가 띄운 프록시로는 `tap --web`이 3/3 실패 | **SPEC-WEBVIEW-001** | `proxy-service.ts:288-296`의 기동 루프가 첫 조회 빈 목록에서 재시도 없이 종료한다(추론 — CLI 자체를 계측하지는 않음). `src/webview/`는 plan.md §A.2 PRESERVE 목록. **AC-VISION-031은 이 때문에 조건부 PASS다.** §E.2 「AC-VISION-031 검증」 |
+
+#### A4 부록 — 결함 ③ 진단 정정 (2026-08-03, sync-phase 코드 대조)
+
+**M6의 진단은 틀렸다.** M6는 오류 **메시지 문구**를 보고 "조작 호출과 읽기 호출을
+구분하지 않는 일괄 정책"이라고 적었으나, 후속 SPEC 착수 전 코드를 읽어 확인한
+결과 **정책은 이미 구분한다**.
+
+```
+src/backend/wda-client.ts:207-208
+  const idempotent = options?.idempotent ?? false;
+  const attempts   = idempotent ? 3 : 1;      ← 읽기 3회, 조작 1회
+
+호출부 (idempotent: true 전달):
+  wda-backend.ts:112   GET /screenshot
+  wda-backend.ts:321   GET /window/size
+  wda-client.ts:272    GET /status
+  wda-doctor.ts:104    GET /status
+```
+
+**실제 결함은 메시지다** (`wda-client.ts:239-243`). `WdaResponseLostError`의 문구가
+멱등 여부와 무관하게 하드코딩돼 있어, 읽기 호출에서 **두 문장 모두 거짓**이 된다.
+
+| 문구 | 읽기 호출에서 사실인가 |
+|---|---|
+| "조작이 적용됐을 수 있으니 스크린샷으로 확인하세요" | **거짓** — 적용될 조작이 없다 |
+| "자동 재시도는 … 수행하지 않았습니다" | **거짓** — 이미 3회 재시도했다 |
+
+**남은 미확인 질문**: M6 실측에서 3회 재시도가 전부 실패한 뒤 **수동 재호출은 즉시
+성공**했다. 재시도 간격(1초 × 3회)이 WDA 회복 시간보다 짧았을 가능성이 있으나,
+이는 **추론이며 계측하지 않았다.**
+
+**교훈**: 메시지 문구에서 정책을 역추론했고 코드를 대조하지 않았다.
+`verification-claim-integrity.md` §1.1 surface 3이 금지하는 형태 —
+텍스트 패턴에서 추론한 결함은 도구/코드가 확인하기 전까지 가설이다.
 
 #### C. AC 라벨 공백 — 증거는 있으나 progress.md에 AC 번호가 적히지 않은 8건
 

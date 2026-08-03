@@ -917,10 +917,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     0 pages at 0.2 s, 1 page from 0.5 s). `src/webview/` belongs to
     SPEC-WEBVIEW-001 and was left untouched; only the reproduction is
     recorded.
-  - `WDA_RESPONSE_LOST` **blocks retries even for read-only calls.**
-    `GET /screenshot` is idempotent, so retrying it cannot "apply twice"
-    — but it is covered by the same blanket policy as mutating calls, and
-    the error message's warning is simply untrue for reads. Unresolved.
+  - **`WdaResponseLostError`'s message is false for read-only calls.**
+    The retry policy itself is correct and *does* distinguish reads from
+    mutations — `wda-client.ts` retries three times when the caller passes
+    `idempotent: true`, and `GET /screenshot`, `GET /window/size`, and
+    `GET /status` all pass it. The **message** does not: it is hardcoded
+    for the mutating case, so a failed screenshot reports "the action may
+    have been applied — check with a screenshot" (nothing was applied) and
+    "no automatic retry was performed, to avoid applying it twice" (three
+    retries *were* performed). Both sentences are untrue for a read.
+    Unresolved. **This corrects the original diagnosis**, which inferred a
+    blanket no-retry policy from the message text without checking the
+    code; see `.moai/specs/SPEC-VISION-001/progress.md` §E.4 "결함 ③
+    진단 정정".
   - **An Android serial containing a space is misread as `offline`**, so
     every command against that device is refused with
     `DEVICE_NOT_CONNECTED`. A wireless mDNS name collision makes `adb`
