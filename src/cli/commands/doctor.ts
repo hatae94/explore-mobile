@@ -41,45 +41,29 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
   }
 
   const adb = await envServices.android.checkAdbInstalled();
-  if (!adb.installed) {
-    const installAttempt = await envServices.android.installMissingAdb(args.yes);
-    return success("doctor", {
-      adb,
-      daemon: { healthy: false, message: "adb is not installed; daemon health cannot be checked." },
-      installAttempt,
-      devices: [],
-      adbKeyboard: { skipped: true, reason: "adb is not installed." },
-    });
-  }
+  const daemon = adb.installed
+    ? await envServices.android.checkDaemonHealth()
+    : { healthy: false, message: "adb is not installed; daemon health cannot be checked." };
 
-  const daemon = await envServices.android.checkDaemonHealth();
-  if (!daemon.healthy) {
-    return success("doctor", {
-      adb,
-      daemon,
-      devices: [],
-      adbKeyboard: { skipped: true, reason: "adb daemon is not healthy; cannot query or target devices." },
-    });
-  }
-
+  // SPEC-VISION-001 M3: 기기 해석을 Android 조기 반환보다 **앞으로** 옮긴다.
+  // 이전에는 adb 미설치/데몬 불량이면 여기 도달하기 전에 반환해, iOS 대상
+  // `doctor`가 iOS 점검을 한 번도 실행하지 못했다(AC-VISION-020 미충족).
+  // adb가 PATH에 없는 것은 iOS 전용 사용자에게 정상 상태이며, 그런 사용자가
+  // iOS 진단을 영영 받지 못하는 것은 이 명령의 목적에 어긋난다.
+  //
+  // AC-ANDROID-018("데몬 불량 시 기기 조회 없이 보고")의 취지는 유지된다:
+  // 그 AC가 막으려던 것은 **죽은 adb를 통한 조회**이고, `BackendRegistry`가
+  // `isAvailable()` false인 백엔드를 건너뛰므로 `AdbBackend.listDevices`는
+  // 여전히 호출되지 않는다. 달라진 것은 iOS 열거가 adb와 무관해졌다는
+  // 사실뿐이다(M3에서 열거 출처가 `devicectl`로 분리됐다).
   const devices = await source.listAllDevices();
   const target = resolveTargetDevice(devices, args.device, source);
-
-  if (!target.ok) {
-    return success("doctor", {
-      adb,
-      daemon,
-      devices,
-      adbKeyboard: { skipped: true, reason: `Cannot install/enable ADBKeyBoard: ${target.message}` },
-    });
-  }
-
-  const resolvedDevice = devices.find((d) => d.serial === target.serial);
+  const resolvedDevice = target.ok ? devices.find((d) => d.serial === target.serial) : undefined;
 
   if (resolvedDevice?.platform === "ios") {
     const [devicectl, wda, webInspectorProxy] = await Promise.all([
       envServices.ios.checkDevicectl(),
-      envServices.ios.checkWda(target.serial),
+      envServices.ios.checkWda(resolvedDevice.serial),
       // SPEC-WEBVIEW-001 REQ-WEB-PROXY-003: `--web`'s prerequisite is
       // reported here so a user learns it is missing from `doctor` rather
       // than from a failed `tap --web`.
@@ -91,6 +75,37 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
       devices,
       adbKeyboard: { skipped: true, reason: "Target device is iOS; see wdaEnvironment instead." },
       wdaEnvironment: { devicectl, wda, webInspectorProxy },
+    });
+  }
+
+  // --- 여기서부터 Android 경로 — 조기 반환의 형태와 순서는 이전과 같다 ---
+
+  if (!adb.installed) {
+    const installAttempt = await envServices.android.installMissingAdb(args.yes);
+    return success("doctor", {
+      adb,
+      daemon,
+      installAttempt,
+      devices,
+      adbKeyboard: { skipped: true, reason: "adb is not installed." },
+    });
+  }
+
+  if (!daemon.healthy) {
+    return success("doctor", {
+      adb,
+      daemon,
+      devices,
+      adbKeyboard: { skipped: true, reason: "adb daemon is not healthy; cannot query or target devices." },
+    });
+  }
+
+  if (!target.ok) {
+    return success("doctor", {
+      adb,
+      daemon,
+      devices,
+      adbKeyboard: { skipped: true, reason: `Cannot install/enable ADBKeyBoard: ${target.message}` },
     });
   }
 

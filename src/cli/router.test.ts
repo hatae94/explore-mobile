@@ -658,10 +658,20 @@ describe("runCli", () => {
         expect(data.installAttempt.manualCommand).toBe("brew install android-platform-tools");
         expect(data.adbKeyboard.skipped).toBe(true);
       }
-      expect(backend.listDevices).not.toHaveBeenCalled();
     });
 
-    it("reports daemon-unhealthy without querying devices (REQ-ERR-004, AC-ANDROID-018)", async () => {
+    /**
+     * REQ-ERR-004 / AC-ANDROID-018 — **SPEC-VISION-001 M3에서 판정 방식이
+     * 바뀌었다**. 원래 이 테스트는 `backend.listDevices`가 호출되지 않는 것을
+     * 셌다. M3가 iOS 열거를 `devicectl`로 분리하면서, adb 데몬이 죽었어도
+     * iOS 기기는 열거할 수 있게 됐고, `doctor`는 iOS 대상 진단을 위해 기기
+     * 해석을 먼저 하도록 순서를 바꿨다.
+     *
+     * AC가 막으려던 것 — **죽은 adb를 통한 조회** — 은 그대로 지켜진다.
+     * 아래 형제 테스트가 registry 경로에서 그것을 판정한다. 이 테스트는
+     * 남은 계약(데몬 불량이 보고서에 그대로 실린다)만 센다.
+     */
+    it("reports daemon-unhealthy in the report body (REQ-ERR-004, AC-ANDROID-018)", async () => {
       const backend = createMockBackend();
       const adbExec = vi
         .fn<AdbExecutor>()
@@ -673,10 +683,35 @@ describe("runCli", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        const data = result.data as { daemon: { healthy: boolean } };
+        const data = result.data as { daemon: { healthy: boolean }; adbKeyboard: { skipped: boolean } };
         expect(data.daemon.healthy).toBe(false);
+        expect(data.adbKeyboard.skipped).toBe(true);
       }
-      expect(backend.listDevices).not.toHaveBeenCalled();
+    });
+
+    /**
+     * AC-ANDROID-018의 취지 보존 판정: adb가 쓸 수 없는 상태면 registry가
+     * 그 백엔드를 건너뛰므로 `AdbBackend.listDevices`는 **호출되지 않는다**.
+     * 열거 자체는 일어나지만 죽은 adb를 통하지 않는다는 것이 요점이다.
+     */
+    it("adb가 비가용이면 registry가 Android 백엔드를 건너뛴다 (AC-ANDROID-018 취지 보존)", async () => {
+      const androidBackend = createMockBackend([]);
+      const iosBackend = createMockIosBackend();
+      const registry = new BackendRegistry([
+        { platform: "android", backend: androidBackend, isAvailable: async () => false },
+        { platform: "ios", backend: iosBackend, isAvailable: async () => true },
+      ]);
+      const adbExec = vi
+        .fn<AdbExecutor>()
+        .mockResolvedValueOnce(adbOk("Android Debug Bridge version 1.0.41"))
+        .mockResolvedValueOnce(adbFail("cannot bind to 127.0.0.1:5037"));
+      const doctor = await makeDoctor({ adbExec });
+
+      const result = await runCli(["doctor"], registry, envServices(doctor));
+
+      expect(result.ok).toBe(true);
+      expect(androidBackend.listDevices).not.toHaveBeenCalled();
+      expect(iosBackend.listDevices).toHaveBeenCalled();
     });
 
     it("installs + enables ADBKeyBoard on the resolved device when adb and daemon are healthy", async () => {

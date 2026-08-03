@@ -679,14 +679,47 @@ $ grep -rn '/ 3\|\* 3\b\|SCALE = 3' src/backend/wda-*.ts   → 0건 (AC-VISION-0
 `WdaCommandFailedError`가 네트워크 오류용 `catch`에 걸려, WDA가 정상 전달한
 4xx가 `WDA_UNREACHABLE`로 둔갑했다. 재던지기로 수정.
 
+#### `doctor` 순서 변경 — 교차 SPEC 계약 변경 (사용자 결정 2026-08-03)
+
+**문제**: `doctor`가 맨 앞에서 adb 설치 여부로 조기 반환해, adb가 PATH에 없는
+이 호스트에서는 iOS 분기에 한 번도 도달하지 못했다 — AC-VISION-020 미충족.
+adb 부재는 iOS 전용 사용자에게 정상 상태이므로, 그 사용자가 iOS 진단을 영영
+받지 못하는 것은 이 명령의 목적에 어긋난다.
+
+**결정**: 기기 해석을 Android 조기 반환보다 앞으로 옮긴다. 조기 반환의 형태와
+순서 자체는 그대로 두고, 위치만 iOS 분기 뒤로 내렸다.
+
+**이것은 SPEC-ANDROID-001의 AC-ANDROID-018 판정 방식을 바꾼다.** 원래 그 AC는
+`backend.listDevices`가 호출되지 않는 것으로 판정했다. 이제 열거는 일어난다.
+**AC가 막으려던 것 — 죽은 adb를 통한 조회 — 은 유지된다**: `BackendRegistry`가
+`isAvailable()` false인 백엔드를 건너뛰므로 `AdbBackend.listDevices`는 여전히
+호출되지 않으며, `router.test.ts`에 그것을 registry 경로에서 판정하는 테스트를
+새로 추가했다. 기존 테스트 2건은 남은 계약(데몬 불량이 보고서에 실린다)만
+세도록 좁혔다.
+
+**반대 정보(함께 기록)**: 이 판단은 "AC 문구"가 아니라 "AC의 취지"를 근거로
+다른 SPEC의 테스트를 고친 것이다. 문구 그대로 읽으면 위반이다. 대안(코드
+무변경 + adb를 PATH에 노출)은 다른 SPEC을 건드리지 않지만, adb 없는 환경의
+iOS 사용자 문제를 남긴다. 사용자가 순서 변경을 택했다.
+
+**판정**: 변경 후 실기기에서 확인했다.
+
+```
+$ node dist/cli/bin.js doctor --device 00008130-001238880C13803A
+  wdaEnvironment 존재: True   ← AC-VISION-020
+  idbEnvironment 부재: True   ← AC-VISION-020
+  wda: {reachable: true, port: 8100, portMapDeclared: false,
+        build: "WDA 16.1.1 / iOS 26.5.2 / iphone"}
+```
+
+`portMapDeclared: false`가 보고서에 그대로 드러난다 — 포트 매핑 미선언 상태를
+사용자가 눈으로 확인할 수 있게 한 설계 의도대로다.
+
 #### 미검증 (Gaps)
 
-1. **AC-VISION-020(`doctor`의 WDA 항목)은 이 환경에서 확인하지 못했다.**
-   `doctor`가 맨 앞에서 adb 설치 여부로 조기 반환하는데 이 호스트에는 adb가
-   PATH에 없다. 코드상 iOS 분기는 존재하며 단위 테스트가 그 분기를 고정하고
-   있으나, **실기기 JSON 출력으로는 확인하지 못했다.** 순서를 바꾸면
-   SPEC-ANDROID-001의 AC-ANDROID-018("데몬 불량 시 기기 조회 없이 보고")을
-   고정한 테스트 2건이 깨지므로, 다른 SPEC의 계약을 임의로 바꾸지 않고 남겼다.
+1. **Android 대상 `doctor`는 이 세션에서 실기기로 재검증하지 못했다.** 순서를
+   바꾼 코드의 Android 경로는 단위 테스트(737 passed)로만 확인했고, 이 호스트에
+   Android 기기도 PATH 상의 adb도 없어 실행 판정을 하지 못했다. M6에서 확인한다.
 2. **`sendKeyEvent`의 `pressButton`(home/volume)·`enter` 경로는 실기기로
    판정하지 않았다.** 단위 테스트는 argv/본문 형태만 고정한다.
 3. **`swipe`는 실기기로 판정하지 않았다.** 문턱값 33px(11pt × 배율 3)이 실제로
