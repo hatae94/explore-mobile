@@ -136,7 +136,7 @@ M6 기록(1440x3120, override 없음): {720,2262} → {720,858}
 run_status: audit-ready
 run_complete_at: 2026-08-03
 milestones: M1 (완료)
-run_commit_sha: pending-backfill-2026-08-03
+run_commit_sha: e725bd9
 gates: pnpm test 25 files / 540 passed | 2 expected fail
        pnpm typecheck exit 0 · pnpm build exit 0 · knip clean
 ac: 12/12 PASS · 미충족 0건
@@ -149,7 +149,7 @@ ac: 12/12 PASS · 미충족 0건
 ```
 sync_status: audit-ready
 sync_complete_at: 2026-08-03
-sync_commit_sha: pending-backfill-2026-08-03
+sync_commit_sha: e725bd9
 artifacts_updated: README.md, CHANGELOG.md, progress.md
 ```
 
