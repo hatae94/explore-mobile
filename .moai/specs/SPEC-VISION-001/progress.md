@@ -379,6 +379,108 @@ PRESERVE 목록에 명시돼 있다. 존재와 재현 조건만 기록한다.
 2. **원래 시나리오의 naver.com** — DOM 안정성을 이유로 example.com으로 대체했다.
 3. **AC-WEB-024(낡은 대상 결함)** — 시험하지 않았다.
 
+### M5 — 기기 열거 1회화
+
+**주장**: 명령 1회당 기기 열거가 1회다. `BackendRegistry`가 `DeviceBackend`를
+구현하지 않게 되면서, 소유 백엔드를 재조회하던 facade 경로가 사라졌다.
+대상 해석 단계가 serial과 소유 백엔드를 함께 확정한다(design.md §D.2).
+
+**계획서 대비 정정 2건** (design.md는 plan-phase 산출물이라 수정하지 않고 여기 기록):
+
+| design.md §D | 실제 |
+|---|---|
+| "137~195행의 **8개** 위임 메서드" | **10개** — `swipe`·`getMinEffectiveSwipeThreshold`·`getScreenSize` 추가분 미반영 |
+| "명령 핸들러(`devices` 제외 **11개**)" | **10개** — M2가 `dump` 명령을 제거해 12→11 명령이 됐다 |
+
+**계획서에 없던 안전장치 이전** (놓쳤다면 회귀였다): 시리얼 충돌 거부.
+이전에는 facade의 `resolveBackend`가 `matches.length !== 1`로 잡았는데,
+`resolveTargetDevice`는 `.find()`라 첫 항목을 골랐다. facade만 제거하고 검사를
+옮기지 않았다면 **충돌 시 조용히 잘못된 백엔드로 라우팅**됐을 것이다.
+`.filter()` 기반으로 옮기고 오류 코드·문구는 그대로 유지했다
+(`BACKEND_COMMAND_FAILED` + "No backend owns device serial 'X'.") — 검출 시점만
+앞당기고 사용자가 보는 계약은 바꾸지 않았다.
+
+**설계 변경 1건** (계획서에 없던 판단): `runCli`의 2번째 인자를
+`BackendRegistry`로 좁히지 않고 `DeviceBackend | DeviceSource` 합타입으로 받아
+내부에서 정규화(`toDeviceSource`)한다. 근거는 실측이다 — `runCli` 호출 129곳 중
+**122곳이 맨 백엔드를 넘긴다**(registry는 7곳). 타입을 좁혔다면 테스트 122곳을
+고쳐야 했고 그 자체가 회귀 위험이다. 열거 1회 성질은 두 형태 모두에서 성립하며,
+`enumeration.test.ts`가 registry 형태로 이를 센다.
+
+**증거** (실제 실행한 명령과 관측한 출력):
+
+```
+$ pnpm typecheck                                    -> exit 0
+$ pnpm build                                        -> exit 0
+$ pnpm test
+   Tests  670 passed | 2 expected fail (672)
+
+$ grep -c 'implements DeviceBackend' src/backend/registry.ts        -> 0   (AC-VISION-021)
+$ grep -cE '^  async (screenshot|tap|inputText|...)\(' src/backend/registry.ts -> 0
+$ grep -rn 'backend\.listDevices()' src/cli/commands/ | wc -l       -> 0
+
+$ npx vitest run src/cli/enumeration.test.ts
+   Tests  15 passed (15)          (AC-VISION-022 · AC-VISION-023)
+```
+
+**RED 확인**: 구현 전 같은 테스트가 `expected 2 to be 1`로 실패했다 — 중복 열거가
+계측으로 고정된 뒤 구현했다.
+
+**실기기 지연 실측 (AC-VISION-024)**:
+
+```
+기기: R3CY106LKVX / SM-S938N. 무대: 계산기, 좌표 (226,2566) = `1` 버튼
+대조 기준: b8aa0e8 (pre-M5) — 별도 worktree 빌드 후 제거. master 미변경
+
+tap  (대상 해석 O — 열거가 2회였던 명령)
+  OLD 1716 / 1717 / 1728 ms      평균 1720
+  NEW  922 /  903 /  922 ms      평균  916      -> 약 804ms 감소 (47%)
+
+devices (대상 해석 X — 원래부터 열거 1회, 대조군)
+  OLD 848ms
+  NEW 838ms                                      -> 변화 없음
+```
+
+**대조군이 인과를 지지한다**: 원래 열거가 1회였던 `devices`는 변하지 않았고
+2회였던 `tap`만 절반이 됐다. 감소가 무관한 요인이 아니라 두 번째 열거 제거에서
+왔음을 뒷받침한다. 감소폭(≈804ms)이 `devices` 1회 비용(≈840ms)과 같은 크기인
+것도 일관된다.
+
+**착지 확인**: 측정에 쓴 탭 6회 후 계산기 표시가 `111,111` — 6회 전부 실제로
+착지했다. 실패한 호출을 잰 것이 아니다. 스크린샷:
+`.moai/reports/android-verification/SPEC-VISION-001-m5-2026-08-03/`
+
+**AC 판정**:
+
+| AC | 등급 | 판정 |
+|---|---|---|
+| AC-VISION-021 | G | **PASS** — `implements DeviceBackend` 0건, facade 메서드 0개 |
+| AC-VISION-022 | U | **PASS** — `tap` 실행 시 열거 1회 (3가지 조건에서) |
+| AC-VISION-023 | U | **PASS** — 기기 대상 명령 10개 전부 + `devices`까지 1회 |
+| AC-VISION-024 | D | **PASS** — tap 1720→916ms, 대조군 무변화 |
+
+**미검증 (Gaps)**:
+
+1. **`AC-VISION-023`의 "11개"는 실제로 10개다** — M2의 `dump` 제거 반영. 현재
+   명령은 11개이고 그중 `devices`를 뺀 10개가 대상 해석을 한다. 10개 전부 셌다.
+2. **`doctor`/`reset`은 환경 서비스를 스텁으로 대체해 셌다** — 실제
+   `AdbDoctor`/`IdbDoctor` 경로에서의 열거 횟수는 재지 않았다.
+3. **커버리지 전후 대조는 하지 않았다** — AC-VISION-037은 M6의 몫이다.
+4. **iOS 백엔드 경로의 열거 1회는 실기기로 확인하지 않았다** — mock으로만 닫혔고,
+   iOS 제어 경로 자체가 M3 미완이다.
+
+**잔여 위험**:
+
+- `toDeviceSource`는 구조적 판별(`"listAllDevices" in source`)을 쓴다. 우연히
+  같은 이름의 멤버를 가진 객체가 넘어오면 오판할 수 있다. 현재 호출자는
+  `BackendRegistry`와 `DeviceBackend` 둘뿐이라 충돌하지 않지만, 세 번째 형태가
+  생기면 판별을 다시 봐야 한다.
+- M5를 M4보다 먼저 수행했으므로(사용자 결정), M4에서 idb 백엔드를 제거할 때
+  registry를 한 번 더 수정하게 된다. design.md §E.1이 예고한 비용이며 정합성
+  문제는 아니다.
+- 시리얼 충돌 거부는 **단위 테스트로만** 닫혔다. 실제로 adb serial과 idb udid가
+  겹치는 기기 쌍을 만들어 보지는 않았다.
+
 ---
 
 ## §E.3 Run-phase Audit-Ready Signal
