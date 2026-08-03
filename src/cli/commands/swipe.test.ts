@@ -287,7 +287,7 @@ describe("swipe", () => {
   });
 
   describe("ordering (B-2/B-3) — --duration is validated before it can ever reach the backend", () => {
-    it("never calls backend.swipe when --duration fails to parse (no NaN passthrough to IdbBackend's ms/1000 conversion)", async () => {
+    it("never calls backend.swipe when --duration fails to parse (no NaN passthrough to any backend)", async () => {
       const backend = createMockBackend();
 
       await runCli(["swipe", "1", "2", "3", "4", "--duration", "abc"], backend);
@@ -300,14 +300,14 @@ describe("swipe", () => {
   describe("degrades a thrown backend error gracefully", () => {
     it("returns BACKEND_COMMAND_FAILED instead of throwing", async () => {
       const backend = createMockBackend();
-      (backend.swipe as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("idb: simulator not booted"));
+      (backend.swipe as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("iOS backend: device not reachable"));
 
       const result = await runCli(["swipe", "1", "2", "3", "4"], backend);
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
-        expect(result.error.message).toMatch(/simulator not booted/);
+        expect(result.error.message).toMatch(/device not reachable/);
       }
     });
   });

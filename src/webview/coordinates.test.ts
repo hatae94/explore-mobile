@@ -4,7 +4,7 @@
  * The fixtures in `MEASURED_CALIBRATION` are NOT invented: each row is a real
  * observation taken on iPhone 17 Pro / iOS 26.0 (UDID D0B3A18C-…) on
  * 2026-07-27, by covering the page with a transparent overlay, sending a
- * native `idb` tap at a known device point, and reading back the `pageY` the
+ * a native tap at a known device point, and reading back the `pageY` the
  * page observed. See progress.md §E.2 M1 for the raw log.
  */
 

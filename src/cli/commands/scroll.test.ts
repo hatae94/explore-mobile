@@ -159,7 +159,7 @@ describe("scroll", () => {
 
     it("backend.swipe에 명시적 durationMs를 실어 보낸다 (실기기 실측 — duration 생략 시 플랫폼 기본값이 너무 빨라 스크롤로 인식되지 않음)", async () => {
       // 실측(2026-07-27, 시뮬레이터 D0B3A18C-...): --duration을 생략한 swipe는
-      // idb 플랫폼 기본 지속시간으로 전송되는데, 이 값이 너무 빨라 Safari가
+      // 플랫폼 기본 지속시간으로 전송되는데, 이 값이 너무 빨라 Safari가
       // 스크롤로 인식하지 못했다(전/후 스크린샷 SSIM 1.000000 — 완전 동일).
       // --duration 500을 명시하자 같은 좌표에서 실제로 스크롤됨을 확인했다
       // (SSIM 0.52). `scroll`은 이 진짜 동작을 보장할 책임이 있으므로
@@ -678,7 +678,7 @@ describe("scroll", () => {
 
     it("swipe가 던지면 BACKEND_COMMAND_FAILED를 반환한다", async () => {
       const backend = createMockBackend();
-      (backend.swipe as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("idb: connection lost"));
+      (backend.swipe as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("iOS backend: connection lost"));
 
       const result = await runCli(["scroll", "down"], backend);
 

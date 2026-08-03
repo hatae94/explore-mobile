@@ -52,8 +52,9 @@ export interface ParsedCommandArgs {
   /**
    * `swipe --duration <ms>` (SPEC-GESTURE-001 M2, REQ-GEST-SWIPE-002/005):
    * gesture duration in milliseconds — the CLI's single contract unit
-   * regardless of backend (`IdbBackend` converts to seconds internally,
-   * spec.md §C.1-⑦). Kept as a raw string here and validated by the handler
+   * regardless of backend; a backend whose tool uses a different unit
+   * converts internally rather than changing this flag's meaning
+   * (spec.md §C.1-⑦). Kept as a raw string here and validated by the handler
    * (`parseDurationMs` in `validators.ts`), matching the `--index`/`--id`
    * pattern.
    */

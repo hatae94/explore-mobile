@@ -6,7 +6,7 @@
  *
  * This is deliberately NOT part of the `DeviceBackend` (M1) interface:
  * `DeviceBackend` models "control an already-connected device" in a way
- * that must generalize to a future iOS/idb backend, whereas `doctor`'s
+ * that must generalize to a future iOS backend, whereas `doctor`'s
  * host-level concerns (is the `adb` binary on PATH, `brew install`, an
  * on-demand APK download) are inherently Android/adb-tooling specific
  * and have no iOS analogue. Keeping it as a separate service avoids

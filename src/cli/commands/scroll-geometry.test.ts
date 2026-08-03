@@ -217,8 +217,8 @@ describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6/M7/M8 �
   // M8/0.6.0 amendment (REQ-GEST-SCROLL-008): 문턱은 더 이상 모듈 상수가
   // 아니라 호출자가 공급하는 인자다. 아래 값들은 이 파일의 기존 픽스처가
   // 가정했던 iOS 실측 문턱(spec.md §C.1-⑭)을 그대로 재현하기 위한 테스트
-  // 전용 상수다 -- 실제 값의 출처(IdbBackend 상수 vs AdbBackend 밀도 파생)는
-  // adb-backend.test.ts / idb-backend.test.ts가 검증한다.
+  // 전용 상수다 -- 실제 값의 출처(iOS 측정 상수 vs AdbBackend 밀도 파생)는
+  // adb-backend.test.ts / wda-backend.test.ts가 검증한다.
   const IOS_THRESHOLD_PX = 11;
   const ANDROID_THRESHOLD_PX = 32; // spec.md §C.1-⑰ 600dpi 권장 문턱
 

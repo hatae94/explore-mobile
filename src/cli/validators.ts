@@ -48,7 +48,7 @@ export function parseIndex(value: string): number | undefined {
  * Upper bound for `swipe --duration`, in milliseconds (REQ-GEST-SWIPE-005,
  * SPEC-GESTURE-001 M7/0.5.0 amendment — C-4). Unlike the per-platform
  * swipe-movement threshold (`DeviceBackend.getMinEffectiveSwipeThreshold` —
- * `AdbBackend`'s density-derived slop, `IdbBackend`'s measured constant,
+ * `AdbBackend`'s density-derived slop, `WdaBackend`'s measured constant,
  * SPEC-GESTURE-001 M8), this is a DESIGN CHOICE, not a measured value —
  * spec.md's reasoning: (i) beyond this a gesture is no longer a swipe but a
  * long-press-drag, which §D already puts out of scope; (ii) the goal is

@@ -225,7 +225,7 @@ describe("resolveTargetDevice", () => {
 // 이 단계로 옮겨 왔다 — 옮기지 않았다면 조용히 잘못된 백엔드로 라우팅됐다.
 describe("resolveTargetDevice — 소유 백엔드 확정 (M5)", () => {
   it("같은 serial이 둘 이상이면 임의로 고르지 않고 거부한다 (design.md §C.3 충돌 정책)", () => {
-    // adb serial과 idb udid가 우연히 겹치는 희귀 상황.
+    // adb serial과 iOS UDID가 우연히 겹치는 희귀 상황.
     const devices = [device("COLLIDING", "android"), device("COLLIDING", "ios")];
 
     const result = resolveTargetDevice(devices, "COLLIDING", lookup);

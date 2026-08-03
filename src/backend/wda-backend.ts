@@ -1,9 +1,9 @@
 /**
- * `WdaBackend` — SPEC-VISION-001 M3의 iOS `DeviceBackend` 구현. `IdbBackend`
- * (프로세스 spawn 기반)를 대신하며, 제어는 WDA HTTP로, 기기 열거와 앱 실행은
- * `xcrun devicectl`로 나뉜다 (design.md §B.1).
+ * `WdaBackend` — SPEC-VISION-001 M3의 iOS `DeviceBackend` 구현. 프로세스
+ * 실행 기반이던 이전 iOS 백엔드를 대신하며, 제어는 WDA HTTP로, 기기 열거와
+ * 앱 실행은 `xcrun devicectl`로 나뉜다 (design.md §B.1).
  *
- * `IdbBackend`와 같은 10개 메서드 표면을 구현하므로 `BackendRegistry`는
+ * 이전 백엔드와 같은 10개 메서드 표면을 구현하므로 `BackendRegistry`는
  * 교체를 알아채지 못한다 — 인터페이스가 얇게 유지된 덕이다(REQ-ARCH-003).
  *
  * ## 좌표계 (REQ-VISION-006, design.md §C)
@@ -133,8 +133,7 @@ export class WdaBackend implements DeviceBackend {
 
   /**
    * W3C actions 스와이프. `options.durationMs`는 CLI의 단일 계약 단위인
-   * 밀리초이며, W3C `pause`도 밀리초이므로 `IdbBackend`가 필요로 했던
-   * ms→초 환산이 여기서는 필요 없다.
+   * 밀리초이며, W3C `pause`도 밀리초이므로 단위 환산이 필요 없다.
    */
   async swipe(serial: string, from: SwipePoint, to: SwipePoint, options?: SwipeOptions): Promise<void> {
     const client = this.makeClient(serial);
@@ -155,11 +154,12 @@ export class WdaBackend implements DeviceBackend {
    * `POST /session/:id/wda/keys` — 한글·이모지가 **그대로** 들어간다
    * (M3 실측: `안녕하세요 반갑습니다 🙂` 입력 후 스크린샷 확인, HTTP 200).
    *
-   * idb가 요구하던 우회가 통째로 사라진다: 클립보드 쓰기도, Command-V 코드도,
-   * ASCII/비ASCII 분기도 없다. `IdbBackend.inputText`의 절반이 그 우회였다.
+   * 이전 iOS 백엔드가 요구하던 우회가 통째로 사라진다: 클립보드 쓰기도,
+   * Command-V 코드도, ASCII/비ASCII 분기도 없다. 그 백엔드의 `inputText`는
+   * 절반이 그 우회였다.
    *
    * `options.hideKeyboardAfter`는 iOS에 대응 동작이 없어 받아들이되 무시한다
-   * (관측 가능한 no-op — `IdbBackend`와 같은 처리).
+   * (관측 가능한 no-op — 이전 백엔드와 같은 처리).
    */
   async inputText(serial: string, text: string, _options?: { hideKeyboardAfter?: boolean }): Promise<void> {
     const client = this.makeClient(serial);
@@ -169,7 +169,7 @@ export class WdaBackend implements DeviceBackend {
 
   /**
    * 키 이벤트. iOS에 대응 동작이 있는 것만 보내고 나머지는 명시적으로 거부한다
-   * (조용한 no-op 금지 — `IdbBackend.sendKeyEvent`와 같은 계약).
+   * (조용한 no-op 금지 — SPEC-IOS-001이 정한 계약을 그대로 승계한다).
    *
    * @MX:TODO — `pressButton`(home/volume) 및 `enter` 경로는 M3에서 실기기로
    * 판정하지 않았다. M6 비전 루프 검증에서 확인한다.
@@ -273,7 +273,7 @@ export class WdaBackend implements DeviceBackend {
   /**
    * 스크린샷 픽셀 기준 화면 크기 (REQ-VISION-001).
    *
-   * M2에서 `IdbBackend.getScreenSize`가 `undefined`로 강등돼 iOS는 화면 크기
+   * M2에서 이전 iOS 백엔드의 `getScreenSize`가 `undefined`로 강등돼 iOS는 화면 크기
    * 출처가 없었다. M3가 그 공백을 닫는다 — `@MX:UPGRADE: M3` 표시의 이행이다.
    *
    * 조회 자체가 실패하면(WDA 미기동 등) 던진다. 답은 왔는데 읽을 수 없을 때만

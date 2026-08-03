@@ -730,6 +730,123 @@ $ node dist/cli/bin.js doctor --device 00008130-001238880C13803A
 
 ---
 
+### M4 — idb 잔재 전면 제거 (2026-08-03)
+
+**주장**: `src` 어디에도 idb 참조가 없다. 전용 파일 10개가 사라졌고, 남아 있던
+유일한 코드 의존(`UnsupportedKeyOnIosError`)은 WDA 쪽으로 이관됐다. idb가
+설치된 환경에서 CLI를 돌려도 idb 프로세스가 생성되지 않는다.
+
+**착수 전 조사 (계획서를 따르기 전에 사용처부터 확인)**: 44개 파일이 grep에
+걸렸으나 실제 코드 의존은 **셋뿐**이었다.
+
+| 대상 | 실제 사용처 | 처리 |
+|---|---|---|
+| `UnsupportedKeyOnIosError` | `key.ts`(생산), `router.test.ts`, `backend-failure.test.ts` | `WdaUnsupportedKeyError`로 이관 — `code`는 `UNSUPPORTED_KEY_ON_IOS` 그대로 |
+| `keycodes-ios.ts` | `idb-backend.ts` 하나뿐 | 삭제 (plan.md의 "WDA 키 매핑으로 대체됐다면" 조건 충족 — WdaBackend는 HID 코드를 쓰지 않는다) |
+| idb-* 6개 | 서로만 참조하는 닫힌 덩어리 | 삭제 |
+
+나머지 41개 파일은 전부 주석/문서 언급이었다. `src/index.ts` 공개 표면에는
+idb가 없어 외부 API 파괴는 없다.
+
+**§G 미확정 1건 해소**: `webkit-errors.ts`의 idb 참조는 **실제 호출이 아니라
+문자열 언급**이었다(오류 클래스 패턴의 출처를 적은 3행 주석).
+
+#### 삭제 (10개 파일, 1,442 LOC)
+
+```
+idb-backend.ts / .test.ts · idb-clipboard.ts / .test.ts · idb-doctor.ts / .test.ts
+idb-errors.ts · idb-executor.ts · idb-target-parse.ts · keycodes-ios.ts
+```
+
+#### 오류 코드 승격 대상 확장
+
+`UnsupportedKeyOnIosError`가 사라지면서 `key.ts`에 흩어져 있던 "타입이 식별된
+백엔드 오류는 자기 코드를 노출한다" 판단을 `backendFailure`(`cli/commands/types.ts`)
+한곳으로 모았다. 승격 대상은 넷이다 — `WDA_UNREACHABLE` / `WDA_RESPONSE_LOST` /
+`WDA_PORT_UNMAPPED` / `UNSUPPORTED_KEY_ON_IOS`. 그 밖의 실패는 종전대로
+`BACKEND_COMMAND_FAILED`로 가린다(D7 우선순위 유지). `code`를 가졌다고 전부
+승격되지는 않는다는 것을 `backend-failure.test.ts`가 음성 대조로 고정한다.
+
+#### 주석 정리에서 드러난 낡은 서술 3건
+
+주석 속 idb 언급을 지우다가, **단순 이름 교체로 끝나지 않는 곳**이 나왔다.
+셋 다 지금 코드와 어긋나 있었다.
+
+1. `device-backend.ts` `SwipeOptions` — "iOS 백엔드가 ms를 초로 환산한다"고
+   적혀 있었으나 WDA는 W3C `pause`(밀리초)를 쓰므로 환산이 없다. 계약("호출자는
+   항상 ms를 넘긴다")은 유지하되 서술을 사실에 맞췄다.
+2. `device-backend.ts` `getMinEffectiveSwipeThreshold` — "iOS는 기기 조회를
+   전혀 하지 않는다"고 적혀 있었으나 `WdaBackend`는 **배율**을 얻으려 기기에
+   묻는다. `basis`가 `"measured-constant"`로 남는 이유(값의 출처를 말하는
+   필드이지 호출 여부를 말하는 필드가 아니다)를 함께 적었다.
+3. `common-element.ts` — 이미 M2에서 삭제된 네이티브 정규화기 두 개의 매핑을
+   상세히 설명하고 있었다. 지금 이 스키마의 유일한 생산자는
+   `normalize/webdom.ts`이며, 파일이 존치되는 이유는 AC-VISION-011(과잉 제거
+   방지)이다. `@MX:ANCHOR`의 근거도 fan_in이 아니라 "남은 소비자가 다른
+   SPEC 소유"라는 사실로 다시 적었다.
+
+#### `src/webview/` 예외 발동 (사용자 결정 2026-08-03)
+
+AC-VISION-017(grep 0건)을 채우려면 `src/webview/` 안의 2개 파일 주석을
+건드려야 했다. AC-VISION-029는 이 디렉터리 무변경을 요구하며 예외 조항에
+`webkit-errors.ts`만 명시했으나, `coordinates.test.ts`에도 언급이 있었다.
+**둘 다 수정했다** — 사용자 결정이며, 명시 범위를 넘어섰다는 사실을 여기 적는다.
+
+- `webkit-errors.ts:3` — 오류 클래스 패턴 출처 언급 (주석)
+- `coordinates.test.ts:7` — 좌표 검증 절차 설명 중 "native `idb` tap" (주석)
+
+둘 다 주석만 바뀌어 동작 변화는 없다. **AC-VISION-029의 `git diff --name-only`는
+이제 빈 결과가 아니다** — 이 2개 파일이 잡힌다.
+
+#### 검증 (2026-08-03)
+
+```
+$ grep -rl 'idb\|Idb\|IDB' src --include='*.ts'   → 빈 결과      (AC-VISION-017)
+$ ls src/backend/idb-*.ts                          → no matches   (AC-VISION-018)
+$ pnpm typecheck                                   → exit 0
+$ pnpm build                                       → exit 0
+$ pnpm test                                        → 32 files, 688 passed | 2 expected fail
+```
+
+**baseline 귀속**: 착수 직전 같은 트리(HEAD `287dd4b`)에서 `pnpm test`를 실행해
+`737 passed | 2 expected fail`을 관측했다. M4 이후 `688 passed` — **순감 49건**.
+내역: 삭제된 3개 테스트 파일의 `it()` 50개 − 신규 1개(`backend-failure.test.ts`의
+`WdaUnsupportedKeyError` 행) = 49. **회귀로 인한 감소는 없다.**
+
+작업 중 테스트가 **제가 만든 결함 1건을 잡았다**: `swipe.test.ts`에서 던지는
+오류 문구만 바꾸고 단언 정규식을 그대로 둬 불일치가 났다. 수정 후 같은 유형이
+더 없는지 반대 방향으로도 grep해 확인했다.
+
+#### AC-VISION-019 실기기 판정 (idb 프로세스 미생성)
+
+idb는 이 호스트에 **설치돼 있다**(`/Users/hatae/.local/bin/idb`,
+`/opt/homebrew/bin/idb_companion`) — 이 AC가 의미를 갖는 조건이다.
+
+```
+절차: 50ms 간격 pgrep 감시자를 띄운 뒤 CLI 5개 명령 실행
+      (devices · doctor · screenshot · launch · stop)
+관측: 감시 중 나타난 idb 관련 PID = {33853, 68043}
+      둘 다 baseline에 이미 존재한 idb_companion 데몬(이 세션 이전부터 상주)
+판정: baseline에 없던 새 PID 0건  →  PASS
+```
+
+#### 미검증 (Gaps)
+
+1. **AC-VISION-019 관측 중 `screenshot`이 실패했다.** WDA가 HTTP 500
+   `"Not authorized for performing UI testing actions"`를 반환했다. 기기는
+   잠겨 있지 않았고(`/wda/locked` → false), `activeAppInfo`도 nil 예외로 500이었다
+   — 8월 2일부터 떠 있던 WDA 러너가 UI 테스팅 권한을 잃은 **환경 상태**이지 M4
+   코드 회귀가 아니다(M4는 iOS 제어 경로를 건드리지 않았다). idb 프로세스
+   관측 자체는 유효하다 — 실패한 `screenshot`도 WDA까지 HTTP 요청을 보냈으므로
+   idb 호출 기회는 그대로 지났다. 다만 **WDA 재기동 후 재관측하면 더 강한
+   증거가 된다.**
+2. **Android 경로는 이 세션에서 실행 판정하지 못했다** — 호스트에 Android 기기도
+   PATH 상의 adb도 없다. M4가 건드린 Android 파일은 주석뿐이지만, 실행 확인은
+   M6의 몫이다.
+3. **AC-VISION-029가 이제 빈 결과가 아니다** — 위 `src/webview/` 예외 참조.
+
+---
+
 ## §E.3 Run-phase Audit-Ready Signal
 
 (run-phase 완료 시 작성)
@@ -764,7 +881,7 @@ $ node dist/cli/bin.js doctor --device 00008130-001238880C13803A
 | iOS 배율 실측값 | M3 | **결정됨(3.0, 인용값과 일치)** | 캡처 1290×2796 ÷ 창 430×932 = **3.0**. 인용값 ÷3과 일치했다. 다만 코드는 여전히 도출한다 — 일치가 하드코딩의 근거가 되지는 않는다(AC-VISION-025 grep 0건으로 확인). 위 `iOS 배율 실측` 행과 같은 관측이며, 이 행은 그 값의 기록이다 |
 | iOS `stopApp` 경로 (M3에서 새로 발견) | M3 | **결정됨(WDA terminate + 상태 재확인)** | **`POST /session/:id/wda/apps/terminate`로 종료하고, 응답이 유실되면 `apps/state`로 재확인해 확정한다.** `plan.md` §B M3 item 3이 지목한 `devicectl device process launch`는 종료 명령이 아니며, `devicectl`에는 종료 서브커맨드 자체가 없다(`launch/resume/sendMemoryWarning/signal/suspend`, `signal`은 `--pid` 요구 — 실측). **반대 정보(함께 기록)**: 이 엔드포인트는 응답을 돌려주지 않는다(4/4 유실). 재확인 없이 그대로 쓰면 성공한 종료가 실패로 보고된다. 재확인 경로는 실기기 `stop` 명령에서 발동해 `ok:true`를 냈고 이후 상태 조회가 1(미실행)을 반환했다. **잔여 위험**: 재확인 시점과 실제 종료 시점 사이에 다른 주체가 앱을 다시 띄우면 오판할 수 있다 |
 | iOS 다기기 WDA 포트 귀속 (M3에서 새로 발견) | M3 | **결정됨(serial→포트 매핑)** | **`EXPLORE_MOBILE_WDA_PORTS="<udid>=<port>,…"`로 선언하고, 선언된 상태에서 미등록 serial이 오면 거부한다(`WDA_PORT_UNMAPPED`).** 근거: 사용자 결정(2026-08-03). WDA 포트는 `iproxy -u`가 묶어 준 기기 1대에만 연결되는데 `/status`는 기기 **종류**만 알려주므로(실측: `"device": "iphone"`) CLI가 스스로 신원을 검증할 수 없다. **잔여 위험**: 매핑 미선언 시 기본 8100으로 흘려보내며 검증하지 못한다(`wda-client.ts` `@MX:DEBT`). 실측 당시 iPhone·iPad 2대가 동시 연결된 상태였다 |
-| `webkit-errors.ts` idb 참조 처리 | M4 | 미확정 | 실제 호출 / 문자열 언급 여부에 따라 |
+| `webkit-errors.ts` idb 참조 처리 | M4 | **결정됨(문자열 언급 — 주석 수정)** | **실제 호출이 아니라 문자열 언급이었다** — 오류 클래스에 `code` 프로퍼티를 두는 패턴의 출처를 적은 3행 주석이다. 해당 언급만 지웠다(`ime-errors.ts` 패턴으로 서술 유지). **반대 정보(함께 기록)**: `src/webview/`는 AC-VISION-029가 무변경을 요구하는 PRESERVE 영역이다. AC-029의 예외 조항이 이 파일을 명시하므로 수정 자체는 조항 안에 있으나, 같은 디렉터리의 `coordinates.test.ts`(조항 미명시)도 함께 수정했다 — 사용자 결정(2026-08-03)이며 그 결과 AC-029의 `git diff`는 더 이상 빈 결과가 아니다. 둘 다 주석만 바뀌어 동작 변화는 없다 |
 | Android `wm size`의 `Override size:` 처리 | M1 결정 · M6 검증 | **결정됨(미검증)** | **`Physical size:`만 파싱한다.** 근거: plan.md §B M1(item 3 + 위험 항목)이 그 라인을 파싱 대상으로 명시했고, M1 착수 시 사용자가 그 문구를 따르기로 확정했다. **반대 정보(함께 기록)**: 같은 `wm` 계열 형제 파서 `parseEffectiveDensity`(adb-backend.ts)는 `Override density:`를 우선하며, Physical만 읽는 것이 override 활성 기기에서 **틀린 것으로 실측된 이력**이 있다(spec.md §C.1-⑱). 다만 화면 크기 override가 탭 좌표계를 지배하는지는 이 SPEC에서 **관측된 바 없다** — density의 실측을 size로 옮기는 것은 추론이므로 추론으로 코드를 정하지 않았다. 현재 동작은 `adb-backend.test.ts`의 Override 병기 픽스처가 고정하고 있어 향후 변경 시 테스트가 먼저 깨진다. M6 실기기에서 확인한다 |
 
 ---

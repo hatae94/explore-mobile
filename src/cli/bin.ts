@@ -4,7 +4,7 @@
  *
  * Wires the command router to a cross-platform `BackendRegistry`
  * (SPEC-IOS-001, REQ-IOS-ARCH-001~003) merging `AdbBackend` (Android) and
- * `WdaBackend` (iOS — SPEC-VISION-001 M3 replaced `IdbBackend`), and prints exactly one JSON document to stdout per
+ * `WdaBackend` (iOS), and prints exactly one JSON document to stdout per
  * invocation (REQ-ARCH-001). The registry itself implements `DeviceBackend`
  * (registry-as-backend adapter, design.md §C.4), so `runCli`'s existing
  * `(argv, backend, envServices)` signature needs no change to gain cross-

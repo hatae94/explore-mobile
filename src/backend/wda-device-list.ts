@@ -1,10 +1,11 @@
 /**
  * iOS 기기 열거 (SPEC-VISION-001 M3, design.md §B.1).
  *
- * **기기 목록의 출처가 바뀐다.** idb는 목록 조회와 제어를 겸했지만 WDA는
- * 이미 특정 기기에 붙어 있는 에이전트여서 목록을 주지 못한다. 그래서 열거는
- * `xcrun devicectl list devices`로 분리한다 (research.md §1.2 ① 관측:
- * idb 735~763ms → devicectl ~52ms).
+ * **기기 목록의 출처가 제어 경로에서 분리됐다.** 이전 iOS 백엔드는 하나의
+ * 도구가 목록 조회와 제어를 겸했지만, WDA는 이미 특정 기기에 붙어 있는
+ * 에이전트여서 목록을 주지 못한다. 그래서 열거는 `xcrun devicectl list
+ * devices`가 맡는다 (research.md §1.2 ① 관측: 이전 경로 735~763ms →
+ * devicectl ~52ms).
  *
  * **시뮬레이터는 제외한다** (design.md §F 잔여 1건, 사용자 결정 2026-08-03).
  * `simctl` 열거(~92ms)를 빼면 그만큼 빨라지고, spec.md §C.5가 시뮬레이터를
@@ -103,10 +104,10 @@ export function parseDevicectlDevices(raw: unknown): DeviceInfo[] {
 /**
  * `xcrun devicectl list devices`를 실행하고 결과를 파싱한다.
  *
- * 파싱 불가/실행 실패는 **빈 목록**으로 강등한다 — `IdbBackend.listDevices`가
- * 지키던 것과 같은 계약이다(REQ-IOS-ARCH-003 정신: 한 백엔드의 출력 형태
- * 변화가 CLI 전체를 죽이지 않는다). `BackendRegistry`는 이 경우 Android
- * 기기만으로 정상 동작한다.
+ * 파싱 불가/실행 실패는 **빈 목록**으로 강등한다 — 이전 iOS 백엔드의
+ * `listDevices`가 지키던 것과 같은 계약이다(REQ-IOS-ARCH-003 정신: 한
+ * 백엔드의 출력 형태 변화가 CLI 전체를 죽이지 않는다). `BackendRegistry`는
+ * 이 경우 Android 기기만으로 정상 동작한다.
  */
 export async function listIosDevices(exec: ProcessExecutor = spawnProcess): Promise<DeviceInfo[]> {
   let dir: string | undefined;

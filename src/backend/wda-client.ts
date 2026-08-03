@@ -1,6 +1,6 @@
 /**
  * WDA(WebDriverAgent) HTTP 호출 래퍼 (SPEC-VISION-001 M3, design.md §B.1).
- * `idb-executor.ts`(프로세스 spawn)가 있던 자리를 대신한다 — iOS 제어의
+ * 이전 iOS 백엔드의 프로세스 실행기가 있던 자리를 대신한다 — iOS 제어의
  * 유일한 전송 계층이며, `WdaBackend`의 모든 명령이 여기를 지난다.
  *
  * 두 가지를 여기서 책임진다:
@@ -9,9 +9,10 @@
  *
  * @MX:ANCHOR — iOS 제어의 단일 전송 지점. `WdaBackend`의 10개 메서드가 전부
  * 이 클래스를 통과하므로, 여기서의 회귀는 iOS 경로 전체에 파급된다.
- * @MX:REASON — idb 시절 `idb-executor.ts`가 맡던 격리 역할(REQ-IOS-ISOLATE-001)
- * 을 그대로 이어받는다. 재시도 정책을 이 파일 밖으로 흩뜨리면 비멱등 요청이
- * 어딘가에서 조용히 재시도돼 조작이 두 번 적용될 수 있다.
+ * @MX:REASON — 이전 iOS 백엔드의 실행기가 맡던 격리 역할
+ * (REQ-IOS-ISOLATE-001)을 그대로 이어받는다. 재시도 정책을 이 파일 밖으로
+ * 흩뜨리면 비멱등 요청이 어딘가에서 조용히 재시도돼 조작이 두 번 적용될 수
+ * 있다.
  */
 
 import {

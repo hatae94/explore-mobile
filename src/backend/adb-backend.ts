@@ -6,11 +6,12 @@
  * device-backend interface contract (spec.md §A.4, REQ-ARCH-003). Every
  * CLI command that targets a device (M3) depends on this class's method
  * surface staying compatible with `DeviceBackend`.
- * @MX:REASON — SPEC-IOS-001's `IdbBackend` implements the same
- * `DeviceBackend` interface (`src/backend/idb-backend.ts`); this class is
- * the reference implementation proving the interface is thin enough to be
- * backend-swappable (REQ-IOS-ARCH-005). `listDevices` tags `platform:
- * "android"` (REQ-IOS-SCHEMA-001).
+ * @MX:REASON — the iOS side (`WdaBackend`, `src/backend/wda-backend.ts`)
+ * implements the same `DeviceBackend` interface; this class is the
+ * reference implementation proving the interface is thin enough to be
+ * backend-swappable (REQ-IOS-ARCH-005) — a claim SPEC-VISION-001 M3 tested
+ * by replacing the entire iOS backend without touching the interface.
+ * `listDevices` tags `platform: "android"` (REQ-IOS-SCHEMA-001).
  *
  * SPEC-VISION-001 M2 (REQ-VISION-002) removed the UI-tree dump method and
  * its `uiautomator dump` -> `cat` -> `rm` device-side sequence: the read
@@ -745,7 +746,9 @@ export class AdbBackend implements DeviceBackend {
    * `adb shell input swipe x1 y1 x2 y2 [duration]` — the trailing duration
    * argument is already milliseconds (spec.md §C.1-⑥), matching the CLI's
    * ms contract exactly, so it is passed straight through with NO unit
-   * conversion (unlike `IdbBackend.swipe`, which must convert to seconds).
+   * conversion. The conversion obligation still belongs to whichever
+   * backend's tool uses a different unit — see `SwipeOptions` — it simply
+   * does not apply here.
    */
   async swipe(serial: string, from: SwipePoint, to: SwipePoint, options?: SwipeOptions): Promise<void> {
     const args = [
@@ -777,7 +780,7 @@ export class AdbBackend implements DeviceBackend {
    * §C.1-⑳) — since that is the value that actually governs touch slop on
    * a device with an active display-size override. `basis: "device-query"`
    * marks this as derived from a live query of the target device, distinct
-   * from `IdbBackend`'s `"measured-constant"` (a value measured on a
+   * from `WdaBackend`'s `"measured-constant"` (a value measured on a
    * DIFFERENT device) — see `SwipeThreshold`.
    */
   async getMinEffectiveSwipeThreshold(serial: string): Promise<SwipeThreshold> {

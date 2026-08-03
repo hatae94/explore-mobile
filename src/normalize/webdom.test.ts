@@ -2,7 +2,8 @@
  * M3 — web DOM normalization (REQ-WEB-NORM-001..004, AC-WEB-009..011).
  *
  * Pure-function tests: fixtures only, no device, no proxy, no page — the same
- * contract `normalize/idb.test.ts` and `normalize/uiautomator.test.ts` hold.
+ * contract the two native normalizer test suites held before
+ * SPEC-VISION-001 M2 removed them along with the UI-tree read path.
  */
 
 import { describe, expect, it } from "vitest";

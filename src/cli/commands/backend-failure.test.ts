@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { IdbCommandFailedError } from "../../backend/idb-errors.js";
+import { LauncherActivityNotFoundError } from "../../backend/launch-errors.js";
 import {
   WdaCommandFailedError,
   WdaPortUnmappedError,
   WdaResponseLostError,
   WdaUnreachableError,
+  WdaUnsupportedKeyError,
 } from "../../backend/wda-errors.js";
 import { backendFailure } from "./types.js";
 
@@ -21,6 +22,7 @@ describe("backendFailure", () => {
     [WdaUnreachableError, "WDA_UNREACHABLE"],
     [WdaResponseLostError, "WDA_RESPONSE_LOST"],
     [WdaPortUnmappedError, "WDA_PORT_UNMAPPED"],
+    [WdaUnsupportedKeyError, "UNSUPPORTED_KEY_ON_IOS"],
   ])("%s는 자기 코드를 그대로 노출한다 (%s)", (ErrorClass, expectedCode) => {
     const result = backendFailure("tap", new ErrorClass("사유"));
     expect(result.ok).toBe(false);
@@ -28,9 +30,14 @@ describe("backendFailure", () => {
     expect(result.error.message).toBe("사유");
   });
 
+  /**
+   * `code`를 가진 오류라고 전부 승격되는 것은 아니다 — 승격 대상은 호출자가
+   * 서로 다르게 대응해야 하는 넷뿐이다. 아래 두 클래스도 자기 `code`를 갖고
+   * 있지만 가려진다.
+   */
   it.each([
     ["WdaCommandFailedError", new WdaCommandFailedError("WDA가 400을 돌려줌")],
-    ["IdbCommandFailedError", new IdbCommandFailedError("idb 실패")],
+    ["LauncherActivityNotFoundError", new LauncherActivityNotFoundError("com.example")],
     ["평범한 Error", new Error("무언가 실패")],
     ["Error가 아닌 값", "문자열 예외"],
   ])("그 밖의 실패(%s)는 BACKEND_COMMAND_FAILED로 가린다", (_label, err) => {

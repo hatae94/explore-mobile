@@ -1,9 +1,9 @@
 /**
- * `WdaDoctor` — iOS 환경 점검 서비스 (SPEC-VISION-001 M3). `IdbDoctor`가
- * 있던 자리를 대신하며, 점검 대상이 idb/idb_companion에서 devicectl/WDA로
- * 바뀐다 (design.md §B.3 — "`doctor`가 idb 점검을 잃는 대신 WDA 점검을 얻는다").
+ * `WdaDoctor` — iOS 환경 점검 서비스 (SPEC-VISION-001 M3). 이전 iOS 환경
+ * 점검 서비스가 있던 자리를 대신하며, 점검 대상이 devicectl 가용성과 WDA
+ * 도달성으로 바뀐다 (design.md §B.3).
  *
- * `AdbDoctor`/`IdbDoctor`와 마찬가지로 `DeviceBackend` 인터페이스 밖에 있다.
+ * `AdbDoctor`와 마찬가지로 `DeviceBackend` 인터페이스 밖에 있다.
  * 호스트 환경 부트스트랩(도구가 PATH에 있는가, 터널이 떠 있는가)은 도구마다
  * 다른 관심사여서, 백엔드 무관 제어 인터페이스에 들어갈 자리가 없다.
  *
@@ -11,8 +11,9 @@
  * 여부)는 반드시 분리된 채로 남아야 한다.
  * @MX:REASON — 둘을 합치면 WDA가 안 떠 있을 때 iOS 백엔드 전체가 비가용으로
  * 판정돼 연결된 기기가 `devices` 목록에서 통째로 사라진다. SPEC-IOS-001에서
- * `idb --version` 실패를 "미설치"로 처리했다가 똑같은 회귀를 겪은 이력이
- * 있다(`idb-doctor.ts` checkIdbInstalled 주석).
+ * 이전 iOS 백엔드에서 도구의 버전 조회 실패를 "미설치"로 처리했다가 부팅된
+ * 기기가 목록에서 통째로 사라진 이력이 있다 — 존재 여부와 버전 판독 가능
+ * 여부는 다른 질문이며, 백엔드를 막을 수 있는 것은 전자뿐이다.
  */
 
 import type { ProcessExecutor } from "./process-executor.js";
@@ -108,7 +109,7 @@ export class WdaDoctor {
     }
   }
 
-  /** 안내만 한다 — 설치를 대신 수행하지 않는다(`IdbDoctor`와 같은 방침). */
+  /** 안내만 한다 — 설치를 대신 수행하지 않는다(iOS 도구 체인 공통 방침). */
   async installGuidance(): Promise<IosInstallGuidance> {
     if (this.platform !== "darwin") {
       return {
@@ -130,7 +131,7 @@ export class WdaDoctor {
 
   /**
    * iOS `reset`은 사실상 no-op이다 — 되돌릴 IME 세션도, 설치한 APK도 없다
-   * (`IdbDoctor.resetDevice`와 같은 계약. WDA 입력은 상태를 남기지 않는다).
+   * (SPEC-IOS-001이 정한 계약 그대로. WDA 입력은 상태를 남기지 않는다).
    */
   async resetDevice(_serial: string): Promise<IosResetResult> {
     return {

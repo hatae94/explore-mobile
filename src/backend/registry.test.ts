@@ -66,7 +66,7 @@ describe("BackendRegistry", () => {
 
     it("graceful degradation: an unavailable backend contributes 0 devices and no error (AC-IOS-009)", async () => {
       const android = registeredBackend("android", [androidDevice()]);
-      const ios = registeredBackend("ios", [iosDevice()], false); // idb not installed
+      const ios = registeredBackend("ios", [iosDevice()], false); // iOS toolchain unavailable
       const registry = new BackendRegistry([android, ios]);
 
       const devices = await registry.listAllDevices();
@@ -91,7 +91,7 @@ describe("BackendRegistry", () => {
         platform: "ios",
         backend: {
           ...mockBackend([]),
-          listDevices: vi.fn().mockRejectedValue(new Error("idb_companion not running")),
+          listDevices: vi.fn().mockRejectedValue(new Error("device tunnel not running")),
         },
         isAvailable: vi.fn().mockResolvedValue(true),
       };

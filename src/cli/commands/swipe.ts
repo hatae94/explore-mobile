@@ -7,11 +7,13 @@
  * `failure(...)`/`success(...)`.
  *
  * `--duration` is validated (REQ-GEST-SWIPE-005) BEFORE `backend.swipe` is
- * ever called — the ms → seconds conversion for iOS happens INSIDE
- * `IdbBackend.swipe` (M1), so this handler must never pass a value that
- * failed to parse as a positive integer. A `NaN` reaching that
- * conversion would silently become `--duration NaN` on the wire
- * (spec.md §B.1 REQ-GEST-SWIPE-005).
+ * ever called, so this handler never hands a backend a value that failed
+ * to parse as a positive integer. A `NaN` that gets past this point is
+ * carried all the way to the wire — as a `NaN` duration in a W3C actions
+ * body on iOS, or in the adb argv on Android — and neither backend can
+ * tell it apart from a value the caller meant (spec.md §B.1
+ * REQ-GEST-SWIPE-005). The specific downstream shape has changed across
+ * SPECs; the ordering requirement has not.
  *
  * Negative coordinate/duration LITERALS (e.g. `-50`, `-100`) never reach
  * this handler at all — `node:util.parseArgs` treats a leading `-` token as
@@ -54,9 +56,9 @@ export const swipeCommand: CommandHandler = async (args, source: DeviceSource) =
   }
 
   // REQ-GEST-SWIPE-005: validated BEFORE any backend call — never let an
-  // unparsable value reach `IdbBackend`'s ms/1000 conversion as NaN.
+  // unparsable value reach a backend as NaN.
   //
-  // @MX:NOTE: [AUTO] --duration 검증은 반드시 backend.swipe 호출보다 앞서야 한다 -- 순서를 뒤집으면 파싱 실패값이 그대로 IdbBackend의 ms/1000 환산에 들어가 NaN이 argv에 실릴 수 있다(spec.md §B.1 REQ-GEST-SWIPE-005)
+  // @MX:NOTE: [AUTO] --duration 검증은 반드시 backend.swipe 호출보다 앞서야 한다 -- 순서를 뒤집으면 파싱 실패값이 그대로 백엔드에 전달돼 NaN이 그대로 기기로 나간다(spec.md §B.1 REQ-GEST-SWIPE-005)
   let durationMs: number | undefined;
   if (args.duration !== undefined) {
     durationMs = parseDurationMs(args.duration);

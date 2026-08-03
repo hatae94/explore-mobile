@@ -2,6 +2,7 @@ import {
   WdaPortUnmappedError,
   WdaResponseLostError,
   WdaUnreachableError,
+  WdaUnsupportedKeyError,
 } from "../../backend/wda-errors.js";
 import type { ParsedCommandArgs } from "../args.js";
 import type { DeviceSource } from "../device-targeting.js";
@@ -10,13 +11,13 @@ import type { EnvServices } from "../env-services.js";
 
 /**
  * Every command handler receives its parsed argv, the (possibly mock)
- * device source to operate through — never raw adb/idb argv directly —
+ * device source to operate through — never raw platform-tool argv directly —
  * and the per-platform `EnvServices` holder (REQ-IOS-DOCTOR-003,
  * SPEC-IOS-001 — generalized from the original Android-only `AdbDoctor`
  * parameter) used only by `doctor`/`reset`, which dispatch to
  * `envServices.android`/`envServices.ios` based on the resolved target
  * device's platform. This is the enforcement point for the 3-layer
- * boundary: CLI -> normalize/device-backend interface -> adb/idb wrapper.
+ * boundary: CLI -> device-backend interface -> platform-tool wrapper.
  * Handlers that don't need `envServices` simply omit the third parameter
  * (TypeScript's bivariant function typing allows this).
  *
@@ -41,23 +42,24 @@ export function errorMessage(err: unknown): string {
  * 백엔드가 던진 예외를 명령 실패 봉투로 바꾼다.
  *
  * 기본값은 기존 그대로 `BACKEND_COMMAND_FAILED`다(D7 오류 코드 우선순위,
- * spec.md §C.3 — `IDB_COMMAND_FAILED` 같은 일반 백엔드 실패는 계속 이 코드
- * 뒤에 놓인다). 다만 **호출자가 서로 다르게 대응해야 하는** WDA 실패 셋만은
- * 자기 코드를 그대로 노출한다 — `key.ts`가 `UNSUPPORTED_KEY_ON_IOS`에
- * 적용한 관례("타입이 식별된 백엔드 오류는 일반 코드 뒤에 가리지 않는다")를
- * 같은 이유로 확장한 것이다.
+ * spec.md §C.3 — 일반 백엔드 실패는 계속 이 코드 뒤에 놓인다). 다만
+ * **호출자가 서로 다르게 대응해야 하는** 아래 넷만은 자기 코드를 그대로
+ * 노출한다. "타입이 식별된 백엔드 오류는 일반 코드 뒤에 가리지 않는다"는
+ * 관례이며, 원래 `key.ts`에 흩어져 있던 판단을 여기 한곳으로 모았다.
  *
- * 셋을 구분해야 하는 이유(design.md §B.3, AC-VISION-015/016):
- *   - `WDA_UNREACHABLE`   → WDA를 띄워라 (사용자 행동이 필요)
- *   - `WDA_RESPONSE_LOST` → 적용됐을 수 있다, 스크린샷으로 확인하라
- *   - `WDA_PORT_UNMAPPED` → 포트 매핑에 이 기기를 추가하라
- * 셋을 하나로 뭉개면 호출자는 "왜 안 되는지 모르는 상태"에 놓인다.
+ * 구분해야 하는 이유(design.md §B.3, AC-VISION-015/016):
+ *   - `WDA_UNREACHABLE`      → WDA를 띄워라 (사용자 행동이 필요)
+ *   - `WDA_RESPONSE_LOST`    → 적용됐을 수 있다, 스크린샷으로 확인하라
+ *   - `WDA_PORT_UNMAPPED`    → 포트 매핑에 이 기기를 추가하라
+ *   - `UNSUPPORTED_KEY_ON_IOS` → 이 키는 iOS에 대응 동작이 없다 (재시도 무의미)
+ * 넷을 하나로 뭉개면 호출자는 "왜 안 되는지 모르는 상태"에 놓인다.
  */
 export function backendFailure(command: string, err: unknown): CommandError {
   if (
     err instanceof WdaUnreachableError ||
     err instanceof WdaResponseLostError ||
-    err instanceof WdaPortUnmappedError
+    err instanceof WdaPortUnmappedError ||
+    err instanceof WdaUnsupportedKeyError
   ) {
     return failure(command, err.code, err.message);
   }

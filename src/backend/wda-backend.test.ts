@@ -157,7 +157,7 @@ describe("WdaBackend.inputText", () => {
 
     const keys = requests.find((r) => r.url.endsWith("/wda/keys"));
     expect(keys?.body).toEqual({ value: ["안녕하세요 반갑습니다 🙂"] });
-    // idb가 필요로 했던 클립보드 경로가 없다는 것을 음성 대조로 고정한다.
+    // 이전 iOS 백엔드가 필요로 했던 클립보드 경로가 없다는 것을 음성 대조로 고정한다.
     expect(requests.some((r) => r.url.includes("pasteboard"))).toBe(false);
   });
 });

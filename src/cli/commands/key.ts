@@ -1,10 +1,9 @@
 /** `key <alias>` command (REQ-INPUT-005, REQ-IOS-BACKEND-007). */
 
 import { KEY_ALIASES, isKeyAlias } from "../../schema/key-alias.js";
-import { UnsupportedKeyOnIosError } from "../../backend/idb-errors.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
-import { backendFailure, errorMessage, type CommandHandler } from "./types.js";
+import { backendFailure, type CommandHandler } from "./types.js";
 
 export const keyCommand: CommandHandler = async (args, source) => {
   const alias = args.positionals[0];
@@ -24,15 +23,13 @@ export const keyCommand: CommandHandler = async (args, source) => {
   try {
     await target.backend.sendKeyEvent(target.serial, alias);
   } catch (err) {
-    if (err instanceof UnsupportedKeyOnIosError) {
-      // REQ-IOS-BACKEND-007 / AC-IOS-017 / D7 precedence (spec.md §C.3):
-      // a typed-recognized backend error surfaces its OWN code — never
-      // masked behind the generic BACKEND_COMMAND_FAILED — mirroring
-      // text.ts's ImeRestoreFailedError/AdbKeyboardInstallFailedError
-      // handling. A valid alias with no iOS HID mapping (e.g. `home`) must
-      // be a graceful, distinguishable reject, not a generic failure.
-      return failure("key", err.code, err.message);
-    }
+    // REQ-IOS-BACKEND-007 / AC-IOS-017 / D7 precedence (spec.md §C.3): a
+    // typed-recognized backend error surfaces its OWN code — never masked
+    // behind the generic BACKEND_COMMAND_FAILED. `UNSUPPORTED_KEY_ON_IOS`
+    // (a valid alias with no iOS equivalent, e.g. `app_switch`) must be a
+    // graceful, distinguishable reject, not a generic failure. That
+    // promotion now lives in `backendFailure` (types.ts), which holds the
+    // whole promoted set in one place.
     return backendFailure("key", err);
   }
 

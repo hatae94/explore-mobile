@@ -346,7 +346,7 @@ describe("AdbBackend", () => {
       expect(threshold.minEffectiveSwipePx).toBeGreaterThan(30);
     });
 
-    it("carries no hardcoded Android pixel constant -- the returned value scales with the mocked density (contrast with IdbBackend's fixed 11)", async () => {
+    it("carries no hardcoded Android pixel constant -- the returned value scales with the mocked density (contrast with the iOS backend's fixed 11pt constant)", async () => {
       const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(ok("Physical density: 160\n")); // baseline mdpi (1.0x)
 
       const backend = new AdbBackend(exec);

@@ -20,7 +20,7 @@
  * 백엔드로 라우팅**됐을 것이다.
  *
  * @MX:NOTE — platform-neutral (REQ-MULTIDEV-001 개정 0.4.0): this module
- * serves BOTH backends (Android/adb, iOS/idb) — do not narrow "connected"
+ * serves BOTH backends (Android/adb, iOS/WDA) — do not narrow "connected"
  * handling to the Android path. Every `connectionState !== "device"` entry
  * observed in real usage (spec.md §C.4-⑳) was an offline iOS simulator,
  * which Xcode registers on every macOS host regardless of whether one is

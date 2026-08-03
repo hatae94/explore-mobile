@@ -1,11 +1,11 @@
 /**
- * `WdaBackend`가 던지는 오류 타입들 (SPEC-VISION-001 M3). `idb-errors.ts`의
- * 패턴을 그대로 따른다 — `code` 프로퍼티가 있어 호출자가 `instanceof`로
- * 판별해 전용 JSON 오류 코드를 노출할 수 있다.
+ * `WdaBackend`가 던지는 오류 타입들 (SPEC-VISION-001 M3). `ime-errors.ts`와
+ * 같은 패턴이다 — `code` 프로퍼티가 있어 호출자가 `instanceof`로 판별해
+ * 전용 JSON 오류 코드를 노출할 수 있다.
  *
- * idb와 달리 WDA는 **사용자가 사전에 기동해 두어야 하는 외부 프로세스**다.
- * 접속 실패는 예외적 사고가 아니라 흔한 정상 상태이므로(design.md §B.3),
- * 실패의 종류를 뭉뚱그리지 않고 셋으로 나눈다:
+ * WDA는 **사용자가 사전에 기동해 두어야 하는 외부 프로세스**라는 점이
+ * 특이하다. 접속 실패는 예외적 사고가 아니라 흔한 정상 상태이므로
+ * (design.md §B.3), 실패의 종류를 뭉뚱그리지 않고 셋으로 나눈다:
  *
  *   - `WDA_UNREACHABLE`   — WDA가 아예 응답하지 않는다(미기동/iproxy 없음)
  *   - `WDA_RESPONSE_LOST` — 요청은 전송됐고 WDA는 살아 있지만 응답이 유실됐다
@@ -106,8 +106,9 @@ export class WdaPortUnmappedError extends Error {
 }
 
 /**
- * iOS에 대응 동작이 없는 키 별칭 (`idb-errors.ts`의 `UnsupportedKeyOnIosError`와
- * 같은 취지 — 조용한 no-op이 아니라 명시적 거부).
+ * iOS에 대응 동작이 없는 키 별칭 — 조용한 no-op이 아니라 명시적 거부다.
+ * `code`는 `UNSUPPORTED_KEY_ON_IOS`이며, 이 값은 SPEC-IOS-001이 정한 계약을
+ * 그대로 승계한다(호출자와 테스트가 이 문자열에 의존한다).
  */
 export class WdaUnsupportedKeyError extends Error {
   public readonly code = "UNSUPPORTED_KEY_ON_IOS";

@@ -1,6 +1,6 @@
 /**
  * Distinct error types thrown by the WebKit Inspector client, mirroring the
- * `idb-errors.ts` / `ime-errors.ts` pattern: a `code` property lets a caller
+ * `ime-errors.ts` pattern: a `code` property lets a caller
  * `instanceof`-check and surface a dedicated JSON error code instead of a
  * generic failure message.
  */

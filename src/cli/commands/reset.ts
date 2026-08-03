@@ -16,10 +16,10 @@
  * backend-agnostic `DeviceBackend` interface) to read and clear the
  * per-serial tracked original IME. `backend` may be a plain `AdbBackend`
  * OR a `BackendRegistry` (SPEC-IOS-001, `bin.ts`) wrapping one alongside
- * `IdbBackend` — either way, `resolveAdbBackend` below finds the real
+ * the iOS backend — either way, `resolveAdbBackend` below finds the real
  * `AdbBackend` instance for the resolved serial, if any. This entire IME
- * path is skipped on the iOS branch (`IdbDoctor.resetDevice` — no IME
- * concept on iOS, idb text input is stateless).
+ * path is skipped on the iOS branch (`WdaDoctor.resetDevice` — no IME
+ * concept on iOS, and WDA text input leaves no state behind).
  *
  * @MX:NOTE — platform branching (REQ-IOS-DOCTOR-003, SPEC-IOS-001): the
  * target device is resolved FIRST (unchanged position — `resolveTargetDevice`
@@ -44,7 +44,7 @@ import type { CommandHandler } from "./types.js";
  * whether `backend` is a bare `AdbBackend` or a `BackendRegistry` wrapping
  * one (SPEC-IOS-001) — so the session-based IME restore below keeps
  * working identically through either construction. Returns `undefined`
- * when `serial` is owned by a non-Android backend (e.g. `IdbBackend`) or
+ * when `serial` is owned by a non-Android backend (e.g. `WdaBackend`) or
  * cannot be resolved.
  */
 export async function performReset(
@@ -58,7 +58,7 @@ export async function performReset(
   if (!target.ok) return failure(commandName, target.code, target.message, target.details);
 
   // REQ-IOS-DOCTOR-003/004 (SPEC-IOS-001): iOS has no IME/APK state to
-  // clean, so its reset is a near-no-op reported by IdbDoctor — the
+  // clean, so its reset is a near-no-op reported by WdaDoctor — the
   // Android-only IME-restore machinery below never runs for this branch.
   if (target.device.platform === "ios") {
     const result = await envServices.ios.resetDevice(target.serial);

@@ -5,7 +5,7 @@ import { WdaClient, type WdaHttpClient } from "./wda-client.js";
 import { WdaDoctor } from "./wda-doctor.js";
 
 /**
- * AC-VISION-020(`doctor`가 idb 대신 WDA를 점검한다)은 실기기 JSON 출력으로
+ * AC-VISION-020(`doctor`가 WDA를 점검한다)은 실기기 JSON 출력으로
  * 확인하지 못했다 — 이 호스트에 adb가 PATH에 없어 `doctor`가 iOS 분기 전에
  * 조기 반환한다(progress.md §E.2 M3 Gap 1). 그래서 이 파일이 그 분기에 대해
  * 남은 유일한 증거다. 실기기 판정을 대체하지는 못하며, 대체한다고 주장하지도

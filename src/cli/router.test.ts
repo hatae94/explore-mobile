@@ -9,7 +9,7 @@ import type { ApkAcquirer } from "../backend/apk-downloader.js";
 import { AdbDoctor } from "../backend/doctor.js";
 import { WdaDoctor } from "../backend/wda-doctor.js";
 import { AdbKeyboardInstallFailedError, ImeBindTimeoutError, ImeRestoreFailedError } from "../backend/ime-errors.js";
-import { UnsupportedKeyOnIosError } from "../backend/idb-errors.js";
+import { WdaUnsupportedKeyError } from "../backend/wda-errors.js";
 import { LauncherActivityNotFoundError } from "../backend/launch-errors.js";
 import { ImeSessionStore } from "../backend/ime-session-store.js";
 import { BackendRegistry } from "../backend/registry.js";
@@ -278,7 +278,7 @@ describe("runCli", () => {
 
     it("surfaces UNSUPPORTED_KEY_ON_IOS at the CLI level (not BACKEND_COMMAND_FAILED) for a valid alias with no iOS HID mapping on an iOS-registry-routed target (AC-IOS-017, D7 typed-error precedence)", async () => {
       const iosDeviceInfo = device({ serial: "00008030-IOS", platform: "ios" });
-      const idbBackend: DeviceBackend = {
+      const iosBackend: DeviceBackend = {
         listDevices: vi.fn().mockResolvedValue([iosDeviceInfo]),
         screenshot: vi.fn().mockResolvedValue(new Uint8Array()),
         tap: vi.fn().mockResolvedValue(undefined),
@@ -286,8 +286,8 @@ describe("runCli", () => {
         sendKeyEvent: vi
           .fn()
           .mockRejectedValue(
-            new UnsupportedKeyOnIosError(
-              "Key alias 'home' has no iOS HID keycode mapping — no hardware-keyboard equivalent exists on iOS.",
+            new WdaUnsupportedKeyError(
+              "키 별칭 'home'에 대응하는 iOS 동작이 없습니다.",
             ),
           ),
         launchApp: vi.fn().mockResolvedValue(undefined),
@@ -301,7 +301,7 @@ describe("runCli", () => {
       // M5(REQ-VISION-005): registry는 더 이상 `DeviceBackend`를 구현하지
       // 않는다 — `runCli`가 `DeviceSource`로 받아 그대로 라우팅한다.
       const registry = new BackendRegistry([
-        { platform: "ios", backend: idbBackend, isAvailable: async () => true },
+        { platform: "ios", backend: iosBackend, isAvailable: async () => true },
       ]);
 
       const result = await runCli(["key", "home"], registry);
@@ -311,7 +311,7 @@ describe("runCli", () => {
         expect(result.error.code).toBe("UNSUPPORTED_KEY_ON_IOS");
         expect(result.error.code).not.toBe("BACKEND_COMMAND_FAILED");
       }
-      expect(idbBackend.sendKeyEvent).toHaveBeenCalledWith(iosDeviceInfo.serial, "home");
+      expect(iosBackend.sendKeyEvent).toHaveBeenCalledWith(iosDeviceInfo.serial, "home");
     });
   });
 
@@ -1061,7 +1061,7 @@ describe("runCli", () => {
       vi.spyOn(adbDoctor, "checkDaemonHealth").mockResolvedValue({ healthy: true });
       const ensureAdbKeyboardSpy = vi.spyOn(adbDoctor, "ensureAdbKeyboard");
 
-      // SPEC-VISION-001 M3 (AC-VISION-020): iOS 점검 항목이 idb에서 WDA로
+      // SPEC-VISION-001 M3 (AC-VISION-020): iOS 점검 항목이 devicectl/WDA로
       // 교체됐다. 이 테스트가 세는 것은 "iOS 대상일 때 WDA 점검이 불리는가"다.
       const checkDevicectlSpy = vi.spyOn(wdaDoctor, "checkDevicectl").mockResolvedValue({ available: true });
       const checkWdaSpy = vi

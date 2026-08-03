@@ -1,9 +1,11 @@
 /**
  * Web DOM normalization (REQ-WEB-NORM-001..004, SPEC-WEBVIEW-001) — a pure
  * function converting elements collected from a page into the common element
- * schema, mirroring `normalize/idb.ts` and `normalize/uiautomator.ts`. No
- * device, proxy, or page is involved: given the same input it always returns
- * the same result, unit-testable with fixtures alone (AC-WEB-009).
+ * schema. It was written to mirror the two native normalizers that existed
+ * at the time; SPEC-VISION-001 M2 removed both along with the UI-tree read
+ * path, leaving this as the only normalizer. No device, proxy, or page is
+ * involved: given the same input it always returns the same result,
+ * unit-testable with fixtures alone (AC-WEB-009).
  *
  * @MX:ANCHOR — invariant mapping contract for the web recognition path
  * (`dump --web`, and the selector lookup behind `tap --web` / `text --web`).

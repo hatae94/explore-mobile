@@ -1,6 +1,6 @@
 /**
  * Backend registry (REQ-IOS-ARCH-001~003, SPEC-IOS-001) — merges device
- * listings from every AVAILABLE backend (adb + idb) and routes a
+ * listings from every AVAILABLE backend (Android + iOS) and routes a
  * `--device <serial>` command to the backend that owns it, so the user
  * never specifies a platform (auto-detection).
  *
@@ -22,7 +22,7 @@
  * command depends on this class resolving the correct backend.
  * @MX:REASON — REQ-IOS-ARCH-002 requires transparent cross-platform
  * routing; a regression here would silently route a command to the wrong
- * backend or fail to degrade gracefully when a tool (adb/idb) is missing.
+ * backend or fail to degrade gracefully when a platform tool is missing.
  */
 
 import type { DeviceBackend, DeviceInfo, DevicePlatform } from "../schema/device-backend.js";
@@ -31,7 +31,7 @@ import type { DeviceBackend, DeviceInfo, DevicePlatform } from "../schema/device
 export interface RegisteredBackend {
   platform: DevicePlatform;
   backend: DeviceBackend;
-  /** Is the underlying tool (adb/idb) installed and usable right now? */
+  /** Is the underlying platform tool (adb, xcrun devicectl) installed and usable right now? */
   isAvailable(): Promise<boolean>;
 }
 
@@ -45,9 +45,9 @@ export class BackendRegistry {
    *
    * Graceful degradation (REQ-IOS-ARCH-003, AC-IOS-009): a backend whose
    * `isAvailable()` resolves false is skipped entirely (0 devices
-   * contributed, no error) — this is how "idb not installed" degrades to
+   * contributed, no error) — this is how "the iOS toolchain is absent" degrades to
    * "Android devices only" with no user-visible failure. A backend that
-   * IS available but throws while listing (a transient adb/idb error) is
+   * IS available but throws while listing (a transient platform-tool error) is
    * also caught and skipped, rather than failing the whole listing.
    *
    * **M5**: 이 메서드가 한 명령 안에서 기기가 열거되는 **유일한** 지점이다.
@@ -105,7 +105,7 @@ export class BackendRegistry {
    * @MX:NOTE — serial-collision policy (design.md §C.3, deferred to this
    * Run-phase decision): if MORE THAN ONE device across the merged list
    * shares the exact same `serial` (an extremely rare adb-serial /
-   * idb-udid coincidence), this method refuses to pick one arbitrarily and
+   * iOS-UDID coincidence), this method refuses to pick one arbitrarily and
    * returns `null` — identical to "not found" — rather than silently
    * routing to whichever backend happened to list first.
    */

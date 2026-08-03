@@ -1,12 +1,16 @@
 /**
  * Device-backend interface (REQ-ARCH-003) — the thin plug-in point through
- * which the iOS/idb backend replaces the Android/adb backend without
- * redesign (spec.md §A.4 architecture layers).
+ * which the iOS backend replaces the Android/adb backend without redesign
+ * (spec.md §A.4 architecture layers).
  *
  * SPEC-ANDROID-001 defined the interface and its Android implementation
- * (`AdbBackend`). SPEC-IOS-001 fulfilled the original promise: `IdbBackend`
- * implements this SAME interface unchanged in shape (REQ-IOS-ARCH-005 —
- * thin/swappable), plus the additive `DeviceInfo.platform` field.
+ * (`AdbBackend`). SPEC-IOS-001 fulfilled the original promise with an iOS
+ * implementation of this SAME interface, unchanged in shape
+ * (REQ-IOS-ARCH-005 — thin/swappable), plus the additive
+ * `DeviceInfo.platform` field. SPEC-VISION-001 M3 then swapped that iOS
+ * implementation for `WdaBackend` (WebDriverAgent HTTP) **without touching
+ * this interface** — the strongest evidence so far that the plug-in point
+ * is thin enough to be worth its existence.
  *
  * **SPEC-VISION-001 M2 (REQ-VISION-002) removed the UI-tree dump method** —
  * that read path and the `--id`/`--text` selectors above it are gone. The
@@ -16,7 +20,7 @@
  * tree. This is the first NON-additive change to the surface.
  *
  * @MX:ANCHOR — invariant contract for backend substitution (REQ-ARCH-003,
- * REQ-IOS-ARCH-005). Both `AdbBackend` and `IdbBackend` implement this exact
+ * REQ-IOS-ARCH-005). Both `AdbBackend` and `WdaBackend` implement this exact
  * 10-method surface (SPEC-GESTURE-001 M1 added `swipe`, M8 added
  * `getMinEffectiveSwipeThreshold`, SPEC-VISION-001 M1 added `getScreenSize`
  * and M2 removed the UI-tree dump method).
@@ -41,11 +45,15 @@ export interface SwipePoint {
  * Optional `swipe` parameters (REQ-GEST-SWIPE-002, SPEC-GESTURE-001).
  *
  * `durationMs` is expressed in the CLI's contract unit — milliseconds —
- * regardless of backend. Each backend converts to its own tool's unit
- * internally: `AdbBackend` passes ms straight through (`adb shell input
- * swipe`'s duration argument is already ms); `IdbBackend` converts ms to
- * seconds (float) before building argv, because `idb`'s `--duration` is
- * seconds (spec.md §C.1-⑦). Omit to use the platform default duration.
+ * regardless of backend. Each backend is responsible for converting to its
+ * own tool's unit internally; both current backends happen to take
+ * milliseconds already (`adb shell input swipe`'s duration argument, and
+ * the W3C actions `pause`/`pointerMove` duration `WdaBackend` sends), so
+ * neither converts today. **The contract is still "the caller always passes
+ * ms"** — a future backend on a seconds-based tool converts inside itself,
+ * never by changing this field's meaning (spec.md §C.1-⑦; a seconds/ms
+ * mix-up is the exact defect SPEC-GESTURE-001 was written to close).
+ * Omit to use the platform default duration.
  */
 export interface SwipeOptions {
   durationMs?: number;
@@ -59,8 +67,10 @@ export interface SwipeOptions {
  * bare number cannot distinguish them: a value derived from a live query of
  * THIS device (`"device-query"`, `AdbBackend` — `wm density`) is a
  * different kind of evidence than a constant measured on a DIFFERENT
- * device and never re-queried (`"measured-constant"`, `IdbBackend` —
- * 11pt measured on one iPhone 17 Pro simulator, spec.md §C.1-⑭). A caller
+ * device and never re-measured (`"measured-constant"`, `WdaBackend` —
+ * 11pt measured on one iPhone 17 Pro simulator, spec.md §C.1-⑭; SPEC-VISION-001
+ * M3 scales that constant into screenshot pixels but does NOT re-measure it,
+ * so the basis stays `"measured-constant"`). A caller
  * receiving a `minValidRatio` (e.g. in the `AMOUNT_TOO_SMALL` error
  * payload) can use this to tell whether the value came from its OWN device
  * or from somewhere else entirely (spec.md §C.1-⑰ — the exact defect this
@@ -97,7 +107,7 @@ export interface ScreenSize {
 
 /**
  * Which backend owns a device (REQ-IOS-SCHEMA-001, SPEC-IOS-001) — set by
- * each backend's `listDevices()` (`AdbBackend` -> `"android"`, `IdbBackend`
+ * each backend's `listDevices()` (`AdbBackend` -> `"android"`, `WdaBackend`
  * -> `"ios"`) and consumed by the backend registry (`registry.ts`) to route
  * `--device <serial>` to the owning backend without the user specifying a
  * platform.
@@ -106,7 +116,7 @@ export type DevicePlatform = "android" | "ios";
 
 /** One connected device, as reported by `devices` (REQ-DEVICES-001/002). */
 export interface DeviceInfo {
-  /** Device serial / unique identifier (adb serial, idb udid). */
+  /** Device serial / unique identifier (adb serial, iOS hardware UDID). */
   serial: string;
   /** Human-readable model name. */
   model: string;
@@ -126,12 +136,14 @@ export interface DeviceInfo {
  * Method names mirror the CLI command surface planned for M3
  * (`doctor`/`devices`/`launch`/`stop`/`screenshot`/`tap`/`text`/`key`/`dump`)
  * so that a backend swap requires no interface change. All methods are
- * async because every real implementation shells out to an external tool
- * (adb, idb) or streams device I/O.
+ * async because every real implementation reaches an external system —
+ * a subprocess (`adb`, `xcrun devicectl`) or an HTTP agent on the device
+ * (WebDriverAgent).
  *
- * NOTE: this interface is a design-time contract only in this SPEC. No
- * concrete class implements it yet — that is M4+ scope (adb subprocess
- * wrapper) and SPEC-02 scope (iOS/idb backend).
+ * Two concrete implementations exist: `AdbBackend` (Android) and
+ * `WdaBackend` (iOS). The original wording here — "design-time contract
+ * only, no concrete class implements it yet" — dated from
+ * SPEC-ANDROID-001's authoring and is no longer true.
  */
 export interface DeviceBackend {
   /** Lists all devices currently visible to the backend. */
@@ -177,15 +189,22 @@ export interface DeviceBackend {
    * additive 10th method, the original 9 are unchanged). This interface
    * asks the DOMAIN question ("what distance moves THIS device's screen?"),
    * never "what is this device's density" — exposing a density accessor
-   * would force `IdbBackend` to fabricate a `dp × density` rule for a value
-   * (iOS's 11pt) that was never measured that way, inventing an unmeasured
-   * iOS platform rule (spec.md §A.3 D3 운용 주석 보강, §D). Each backend
-   * answers in its OWN way: `AdbBackend` queries `wm density` on THIS
-   * device at call time and derives `8dp × density` plus a safety margin;
-   * `IdbBackend` returns a measured constant (11pt, measured on a
-   * DIFFERENT device) with NO device query at all. `SwipeThreshold.basis`
-   * distinguishes the two so neither's value can silently pass for the
-   * other's.
+   * would force the iOS backend to fabricate a `dp × density` rule for a
+   * value (iOS's 11pt) that was never measured that way, inventing an
+   * unmeasured iOS platform rule (spec.md §A.3 D3 운용 주석 보강, §D). Each
+   * backend answers in its OWN way: `AdbBackend` queries `wm density` on
+   * THIS device at call time and derives `8dp × density` plus a safety
+   * margin; `WdaBackend` starts from a constant measured on a DIFFERENT
+   * device (11pt) and only converts it into this device's coordinate system
+   * — it queries the device for the SCALE, never for the threshold itself.
+   *
+   * `SwipeThreshold.basis` distinguishes the two so neither's value can
+   * silently pass for the other's. Note the iOS side stays
+   * `"measured-constant"` even though a query happens: what `basis`
+   * reports is where the NUMBER came from, not whether any device call was
+   * made. Re-labelling it `"device-query"` because a scale lookup occurs
+   * would tell the caller this device was asked how far it needs to move —
+   * which it never was.
    */
   getMinEffectiveSwipeThreshold(serial: string): Promise<SwipeThreshold>;
 

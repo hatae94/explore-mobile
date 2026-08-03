@@ -22,10 +22,10 @@
  * (`adbKeyboard` stays present as `{skipped:true, ...}` for a stable JSON
  * shape rather than being replaced/removed).
  *
- * SPEC-VISION-001 M3 (AC-VISION-020): iOS 점검 항목이 idb/idb_companion/
- * 시뮬레이터 부팅에서 devicectl/WDA로 교체된다. `idbEnvironment` 키가
- * `wdaEnvironment`로 바뀌므로 이 명령의 JSON 출력은 iOS 대상에서 형태가
- * 달라진다 — idb 점검은 이 SPEC 이후 의미가 없다(design.md §B.3).
+ * SPEC-VISION-001 M3 (AC-VISION-020): iOS 점검 항목이 devicectl 가용성과
+ * WDA 도달성으로 교체됐다. iOS 대상 JSON 출력의 환경 보고 키가
+ * `wdaEnvironment`이며, 이전 iOS 도구 체인을 점검하던 키는 사라졌다
+ * (design.md §B.3).
  */
 
 import { spawnProcess } from "../../backend/process-executor.js";
