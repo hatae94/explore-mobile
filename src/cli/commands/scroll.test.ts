@@ -8,10 +8,9 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import type { CommonElement } from "../../schema/common-element.js";
-import type { DeviceBackend, DeviceInfo } from "../../schema/device-backend.js";
+import type { DeviceBackend, DeviceInfo, ScreenSize } from "../../schema/device-backend.js";
 import { runCli } from "../router.js";
-import { deriveScreenSize, minNonDegenerateRatio } from "./scroll-geometry.js";
+import { minNonDegenerateRatio } from "./scroll-geometry.js";
 
 /**
  * `minNonDegenerateRatio()`가 M10/0.8.0 amendment로 `number | undefined`를
@@ -66,49 +65,41 @@ function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   };
 }
 
-function element(overrides: Partial<CommonElement> = {}): CommonElement {
-  return {
-    role: "Other",
-    text: "",
-    id: "",
-    bounds: { x: 0, y: 0, w: 0, h: 0 },
-    tappable: false,
-    enabled: true,
-    children: [],
-    ...overrides,
-  };
-}
+/**
+ * 화면 크기 픽스처.
+ *
+ * SPEC-CLEAN-001 이전에는 `CommonElement[]` 덤프 픽스처를 `deriveScreenSize`로
+ * 파생해 만들었다. 그 함수와 스키마가 제거되면서 **파생 결과를 그대로 리터럴로
+ * 고정**한다 — 값은 제거 직전에 `deriveScreenSize`를 실행해 확인한 것이며,
+ * 각 픽스처가 의미하던 화면 크기는 바뀌지 않았다.
+ *
+ * witness 선택 규칙(어느 최상위 요소가 화면 전체인가) 자체는 `scroll`의 관심사가
+ * 아니다 — `scroll`은 `backend.getScreenSize`가 돌려주는 크기만 소비한다.
+ */
+const SCREEN_400X800: ScreenSize = { width: 400, height: 800 };
 
-/** 알려진 400x800 화면 하나로 이루어진 dump 결과 (witness == 유일한 최상위 요소). */
-const KNOWN_SCREEN_400X800: CommonElement[] = [element({ bounds: { x: 0, y: 0, w: 400, h: 800 } })];
-
-/** AC-GEST-008 — 최상위 3개, 인덱스 0은 화면 전체가 아님, 인덱스 1이 witness. */
-const MULTI_ROOT_WITH_WITNESS: CommonElement[] = [
-  element({ bounds: { x: 0, y: 0, w: 402, h: 60 } }),
-  element({ bounds: { x: 0, y: 0, w: 402, h: 874 } }),
-  element({ bounds: { x: 0, y: 800, w: 402, h: 74 } }),
-];
-
-/** AC-GEST-017 — Safari 크롬-only, witness 없음 (402x120 후보는 비퇴화이지만 틀림). */
-const CHROME_ONLY_NO_WITNESS: CommonElement[] = [
-  element({ bounds: { x: 0, y: 0, w: 402, h: 60 } }),
-  element({ bounds: { x: 0, y: 60, w: 402, h: 44 } }),
-  element({ bounds: { x: 0, y: 104, w: 402, h: 16 } }),
-];
-
-/** AC-GEST-018 — spec.md §C.1-⑫ 실측 화면 크기(witness == 유일한 최상위 요소). */
-const KNOWN_SCREEN_402X874: CommonElement[] = [element({ bounds: { x: 0, y: 0, w: 402, h: 874 } })];
+/** AC-GEST-018 — spec.md §C.1-⑫ 실측 화면 크기. */
+const SCREEN_402X874: ScreenSize = { width: 402, height: 874 };
 
 /**
- * AC-GEST-034 — 문턱을 넘는 비율이 아예 없는 화면(acceptance.md가 든
- * 실행 가능한 반례 그대로: 문턱 32px에 12x12 화면, witness == 유일한
- * 최상위 요소이므로 SCREEN_SIZE_UNKNOWN으로 걸러지지 않는다).
+ * AC-GEST-034 — 문턱을 넘는 비율이 아예 없는 화면(acceptance.md가 든 실행 가능한
+ * 반례 그대로: 문턱 32px에 12x12).
  */
-const KNOWN_SCREEN_12X12: CommonElement[] = [element({ bounds: { x: 0, y: 0, w: 12, h: 12 } })];
+const SCREEN_12X12: ScreenSize = { width: 12, height: 12 };
+
+/**
+ * AC-GEST-017 — 백엔드가 화면 크기를 확정하지 못한 경우.
+ *
+ * `undefined`가 아니라 `null`인 이유: `createMockBackend`의 기본 파라미터는
+ * `undefined`를 넘기면 **기본값으로 대체된다**(JS 기본 파라미터 의미론). 그러면
+ * "크기 불명" 케이스가 조용히 400x800으로 바뀌어 테스트가 무의미해진다.
+ * `null`은 기본값 대체를 유발하지 않으므로 의도가 보존된다.
+ */
+const SCREEN_UNKNOWN = null;
 
 function createMockBackend(
   devices: DeviceInfo[] = [device()],
-  elements: CommonElement[] = KNOWN_SCREEN_400X800,
+  screen: ScreenSize | null = SCREEN_400X800,
 ): DeviceBackend {
   return {
     listDevices: vi.fn().mockResolvedValue(devices),
@@ -124,16 +115,11 @@ function createMockBackend(
     // (BOUNDARY_FIXTURES_402X874, minNonDegenerateRatio() call sites) keeps
     // resolving against the SAME threshold it was derived against.
     getMinEffectiveSwipeThreshold: vi.fn().mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
-    // SPEC-VISION-001 M1 (REQ-VISION-001): 화면 크기의 출처가 UI 계층
-    // 덤프에서 `backend.getScreenSize`로 바뀌었다. 이 mock은 기존
-    // 픽스처(`elements`)에 M1 이전과 **같은 파생 규칙**을 적용해 크기를
-    // 만들어 돌려준다 — 그래야 이 파일에 M1 이전에 작성된 모든 화면 크기
-    // 픽스처가 여전히 같은 크기를 의미하고, 바뀐 것이 크기의 출처뿐임을
-    // 기존 테스트들이 그대로 증언한다.
-    //
-    // M2(REQ-VISION-002) 이후 `elements`는 오직 이 파생의 입력으로만
-    // 남는다 — 백엔드에는 트리를 읽는 메서드가 더 이상 없다.
-    getScreenSize: vi.fn().mockResolvedValue(deriveScreenSize(elements)),
+    // SPEC-VISION-001 M1 (REQ-VISION-001): 화면 크기의 출처는 UI 계층 덤프가
+    // 아니라 `backend.getScreenSize`다. SPEC-CLEAN-001이 덤프 픽스처를 걷어내며
+    // 이 mock은 크기를 **직접** 돌려준다 — 중간 파생 단계가 사라졌을 뿐
+    // 각 테스트가 의미하던 화면 크기는 같다.
+    getScreenSize: vi.fn().mockResolvedValue(screen ?? undefined),
   };
 }
 
@@ -205,7 +191,7 @@ describe("scroll", () => {
 
   describe("AC-GEST-008 — 화면 크기를 인덱스 0이 아니라 전체에서 파생한다", () => {
     it("최상위 3개 중 인덱스 1이 witness인 dump 결과로 402x874를 사용한다", async () => {
-      const backend = createMockBackend([device()], MULTI_ROOT_WITH_WITNESS);
+      const backend = createMockBackend([device()], SCREEN_402X874);
 
       const result = await runCli(["scroll", "down"], backend);
 
@@ -303,7 +289,7 @@ describe("scroll", () => {
 
   describe("AC-GEST-010 — 화면 크기 불명 (퇴화 케이스)", () => {
     it("dump가 빈 배열이면 SCREEN_SIZE_UNKNOWN, 무동작", async () => {
-      const backend = createMockBackend([device()], []);
+      const backend = createMockBackend([device()], SCREEN_UNKNOWN);
 
       const result = await runCli(["scroll", "down"], backend);
 
@@ -313,7 +299,7 @@ describe("scroll", () => {
     });
 
     it("모든 bounds가 0이면 SCREEN_SIZE_UNKNOWN, 무동작", async () => {
-      const backend = createMockBackend([device()], [element({ bounds: { x: 0, y: 0, w: 0, h: 0 } })]);
+      const backend = createMockBackend([device()], SCREEN_UNKNOWN);
 
       const result = await runCli(["scroll", "down"], backend);
 
@@ -325,7 +311,7 @@ describe("scroll", () => {
 
   describe("AC-GEST-017 — witness 없는 조각 집합 (비퇴화이지만 틀린 크기)", () => {
     it("Safari 크롬-only dump 결과 -> SCREEN_SIZE_UNKNOWN, 무동작 (핵심 회귀 방지 테스트)", async () => {
-      const backend = createMockBackend([device()], CHROME_ONLY_NO_WITNESS);
+      const backend = createMockBackend([device()], SCREEN_UNKNOWN);
 
       const result = await runCli(["scroll", "down", "--amount", "0.8"], backend);
 
@@ -337,7 +323,7 @@ describe("scroll", () => {
 
   describe("AC-GEST-018 — 퇴화 --amount 거부 + 동작 경계 (SPEC-GESTURE-001 M6/0.4.0 amendment, F1)", () => {
     it("down: --amount 0.001 -> AMOUNT_TOO_SMALL, 무동작 (실측 재현, spec.md §C.1-⑫)", async () => {
-      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+      const backend = createMockBackend([device()], SCREEN_402X874);
 
       const result = await runCli(["scroll", "down", "--amount", "0.001"], backend);
 
@@ -362,7 +348,7 @@ describe("scroll", () => {
       // 11pt로 좁혔으므로(spec.md §C.1-⑭), 거리 2는 이제도 화면을 신뢰성
       // 있게 움직이지 못해 거부된다. 실제 새 동작 경계는 아래
       // "AC-GEST-024" 블록의 독립 유도 픽스처를 참조.
-      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+      const backend = createMockBackend([device()], SCREEN_402X874);
 
       const result = await runCli(["scroll", "down", "--amount", "0.002"], backend);
 
@@ -372,7 +358,7 @@ describe("scroll", () => {
     });
 
     it("AMOUNT_TOO_SMALL은 INVALID_AMOUNT와 다른 코드다 -- 0.001은 계약 범위(0 초과 1 이하) 안에 있다", async () => {
-      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+      const backend = createMockBackend([device()], SCREEN_402X874);
       const result = await runCli(["scroll", "down", "--amount", "0.001"], backend);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).not.toBe("INVALID_AMOUNT");
@@ -382,7 +368,7 @@ describe("scroll", () => {
       describe(`방향=${direction}`, () => {
         for (const ratio of [0.0001, 0.001, 0.0012]) {
           it(`--amount ${ratio} -> AMOUNT_TOO_SMALL, 무동작`, async () => {
-            const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+            const backend = createMockBackend([device()], SCREEN_402X874);
 
             const result = await runCli(["scroll", direction, "--amount", String(ratio)], backend);
 
@@ -395,13 +381,13 @@ describe("scroll", () => {
         it("독립 유도 경계(C-5, minNonDegenerateRatio()를 호출하지 않은 손 계산 값) 바로 아래는 거부되고, 바로 위는 성공한다", async () => {
           const fixture = BOUNDARY_FIXTURES_402X874[direction];
 
-          const rejectBackend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+          const rejectBackend = createMockBackend([device()], SCREEN_402X874);
           const rejectResult = await runCli(["scroll", direction, "--amount", fixture.rejectRatio], rejectBackend);
           expect(rejectResult.ok).toBe(false);
           if (!rejectResult.ok) expect(rejectResult.error.code).toBe("AMOUNT_TOO_SMALL");
           expect(rejectBackend.swipe).not.toHaveBeenCalled();
 
-          const acceptBackend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+          const acceptBackend = createMockBackend([device()], SCREEN_402X874);
           const acceptResult = await runCli(["scroll", direction, "--amount", fixture.acceptRatio], acceptBackend);
           expect(acceptResult.ok).toBe(true);
           if (acceptResult.ok) {
@@ -415,7 +401,7 @@ describe("scroll", () => {
 
         it("minNonDegenerateRatio()가 계산한 경계 비율을 되먹이면 성공한다 (AC-GEST-024 왕복 검증, 응답 배선 회귀 가드 -- 문턱 정확성 증명은 위 독립 유도 테스트와 실기기 확인이 맡는다)", async () => {
           const boundaryRatio = assertDefined(minNonDegenerateRatio(direction, { width: 402, height: 874 }, 11));
-          const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+          const backend = createMockBackend([device()], SCREEN_402X874);
 
           const result = await runCli(["scroll", direction, "--amount", String(boundaryRatio)], backend);
 
@@ -424,7 +410,7 @@ describe("scroll", () => {
         });
 
         it("--amount 1은 정상 성공한다 (동작 경계)", async () => {
-          const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+          const backend = createMockBackend([device()], SCREEN_402X874);
           const result = await runCli(["scroll", direction, "--amount", "1"], backend);
           expect(result.ok).toBe(true);
         });
@@ -434,7 +420,7 @@ describe("scroll", () => {
 
   describe("AC-GEST-034 — minValidRatio는 자기 자신이 거부할 값을 권하지 않는다 (SPEC-GESTURE-001 M10/0.8.0 amendment)", () => {
     it("문턱을 넘는 비율이 없는 화면(12x12, 문턱 32px) -- AMOUNT_TOO_SMALL은 그대로 나가지만 minValidRatio/minValidRatioBasis는 응답에 실리지 않는다", async () => {
-      const backend = createMockBackend([device()], KNOWN_SCREEN_12X12);
+      const backend = createMockBackend([device()], SCREEN_12X12);
       (backend.getMinEffectiveSwipeThreshold as ReturnType<typeof vi.fn>).mockResolvedValue({
         minEffectiveSwipePx: 32,
         basis: "device-query",
@@ -455,7 +441,7 @@ describe("scroll", () => {
 
     it("같은 화면·문턱 조합은 네 방향 전부에서 권고 없이 거부된다", async () => {
       for (const direction of ["up", "down", "left", "right"] as const) {
-        const backend = createMockBackend([device()], KNOWN_SCREEN_12X12);
+        const backend = createMockBackend([device()], SCREEN_12X12);
         (backend.getMinEffectiveSwipeThreshold as ReturnType<typeof vi.fn>).mockResolvedValue({
           minEffectiveSwipePx: 32,
           basis: "device-query",
@@ -473,7 +459,7 @@ describe("scroll", () => {
     });
 
     it("권고가 존재하는 일반 화면에서는 여전히 minValidRatio/minValidRatioBasis가 응답에 실린다 (회귀 아님)", async () => {
-      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+      const backend = createMockBackend([device()], SCREEN_402X874);
 
       const result = await runCli(["scroll", "down", "--amount", "0.001"], backend);
 
@@ -487,7 +473,7 @@ describe("scroll", () => {
 
   describe("AC-GEST-026/027 — 문턱 조회 배선 (SPEC-GESTURE-001 M8/0.6.0 amendment, REQ-GEST-SCROLL-007/008)", () => {
     it("backend.getMinEffectiveSwipeThreshold를 해석된 serial로 호출한다 -- 화면 크기 조회 이후, backend.swipe 이전", async () => {
-      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+      const backend = createMockBackend([device()], SCREEN_402X874);
 
       const result = await runCli(["scroll", "down", "--amount", "1"], backend);
 
@@ -504,7 +490,7 @@ describe("scroll", () => {
     });
 
     it("device-query 출처(Android 시뮬레이션)로 응답하는 백엔드를 쓰면 AMOUNT_TOO_SMALL 응답의 출처도 device-query다 -- 한쪽 값이 다른 쪽 경로로 흘러가지 않는다", async () => {
-      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+      const backend = createMockBackend([device()], SCREEN_402X874);
       (backend.getMinEffectiveSwipeThreshold as ReturnType<typeof vi.fn>).mockResolvedValue({
         minEffectiveSwipePx: 32,
         basis: "device-query",
@@ -524,7 +510,7 @@ describe("scroll", () => {
     });
 
     it("threshold를 되먹이면 그 출처(device-query)로 성공한다 -- 왕복 검증의 응답 배선 가드", async () => {
-      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+      const backend = createMockBackend([device()], SCREEN_402X874);
       (backend.getMinEffectiveSwipeThreshold as ReturnType<typeof vi.fn>).mockResolvedValue({
         minEffectiveSwipePx: 32,
         basis: "device-query",
@@ -541,7 +527,7 @@ describe("scroll", () => {
     });
 
     it("backend.getMinEffectiveSwipeThreshold가 던지면 BACKEND_COMMAND_FAILED를 반환하고 swipe는 호출되지 않는다", async () => {
-      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+      const backend = createMockBackend([device()], SCREEN_402X874);
       (backend.getMinEffectiveSwipeThreshold as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error("adb: wm density failed"),
       );
@@ -561,16 +547,16 @@ describe("scroll", () => {
     // 순수 함수 레벨(scroll-geometry.test.ts)과 별개로, `getScreenSize`
     // -> computeScrollSwipe -> isDegenerateSwipe 전 구간을 CLI 디스패치로
     // 확인한다. 크기는 아래 단일 항목 픽스처에서 파생된다(createMockBackend).
-    const ODD_SCREENS: Record<string, CommonElement[]> = {
-      "402x874(짝x짝)": [element({ bounds: { x: 0, y: 0, w: 402, h: 874 } })],
-      "393x852(폭 홀)": [element({ bounds: { x: 0, y: 0, w: 393, h: 852 } })],
-      "375x667(홀x홀)": [element({ bounds: { x: 0, y: 0, w: 375, h: 667 } })],
+    const ODD_SCREENS: Record<string, ScreenSize> = {
+      "402x874(짝x짝)": { width: 402, height: 874 },
+      "393x852(폭 홀)": { width: 393, height: 852 },
+      "375x667(홀x홀)": { width: 375, height: 667 },
     };
 
-    for (const [label, elements] of Object.entries(ODD_SCREENS)) {
+    for (const [label, oddScreen] of Object.entries(ODD_SCREENS)) {
       for (const direction of ["up", "down", "left", "right"] as const) {
         it(`${label} ${direction}: 극소 비율(1e-8)은 AMOUNT_TOO_SMALL, 무동작`, async () => {
-          const backend = createMockBackend([device()], elements);
+          const backend = createMockBackend([device()], oddScreen);
 
           const result = await runCli(["scroll", direction, "--amount", "0.00000001"], backend);
 
@@ -635,7 +621,7 @@ describe("scroll", () => {
 
   describe("REQ-VISION-001 — 화면 크기 소스 교체 (SPEC-VISION-001 M1)", () => {
     it("AC-VISION-001/006: 성공 경로의 화면 크기 조회는 getScreenSize 정확히 1회뿐이다 -- M2에서 UI 계층 덤프 메서드 자체가 인터페이스에서 사라졌으므로 '호출하지 않음'은 타입이 보장하고, 이 테스트는 '무엇을 대신 호출하는가'를 증언한다", async () => {
-      const backend = createMockBackend([device()], KNOWN_SCREEN_402X874);
+      const backend = createMockBackend([device()], SCREEN_402X874);
 
       const result = await runCli(["scroll", "down", "--amount", "1"], backend);
 

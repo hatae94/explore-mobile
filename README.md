@@ -31,6 +31,8 @@ Android는 `adb`, iOS는 실기기 경로를 통해 동작하며, AI 에이전�
 - **Node.js >= 22** — 원래 iOS 웹 경로가 Node 내장 `WebSocket`(22.4+)을 쓰기
   때문에 올린 하한이다. `SPEC-WEBVIEW-002`가 그 경로를 제거하면서 이유는
   사라졌지만, 하한을 되돌리는 것은 소비자 대상 변경이라 별도 판단으로 남긴다.
+- **런타임 의존성 0개.** `SPEC-CLEAN-001`이 마지막 의존성(`fast-xml-parser` —
+  제거된 uiautomator XML 정규화의 잔재)을 걷어냈다.
 - **adb** (Android SDK Platform Tools)가 `PATH`에 있어야 한다. 직접 설치하거나
   [`doctor`](#doctor)에게 맡기면 된다.
 
@@ -230,8 +232,8 @@ iOS에는 위 내용이 적용되지 않는다 — 전환할 IME도, APK도, 세
 
 ```
 $ pnpm test
-Test Files  26 passed (26)
-Tests  550 passed | 2 expected fail (552)
+Test Files  25 passed (25)
+Tests  540 passed | 2 expected fail (542)
 
 $ pnpm typecheck   → exit 0
 $ pnpm build       → exit 0

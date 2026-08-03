@@ -1,20 +1,20 @@
 /**
  * Public library entry point for SPEC-ANDROID-001.
  *
- * Exposes the common element schema (M1), the device-backend interface
- * (M1), the uiautomator normalization pure function (M2), the CLI router
- * (M3), the adb backend implementation incl. the M5 Unicode/IME text path
- * and M7 per-serial state isolation (M4/M5/M7), and the doctor/reset
- * environment-bootstrap service (M6). All 8 milestones are implemented;
- * the M8 Claude skill wrapper lives at `.claude/skills/explore-mobile/`
- * (not part of this library's runtime exports).
+ * Exposes the device-backend interface, the CLI router, the adb backend
+ * (incl. the Unicode/IME text path and per-serial state isolation), and the
+ * doctor/reset environment-bootstrap service.
+ *
+ * The UI-recognition schema (`CommonElement`) and its normalizers are gone:
+ * SPEC-VISION-001 removed the native ones with the UI-tree read path,
+ * SPEC-WEBVIEW-002 removed the web DOM one, and SPEC-CLEAN-001 removed the
+ * now-producerless schema itself. Screens are read by screenshot only.
  *
  * License-compliance follow-up: ADBKeyBoard (GPL-2.0) is never bundled
  * inside this MIT package — `doctor` downloads it at runtime from its
  * official GitHub release (see backend/apk-downloader.ts).
  */
 
-export type { CommonElement, ElementBounds } from "./schema/common-element.js";
 export type {
   DeviceBackend,
   DeviceConnectionState,

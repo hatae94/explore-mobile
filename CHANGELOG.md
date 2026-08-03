@@ -299,6 +299,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Dead code from two prior removals is cleared out** (SPEC-CLEAN-001).
+  `CommonElement` / `ElementBounds` — the schema every UI-recognition backend
+  used to normalize into — had lost its last producer: the two native
+  normalizers went with SPEC-VISION-001 M2, the web DOM one with
+  SPEC-WEBVIEW-002. `deriveScreenSize` went with it, having had no production
+  caller since SPEC-VISION-001 M1 moved screen size to `backend.getScreenSize`.
+  Both prior SPECs had deliberately left this behind as out of scope; this one
+  settles the bill.
+
+  **The package now has zero runtime dependencies.** `fast-xml-parser` was the
+  only one, and its last consumer was the uiautomator XML normalizer removed
+  in M2.
+
+  **BREAKING — public API**: `CommonElement` and `ElementBounds` are no longer
+  exported from the package entry point. The package has never been published
+  to npm (`npm view explore-mobile` → 404), so no consumer can be affected in
+  practice; it is recorded as breaking because the export existed.
+
+  `nodeWdaHttpClient` and `SwipeThresholdBasis` were reported as unused
+  exports by tooling but are **live** — the first is a default parameter
+  value, the second is referenced within its own module. They were made
+  module-private rather than deleted; deleting the first would have broken
+  the iOS transport at runtime while typechecking cleanly.
+
+  `scroll`'s tests were rewritten rather than deleted: fixtures that derived a
+  screen size from dump elements now state the size directly, with the values
+  captured by running the old derivation one last time before removing it. The
+  test count for that file is unchanged, and the real-device `scroll`
+  coordinates match the previously recorded measurement exactly
+  (`{720,2262} → {720,858}` on a 1440×3120 screen).
+
 - **The `--web` CSS-selector path is gone entirely** (SPEC-WEBVIEW-002,
   superseding SPEC-WEBVIEW-001). `tap --web` / `text --web`, the `--page`
   and `--index` flags, the WebKit Inspector client, the

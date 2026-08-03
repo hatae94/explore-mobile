@@ -7,10 +7,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { CommonElement } from "../../schema/common-element.js";
 import {
   computeScrollSwipe,
-  deriveScreenSize,
   isDegenerateSwipe,
   minNonDegenerateRatio,
   roundPixel,
@@ -31,102 +29,6 @@ function assertDefined(value: number | undefined): number {
   return value;
 }
 
-function element(overrides: Partial<CommonElement> = {}): CommonElement {
-  return {
-    role: "Other",
-    text: "",
-    id: "",
-    bounds: { x: 0, y: 0, w: 0, h: 0 },
-    tappable: false,
-    enabled: true,
-    children: [],
-    ...overrides,
-  };
-}
-
-describe("deriveScreenSize", () => {
-  describe("AC-GEST-008 — 인덱스 0을 루트로 가정하지 않는다", () => {
-    it("최상위 3개 중 인덱스 1이 witness일 때 402x874로 파생한다", () => {
-      const elements = [
-        element({ bounds: { x: 0, y: 0, w: 402, h: 60 } }), // 인덱스 0 — 상단 바, 화면 전체 아님
-        element({ bounds: { x: 0, y: 0, w: 402, h: 874 } }), // 인덱스 1 — 화면 전체 (witness)
-        element({ bounds: { x: 0, y: 800, w: 402, h: 74 } }), // 인덱스 2 — 하단 바
-      ];
-
-      expect(deriveScreenSize(elements)).toEqual({ width: 402, height: 874 });
-    });
-
-    it("인덱스 0만 보는 구현이라면 402x60을 얻는다 — 이 테스트는 그 실수를 잡는다", () => {
-      const elements = [
-        element({ bounds: { x: 0, y: 0, w: 402, h: 60 } }),
-        element({ bounds: { x: 0, y: 0, w: 402, h: 874 } }),
-        element({ bounds: { x: 0, y: 800, w: 402, h: 74 } }),
-      ];
-
-      const size = deriveScreenSize(elements);
-      expect(size).not.toEqual({ width: 402, height: 60 });
-    });
-  });
-
-  describe("실측 pre-flight 픽스처 — Safari 전면, witness가 인덱스 0 (plan.md §B.5 해소 증거)", () => {
-    it("[Application 402x874(witness), TextField 84x14.333...] -> 402x874로 파생한다", () => {
-      // 2026-07-27 실측: `node dist/cli/bin.js dump --device D0B3A18C-...`
-      // 최상위 요소 2개, 두 번째 요소의 h가 14.333333333333371(비정수).
-      const elements = [
-        element({
-          role: "Application",
-          text: "Safari",
-          bounds: { x: 0, y: 0, w: 402, h: 874 },
-        }),
-        element({
-          role: "TextField",
-          text: "주소",
-          bounds: { x: 159, y: 837, w: 84, h: 14.333333333333371 },
-        }),
-      ];
-
-      expect(deriveScreenSize(elements)).toEqual({ width: 402, height: 874 });
-    });
-  });
-
-  describe("AC-GEST-010 — 퇴화 케이스", () => {
-    it("빈 배열이면 undefined를 반환한다", () => {
-      expect(deriveScreenSize([])).toBeUndefined();
-    });
-
-    it("모든 bounds가 0이면 undefined를 반환한다", () => {
-      const elements = [element({ bounds: { x: 0, y: 0, w: 0, h: 0 } })];
-      expect(deriveScreenSize(elements)).toBeUndefined();
-    });
-  });
-
-  describe("AC-GEST-017 — witness 없는 조각 집합 (비퇴화이지만 틀린 크기)", () => {
-    it("Safari 크롬-only 픽스처(402x120 후보, witness 없음) -> undefined", () => {
-      const elements = [
-        element({ bounds: { x: 0, y: 0, w: 402, h: 60 } }), // 상단 바
-        element({ bounds: { x: 0, y: 60, w: 402, h: 44 } }), // URL 바
-        element({ bounds: { x: 0, y: 104, w: 402, h: 16 } }), // 진행 표시
-      ];
-
-      // 후보 산출(①)은 402x120으로 비퇴화 양수 — AC-GEST-010의 퇴화 검사로는
-      // 절대 잡히지 않는다. witness 검증(②)만이 이 케이스를 막는다.
-      expect(deriveScreenSize(elements)).toBeUndefined();
-    });
-
-    it("느슨한 witness 규칙(원점 조건 없이 x+w===width && y+h===height)이라면 통과했을 인덱스 2를 거부한다", () => {
-      const elements = [
-        element({ bounds: { x: 0, y: 0, w: 402, h: 60 } }),
-        element({ bounds: { x: 0, y: 60, w: 402, h: 44 } }),
-        // 인덱스 2: x+w=402(=width), y+h=120(=height)이지만 y=104 (원점 아님)
-        element({ bounds: { x: 0, y: 104, w: 402, h: 16 } }),
-      ];
-
-      // 원점 조건(x===0 && y===0)을 요구하지 않으면 인덱스 2가 witness로
-      // 통과해 402x120이 채택되어 버린다 — 이 테스트가 그 실수를 잡는다.
-      expect(deriveScreenSize(elements)).toBeUndefined();
-    });
-  });
-});
 
 describe("roundPixel", () => {
   it("실측 비정수 bounds(h: 14.333333333333371)를 정수로 반올림한다", () => {
@@ -363,10 +265,11 @@ describe("isDegenerateSwipe / minNonDegenerateRatio (SPEC-GESTURE-001 M6/M7/M8 �
     const TINY_SCREEN = { width: 12, height: 12 };
     const THRESHOLD_PX = 32;
 
-    it("deriveScreenSize는 12x12 화면을 거부하지 않는다 -- '그런 화면은 이미 REQ-GEST-SCROLL-004가 거부한다'는 전제가 거짓이라는 실행 가능한 반례(NN5)", () => {
-      const elements = [element({ bounds: { x: 0, y: 0, w: 12, h: 12 } })];
-      expect(deriveScreenSize(elements)).toEqual({ width: 12, height: 12 });
-    });
+    // NN5의 전제("12x12 같은 화면은 이미 REQ-GEST-SCROLL-004가 거부한다"는 거짓)를
+    // 세우던 `deriveScreenSize` 반례 테스트는 SPEC-CLEAN-001이 그 함수를 제거하며
+    // 함께 사라졌다. 전제 자체는 없어지지 않았고 **더 강한 형태로** 남아 있다 —
+    // `scroll.test.ts`가 `backend.getScreenSize`가 12x12를 돌려주는 실제 경로로
+    // 같은 것을 검증한다(AC-GEST-034 블록). 아래 두 테스트가 그 전제 위에 선다.
 
     it("ratio=1조차 이 화면·문턱에서는 퇴화다 -- 문턱을 넘는 비율이 아예 존재하지 않는다", () => {
       for (const direction of ["up", "down", "left", "right"] as const) {

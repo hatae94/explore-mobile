@@ -18,7 +18,6 @@
  * 없음(AC-GEST-017)으로 witness 누락을 배제한다).
  */
 
-import type { CommonElement } from "../../schema/common-element.js";
 import type { ScreenSize, SwipePoint } from "../../schema/device-backend.js";
 
 export type ScrollDirection = "up" | "down" | "left" | "right";
@@ -63,28 +62,6 @@ export interface SwipeCoordinates {
  * @MX:ANCHOR: [AUTO] scroll 편의 계층 전체가 기대는 화면 크기 파생 불변식 — witness 없이 채택하면 되돌릴 수 없는 제스처를 잘못된 크기로 보낸다
  * @MX:REASON: fan_in >= 3(scroll.ts 호출 + scroll.test.ts·scroll-geometry.test.ts 다수 픽스처가 이 계약에 고정) — witness 요건(원점 조건 포함)을 깨면 AC-GEST-008/017이 검증하는 정확한 회귀(Safari 크롬-only 402x120 오채택)가 조용히 재발한다(plan.md §B.5)
  */
-export function deriveScreenSize(elements: CommonElement[]): ScreenSize | undefined {
-  if (elements.length === 0) return undefined;
-
-  let width = 0;
-  let height = 0;
-  for (const element of elements) {
-    const right = element.bounds.x + element.bounds.w;
-    const bottom = element.bounds.y + element.bounds.h;
-    if (right > width) width = right;
-    if (bottom > height) height = bottom;
-  }
-
-  if (width <= 0 || height <= 0) return undefined;
-
-  const hasWitness = elements.some(
-    (element) =>
-      element.bounds.x === 0 && element.bounds.y === 0 && element.bounds.w === width && element.bounds.h === height,
-  );
-  if (!hasWitness) return undefined;
-
-  return { width, height };
-}
 
 /**
  * 화면 가장자리 여백 비율(B-8) — `--amount 1`이어도 손가락이 화면 맨

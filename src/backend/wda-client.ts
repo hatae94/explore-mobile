@@ -42,7 +42,7 @@ export type WdaHttpClient = (
 ) => Promise<WdaHttpResponse>;
 
 /** 실제 HTTP 실행기 (Node 전역 `fetch`). */
-export const nodeWdaHttpClient: WdaHttpClient = async (url, init) => {
+const nodeWdaHttpClient: WdaHttpClient = async (url, init) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), init.timeoutMs);
   try {

@@ -77,7 +77,7 @@ export interface SwipeOptions {
  * SPEC exists to prevent: "a wrong number and a right number looking
  * identical").
  */
-export type SwipeThresholdBasis = "device-query" | "measured-constant";
+type SwipeThresholdBasis = "device-query" | "measured-constant";
 
 /**
  * The minimum swipe distance — device pixels, the SAME coordinate system
@@ -230,11 +230,3 @@ export interface DeviceBackend {
   getScreenSize(serial: string): Promise<ScreenSize | undefined>;
 }
 
-// Re-exported so consumers of this module can reference the schema type
-// alongside the backend interface without a second import. The interface
-// itself no longer traffics in `CommonElement` (SPEC-VISION-001 M2 removed
-// the UI-tree method), and SPEC-WEBVIEW-002 removed the last producer of the
-// shape. The re-export is kept because dropping it is a breaking change to
-// the public surface (`src/index.ts` exports the type) — see the @MX:DEBT in
-// `common-element.ts`.
-export type { CommonElement } from "./common-element.js";
