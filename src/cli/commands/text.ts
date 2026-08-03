@@ -19,13 +19,10 @@ import { AdbKeyboardInstallFailedError, ImeBindTimeoutError, ImeRestoreFailedErr
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { backendFailure, errorMessage, type CommandHandler } from "./types.js";
-import { runWebText } from "./web-support.js";
 
+// SPEC-WEBVIEW-002: `--web` CSS 셀렉터 경로가 제거됐다. `text`는 이제 포커스된
+// 편집 요소에만 입력하며, 대상 지정은 좌표 `tap`으로 먼저 포커스를 옮기는 것이다.
 export const textCommand: CommandHandler = async (args, source) => {
-  // `--web` routes to the WebKit Inspector path (SPEC-WEBVIEW-001); without
-  // it this handler behaves exactly as before (AC-WEB-017).
-  if (args.web !== undefined) return runWebText(args, source);
-
   const text = args.positionals[0];
   if (text === undefined) {
     return failure("text", "MISSING_TEXT", 'text requires an input string: text "<...>".');

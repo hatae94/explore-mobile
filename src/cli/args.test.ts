@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeWebFlagArgv, parseCommandArgs } from "./args.js";
+import { parseCommandArgs } from "./args.js";
 
 describe("parseCommandArgs", () => {
   it("parses positionals and --device/--out (M3 baseline)", () => {
@@ -12,26 +12,29 @@ describe("parseCommandArgs", () => {
     expect(result.yes).toBe(false);
     expect(result.clean).toBe(false);
     expect(result.keepKeyboard).toBe(false);
-    expect(result.index).toBeUndefined();
   });
 
-  it("parses --index (SPEC-VISION-001 M2: now WEB-ONLY — which CSS-selector match to act on)", () => {
-    const result = parseCommandArgs(["--web", "a", "--index", "2"]);
-
-    expect(result.web).toBe("a");
-    expect(result.index).toBe("2");
+  // AC-VISION-009 (REQ-VISION-002 후반부) + AC-WEBRM-008 (REQ-WEBRM-003):
+  // 제거된 플래그는 조용히 무시되지 않는다. `parseArgs`가 던지고 라우터가
+  // INVALID_ARGS로 감싸므로 좌표 탭으로 임의 대체되는 경로 자체가 없다.
+  // 이 테스트가 그 계약의 회귀 가드다 — 누군가 args.ts에 플래그를 되돌리면
+  // 여기서 먼저 깨진다.
+  it.each([
+    ["--id", "btn_ok"], // SPEC-VISION-001 M2
+    ["--text", "OK"], //  SPEC-VISION-001 M2
+    ["--web", "a[href]"], // SPEC-WEBVIEW-002
+    ["--page", "1"], //   SPEC-WEBVIEW-002
+    ["--index", "2"], //  SPEC-WEBVIEW-002 — 유일한 소비자가 웹 경로였다
+  ])("throws on the removed flag %s (AC-VISION-009 · AC-WEBRM-008)", (flag, value) => {
+    expect(() => parseCommandArgs([flag!, value!])).toThrow();
   });
 
-  // AC-VISION-009 (REQ-VISION-002 후반부): 제거된 셀렉터 플래그는 조용히
-  // 무시되지 않는다. `parseArgs`가 던지고 라우터가 INVALID_ARGS로 감싸므로
-  // 좌표 탭으로 임의 대체되는 경로 자체가 없다. 이 테스트가 그 계약의
-  // 회귀 가드다 — 누군가 args.ts에 플래그를 되돌리면 여기서 먼저 깨진다.
-  it.each([["--id", "btn_ok"], ["--text", "OK"]])(
-    "throws on the removed native selector flag %s (AC-VISION-009)",
-    (flag, value) => {
-      expect(() => parseCommandArgs([flag!, value!])).toThrow();
-    },
-  );
+  // 값 없이 준 형태도 마찬가지로 거부돼야 한다 — `--web`은 값이 선택적이던
+  // 플래그라 옵션 정의만 지우면 두 형태 모두 미지의 옵션이 된다.
+  it("throws on a bare --web with no value (SPEC-WEBVIEW-002)", () => {
+    expect(() => parseCommandArgs(["--web"])).toThrow();
+    expect(() => parseCommandArgs(["--web=a.link"])).toThrow();
+  });
 
   it("recognizes --yes as consent (REQ-DOCTOR-002)", () => {
     expect(parseCommandArgs(["--yes"]).yes).toBe(true);
@@ -53,44 +56,11 @@ describe("parseCommandArgs", () => {
     expect(() => parseCommandArgs(["--not-a-real-flag"])).toThrow();
   });
 
-  it("leaves web undefined when --web is absent (native path unchanged, REQ-WEB-CLI-001)", () => {
-    expect(parseCommandArgs(["100", "200"]).web).toBeUndefined();
-  });
-
-  it("parses a bare --web as web mode with no selector (the handler then rejects it as MISSING_SELECTOR)", () => {
-    expect(parseCommandArgs(["--web"]).web).toBe("");
-    expect(parseCommandArgs(["--web", "--device", "UDID"]).web).toBe("");
-  });
-
-  it("parses --web <CSS> as web mode with a selector", () => {
-    expect(parseCommandArgs(["--web", "a[href]"]).web).toBe("a[href]");
-    expect(parseCommandArgs(["안녕", "--web", "#query"]).positionals).toEqual(["안녕"]);
-    expect(parseCommandArgs(["안녕", "--web", "#query"]).web).toBe("#query");
+  // 웹 플래그가 사라져도 제스처 플래그는 그대로다 — 같은 옵션 표를 공유하므로
+  // 삭제가 이웃을 건드리지 않았는지 여기서 확인한다.
+  it("still parses the gesture flags that survive (--duration, --amount)", () => {
+    expect(parseCommandArgs(["--duration", "500"]).duration).toBe("500");
+    expect(parseCommandArgs(["down", "--amount", "0.5"]).amount).toBe("0.5");
   });
 });
 
-describe("normalizeWebFlagArgv", () => {
-  it("leaves argv untouched when --web is absent", () => {
-    expect(normalizeWebFlagArgv(["tap", "1", "2"])).toEqual(["tap", "1", "2"]);
-  });
-
-  it("supplies an empty value for a trailing bare --web", () => {
-    expect(normalizeWebFlagArgv(["--web"])).toEqual(["--web", ""]);
-  });
-
-  it("supplies an empty value when --web is followed by another flag", () => {
-    expect(normalizeWebFlagArgv(["--web", "--device", "X"])).toEqual(["--web", "", "--device", "X"]);
-  });
-
-  it("keeps a selector that follows --web", () => {
-    expect(normalizeWebFlagArgv(["--web", "a.link"])).toEqual(["--web", "a.link"]);
-  });
-
-  it("does not touch a --web=<value> form", () => {
-    expect(normalizeWebFlagArgv(["--web=a.link"])).toEqual(["--web=a.link"]);
-  });
-
-  it("does not treat a bare --web value that looks like a negative number as a flag", () => {
-    expect(normalizeWebFlagArgv(["--web", "-1"])).toEqual(["--web", "", "-1"]);
-  });
-});

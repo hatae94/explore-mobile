@@ -2,7 +2,7 @@
 
 모바일 기기를 **JSON 명령 하나로** 조작하는 에이전트 친화 CLI.
 Android는 `adb`, iOS는 실기기 경로를 통해 동작하며, AI 에이전트나 자동화
-스크립트가 에뮬레이터·시뮬레이터·실기기를 같은 명령 표면으로 제어한다.
+스크립트가 Android 에뮬레이터·실기기를 같은 명령 표면으로 제어한다.
 최종 목표는 모바일 테스트 자동화, 특히 여러 기기가 서로 주고받는 상호작용
 테스트다.
 
@@ -28,8 +28,9 @@ Android는 `adb`, iOS는 실기기 경로를 통해 동작하며, AI 에이전�
 
 ## 요구사항
 
-- **Node.js >= 22** — iOS 웹 경로가 Node 내장 `WebSocket`(22.4+)을 쓴다.
-  이것 때문에 의존성을 추가하지 않으려고 버전을 올렸다.
+- **Node.js >= 22** — 원래 iOS 웹 경로가 Node 내장 `WebSocket`(22.4+)을 쓰기
+  때문에 올린 하한이다. `SPEC-WEBVIEW-002`가 그 경로를 제거하면서 이유는
+  사라졌지만, 하한을 되돌리는 것은 소비자 대상 변경이라 별도 판단으로 남긴다.
 - **adb** (Android SDK Platform Tools)가 `PATH`에 있어야 한다. 직접 설치하거나
   [`doctor`](#doctor)에게 맡기면 된다.
 
@@ -39,10 +40,6 @@ Android는 `adb`, iOS는 실기기 경로를 통해 동작하며, AI 에이전�
   > 이 상태에서는 Android 기기가 하나도 보이지 않는다. `doctor`가
   > `adb: {installed: false}`와 복구 안내를 정확히 반환하므로 조용히 실패하지는
   > 않지만, 세션 시작 시 확인하는 편이 빠르다.
-
-- **ios-webkit-debug-proxy** — iOS [`--web` 경로](#ios-웹-콘텐츠---web)에만
-  필요하다. `brew install ios-webkit-debug-proxy`로 설치하며, `doctor`가
-  설치 여부를 보고한다. 나머지 기능은 이것 없이 동작한다.
 
 ## 설치와 실행
 
@@ -104,9 +101,6 @@ JSON 본문이 유일한 계약이다.
 | `scroll <up\|down\|left\|right> [--amount <비율>]` | 화면 크기를 몰라도 되는 스크롤 |
 | `doctor [--yes\|--install] [--clean]` | 환경 진단 및 부트스트랩 |
 | `reset` | `doctor` 이전 상태로 기기 복원 |
-
-`tap`과 `text`는 [`--web`](#ios-웹-콘텐츠---web)을 함께 받아 iOS의 **웹 페이지
-콘텐츠**에 닿을 수 있다. 네이티브 접근성 트리가 노출하지 않는 영역이다.
 
 ### 사용 예
 
@@ -212,36 +206,23 @@ iOS에는 위 내용이 적용되지 않는다 — 전환할 IME도, APK도, 세
 
 ## 읽기 경로는 스크린샷 하나다
 
-`SPEC-VISION-001`에 따라 **UI 계층 덤프(`dump`)와 네이티브 셀렉터
-(`--id` / `--text`) 경로가 제거됐다.** 화면을 읽는 수단은 스크린샷 하나로
-좁혀졌고, 조작은 좌표로 한다.
+`SPEC-VISION-001`이 **UI 계층 덤프(`dump`)와 네이티브 셀렉터(`--id` / `--text`)**
+를, `SPEC-WEBVIEW-002`가 **웹 CSS 셀렉터(`--web` / `--page` / `--index`)**
+를 제거했다. 화면을 읽는 수단은 스크린샷 하나이고, 조작은 좌표로 한다.
+예외는 없다.
 
 이유: 덤프는 플랫폼마다 결과가 다르고, 웹 콘텐츠를 보지 못하며(Android Chrome은
 네이티브 크롬 요소만 반환), iOS 실기기에서는 아예 동작하지 않았다. 스크린샷은
 세 조건 모두에서 동일하게 동작한다.
 
-**제거된 플래그는 조용히 좌표 탭으로 대체되지 않는다.** `tap --id foo` 같은
-호출은 `INVALID_ARGS`로 거부된다.
+**제거된 플래그는 조용히 좌표 탭으로 대체되지 않는다.** `tap --id foo`나
+`tap --web "button"` 같은 호출은 `INVALID_ARGS`로 거부된다 — 실기기에서
+거부와 화면 무변화를 함께 확인했다.
 
 이 선택의 대가도 적어 둔다 — 좌표를 스크린샷에서 눈으로 읽어야 하므로, 표시용
 축소 이미지를 쓴다면 **배율을 곱해야 한다.** 예를 들어 1440×3120 화면을
 923×2000으로 축소해 보고 있다면 좌표에 1.56을 곱해야 실제 좌표가 된다. 배율을
 빠뜨리면 조용히 다른 곳을 탭한다.
-
-## iOS 웹 콘텐츠 (`--web`)
-
-iOS의 네이티브 접근성 트리는 웹 페이지 내부를 노출하지 않는다. `tap`과 `text`에
-`--web <CSS 셀렉터>`를 주면 CSS 셀렉터로 페이지 요소에 닿을 수 있다.
-
-```bash
-npx explore-mobile tap --web "button.submit"
-npx explore-mobile text --web "input#search" "검색어"
-```
-
-- `--page <n>` — 열린 페이지가 여럿일 때 대상을 고른다. 생략하고 여럿이면
-  `AMBIGUOUS_PAGE`가 나온다.
-- `--index <n>` — CSS 셀렉터가 여러 개에 맞을 때 몇 번째를 조작할지 고른다.
-- `ios-webkit-debug-proxy`가 필요하다. 없으면 `IWDP_NOT_INSTALLED`.
 
 ## 현재 상태
 
@@ -249,8 +230,8 @@ npx explore-mobile text --web "input#search" "검색어"
 
 ```
 $ pnpm test
-Test Files  32 passed (32)
-Tests  690 passed | 2 expected fail (692)
+Test Files  26 passed (26)
+Tests  550 passed | 2 expected fail (552)
 
 $ pnpm typecheck   → exit 0
 $ pnpm build       → exit 0
@@ -283,9 +264,6 @@ $ pnpm build       → exit 0
 
 **아직 검증하지 않은 것**:
 
-- `--web` 경로는 **iOS 시뮬레이터에서만** 회귀를 확인했다 (실기기 미확인). 게다가
-  CLI가 스스로 띄운 프록시로는 실패하고 수동으로 미리 띄워야 성공한다 —
-  [알려진 제약](#알려진-제약) 참고
 - Android `wm size` **파싱 실패** 경로 — 실기기에서 유발할 방법을 찾지 못했다
 - WDA를 **실제로 중단시킨** 상태의 오류 응답 (틀린 포트로 유도해 근사 확인만 했다)
 - 분할화면·팝업뷰·프리폼 윈도우에서의 좌표계
@@ -309,18 +287,11 @@ $ pnpm build       → exit 0
 - **iOS 시뮬레이터는 `devices` 목록에 나오지 않는다.** iOS 열거는
   `xcrun devicectl`만 쓴다(사용자 결정).
 
-**미해결 결함**
-
-- **`--web`은 CLI가 스스로 띄운 프록시로는 실패한다.** `ios_webkit_debug_proxy`를
-  수동으로 미리 띄우고(약 4초 대기) 실행하면 성공한다. 프록시 없이 호출하면
-  `NO_WEB_PAGE`로 3/3 실패했다. `src/webview/`는 `SPEC-WEBVIEW-001` 소관이라
-  이번 범위에서 손대지 않고 재현 조건만 기록했다.
 
 ## 로드맵
 
 - 스킬 래퍼(`.claude/skills/explore-mobile/`)를 현재 명령 표면에 맞추기
 - 멀티기기 상호작용 테스트
-- `--web` 프록시 기동 결함 처리 (`SPEC-WEBVIEW-001` 소관)
 
 ## 라이선스
 

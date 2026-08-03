@@ -28,8 +28,6 @@
  * (design.md §B.3).
  */
 
-import { spawnProcess } from "../../backend/process-executor.js";
-import { checkWebInspectorProxy } from "../../webview/proxy-service.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { success } from "../envelope.js";
 import { performReset } from "./reset.js";
@@ -61,20 +59,19 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
   const resolvedDevice = target.ok ? devices.find((d) => d.serial === target.serial) : undefined;
 
   if (resolvedDevice?.platform === "ios") {
-    const [devicectl, wda, webInspectorProxy] = await Promise.all([
+    // SPEC-WEBVIEW-002: `webInspectorProxy` 검사가 사라졌다. `--web` 경로가
+    // 제거되면서 보고할 전제조건 자체가 없어졌다 — 출력 계약 변경이므로
+    // CHANGELOG에 breaking change로 기록돼 있다.
+    const [devicectl, wda] = await Promise.all([
       envServices.ios.checkDevicectl(),
       envServices.ios.checkWda(resolvedDevice.serial),
-      // SPEC-WEBVIEW-001 REQ-WEB-PROXY-003: `--web`'s prerequisite is
-      // reported here so a user learns it is missing from `doctor` rather
-      // than from a failed `tap --web`.
-      checkWebInspectorProxy(spawnProcess),
     ]);
     return success("doctor", {
       adb,
       daemon,
       devices,
       adbKeyboard: { skipped: true, reason: "Target device is iOS; see wdaEnvironment instead." },
-      wdaEnvironment: { devicectl, wda, webInspectorProxy },
+      wdaEnvironment: { devicectl, wda },
     });
   }
 

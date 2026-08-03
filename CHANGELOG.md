@@ -297,6 +297,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version; real-device verification of the remaining Android commands
   (`tap`/`text`/`key`/`stop`/`doctor`/`reset`) is still outstanding.
 
+### Removed
+
+- **The `--web` CSS-selector path is gone entirely** (SPEC-WEBVIEW-002,
+  superseding SPEC-WEBVIEW-001). `tap --web` / `text --web`, the `--page`
+  and `--index` flags, the WebKit Inspector client, the
+  `ios-webkit-debug-proxy` lifecycle manager, the web DOM normalizer, and
+  the six web error codes (`WEB_INSPECTOR_UNREACHABLE`, `WEB_EVAL_THREW`,
+  `WEB_INSPECTOR_TIMEOUT`, `IWDP_NOT_INSTALLED`, `NO_WEB_PAGE`,
+  `AMBIGUOUS_PAGE`) are all removed. `AMBIGUOUS_DEVICE` — a similarly named
+  but unrelated code — stays.
+
+  **The feature was already unreachable when it was removed.** It bound to a
+  simulator's Web Inspector unix socket (`com.apple.webinspectord_sim.socket`)
+  and had no physical-device transport; SPEC-VISION-001 M3 then dropped
+  `simctl` from iOS enumeration, so the CLI could no longer name a simulator
+  at all. Measured on 2026-08-03: a booted `iPhone 17 Pro` simulator returned
+  `DEVICE_NOT_FOUND` when passed to `--device`. That M3 decision cited
+  SPEC-VISION-001 §C.5 as its rationale, but §C.5 had said the SPEC *does not
+  decide* simulator support — a deferral read as an exclusion. This entry
+  records the decision that was never actually made: the product is
+  vision-only, and a simulator-only DOM-selector path is not part of it.
+
+  **BREAKING — `doctor` output**: the `wdaEnvironment.webInspectorProxy`
+  field no longer appears for iOS targets. `wdaEnvironment` now carries
+  `devicectl` and `wda` only. No test asserted this field, so the suite did
+  not catch its removal — the contract change is recorded here rather than
+  inferred from a green run.
+
+  **BREAKING — removed flags**: `--web`, `--page`, and `--index` are rejected
+  with `INVALID_ARGS` rather than ignored. Verified on a real device that the
+  rejection leaves the screen byte-identical — no silent downgrade to a
+  coordinate tap.
+
+  Removes roughly 2,800 lines and 141 tests; the suite goes from 696 to 550
+  passing. `--index` had no consumer outside the web path, so **its removal
+  closes SPEC-VISION-001's `AC-VISION-008`**, which had been recorded as
+  explicitly unmet. The `--web` proxy-startup defect and the conditional PASS
+  on `AC-VISION-031` both cease to exist along with the code they described.
+
 ### Fixed
 
 - **A wireless Android device whose mDNS name collided was reported as

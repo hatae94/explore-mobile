@@ -233,7 +233,8 @@ export interface DeviceBackend {
 // Re-exported so consumers of this module can reference the schema type
 // alongside the backend interface without a second import. The interface
 // itself no longer traffics in `CommonElement` (SPEC-VISION-001 M2 removed
-// the UI-tree method); the re-export is kept because `--web` still uses the
-// schema (spec.md §C.3, AC-VISION-011) and dropping it would be a breaking
-// change outside this SPEC's scope.
+// the UI-tree method), and SPEC-WEBVIEW-002 removed the last producer of the
+// shape. The re-export is kept because dropping it is a breaking change to
+// the public surface (`src/index.ts` exports the type) — see the @MX:DEBT in
+// `common-element.ts`.
 export type { CommonElement } from "./common-element.js";

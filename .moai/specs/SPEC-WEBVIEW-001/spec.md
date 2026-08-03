@@ -2,9 +2,9 @@
 id: SPEC-WEBVIEW-001
 title: "iOS 시뮬레이터 웹뷰 DOM 인지 · 조작 — WebKit Inspector 백엔드"
 version: "0.2.0"
-status: completed
+status: superseded
 created: 2026-07-27
-updated: 2026-07-27
+updated: 2026-08-03
 author: hatae
 amendment_of: SPEC-WEBVIEW-001
 priority: P1

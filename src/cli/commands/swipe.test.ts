@@ -4,9 +4,8 @@
  *
  * Exercises the full CLI dispatch path (`runCli`) with a mocked
  * `DeviceBackend`, matching the pattern `router.test.ts` uses for the other
- * commands — `swipe`'s own file mirrors `web-support.test.ts`'s
- * one-command-per-file convention rather than growing `router.test.ts`
- * further.
+ * commands — `swipe` keeps its own file, following the one-command-per-file
+ * convention rather than growing `router.test.ts` further.
  */
 
 import { describe, expect, it, vi } from "vitest";
