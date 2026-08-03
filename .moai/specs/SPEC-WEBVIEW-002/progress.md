@@ -153,7 +153,7 @@ $ grep -rnE 'args\.(web|page|index)\b' src --include='*.ts'   → 0건
 run_status: audit-ready
 run_complete_at: 2026-08-03
 milestones: M1 (코드 제거) · M2 (문서·SPEC 정리)
-run_commit_sha: pending-backfill-2026-08-03
+run_commit_sha: 1d4c315
 gates: pnpm test 26 files / 550 passed | 2 expected fail
        pnpm typecheck exit 0 · pnpm build exit 0
 ac: 23/23 PASS · 미충족 0건
@@ -166,7 +166,7 @@ ac: 23/23 PASS · 미충족 0건
 ```
 sync_status: audit-ready
 sync_complete_at: 2026-08-03
-sync_commit_sha: pending-backfill-2026-08-03
+sync_commit_sha: 1d4c315
 artifacts_updated: README.md, CHANGELOG.md, SPEC-WEBVIEW-001(frontmatter),
                    SPEC-VISION-001/progress.md(§E.4 A2·B2), progress.md
 ```
