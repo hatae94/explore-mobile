@@ -3,7 +3,7 @@
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { isValidPackageName } from "../validators.js";
-import { errorMessage, type CommandHandler } from "./types.js";
+import { backendFailure, errorMessage, type CommandHandler } from "./types.js";
 
 export const stopCommand: CommandHandler = async (args, source) => {
   const packageId = args.positionals[0];
@@ -23,7 +23,7 @@ export const stopCommand: CommandHandler = async (args, source) => {
   try {
     await target.backend.stopApp(target.serial, packageId);
   } catch (err) {
-    return failure("stop", "BACKEND_COMMAND_FAILED", errorMessage(err));
+    return backendFailure("stop", err);
   }
 
   return success("stop", { serial: target.serial, package: packageId });

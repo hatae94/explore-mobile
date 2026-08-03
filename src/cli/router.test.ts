@@ -7,7 +7,7 @@ import { AdbBackend } from "../backend/adb-backend.js";
 import type { AdbExecResult, AdbExecutor } from "../backend/adb-executor.js";
 import type { ApkAcquirer } from "../backend/apk-downloader.js";
 import { AdbDoctor } from "../backend/doctor.js";
-import { IdbDoctor } from "../backend/idb-doctor.js";
+import { WdaDoctor } from "../backend/wda-doctor.js";
 import { AdbKeyboardInstallFailedError, ImeBindTimeoutError, ImeRestoreFailedError } from "../backend/ime-errors.js";
 import { UnsupportedKeyOnIosError } from "../backend/idb-errors.js";
 import { LauncherActivityNotFoundError } from "../backend/launch-errors.js";
@@ -20,14 +20,14 @@ import { runCli } from "./router.js";
 
 /**
  * Wraps a test-constructed `AdbDoctor` (and optionally a mock/real
- * `IdbDoctor`) into the `EnvServices` holder `runCli`'s third parameter
+ * `WdaDoctor`) into the `EnvServices` holder `runCli`'s third parameter
  * now expects (REQ-IOS-DOCTOR-003, SPEC-IOS-001 — generalized from the
  * original bare-`AdbDoctor` parameter). Every pre-existing doctor/reset
  * test in this file is Android-focused, so `ios` defaults to an inert
- * `new IdbDoctor()` that is never exercised unless a test explicitly
+ * `new WdaDoctor()` that is never exercised unless a test explicitly
  * targets an iOS device.
  */
-function envServices(android: AdbDoctor, ios: IdbDoctor = new IdbDoctor()): EnvServices {
+function envServices(android: AdbDoctor, ios: WdaDoctor = new WdaDoctor()): EnvServices {
   return { android, ios };
 }
 
@@ -1013,11 +1013,11 @@ describe("runCli", () => {
   });
 
   describe("doctor/reset platform-branching dispatch (REQ-IOS-DOCTOR-003, AC-IOS-021)", () => {
-    it("routes 'doctor' to IdbDoctor's checks (not AdbDoctor.ensureAdbKeyboard) when the resolved target device is platform:ios", async () => {
+    it("routes 'doctor' to WdaDoctor's checks (not AdbDoctor.ensureAdbKeyboard) when the resolved target device is platform:ios", async () => {
       const iosDeviceInfo = device({ serial: "00008030-IOS", platform: "ios" });
       const backend = createMockBackend([iosDeviceInfo]);
       const adbDoctor = new AdbDoctor(vi.fn<AdbExecutor>());
-      const idbDoctor = new IdbDoctor(vi.fn());
+      const wdaDoctor = new WdaDoctor(vi.fn());
 
       // adb/daemon checks are eager + unconditional (unchanged from
       // SPEC-ANDROID-001) — mock them healthy so the handler reaches the
@@ -1026,72 +1026,70 @@ describe("runCli", () => {
       vi.spyOn(adbDoctor, "checkDaemonHealth").mockResolvedValue({ healthy: true });
       const ensureAdbKeyboardSpy = vi.spyOn(adbDoctor, "ensureAdbKeyboard");
 
-      const checkIdbInstalledSpy = vi
-        .spyOn(idbDoctor, "checkIdbInstalled")
-        .mockResolvedValue({ installed: true, version: "1.1.8" });
-      const checkCompanionSpy = vi.spyOn(idbDoctor, "checkCompanion").mockResolvedValue({ present: true });
-      const checkSimulatorBootedSpy = vi
-        .spyOn(idbDoctor, "checkSimulatorBooted")
-        .mockResolvedValue({ booted: true });
+      // SPEC-VISION-001 M3 (AC-VISION-020): iOS 점검 항목이 idb에서 WDA로
+      // 교체됐다. 이 테스트가 세는 것은 "iOS 대상일 때 WDA 점검이 불리는가"다.
+      const checkDevicectlSpy = vi.spyOn(wdaDoctor, "checkDevicectl").mockResolvedValue({ available: true });
+      const checkWdaSpy = vi
+        .spyOn(wdaDoctor, "checkWda")
+        .mockResolvedValue({ reachable: true, port: 8100, portMapDeclared: false });
 
       const result = await runCli(
         ["doctor", "--device", iosDeviceInfo.serial],
         backend,
-        envServices(adbDoctor, idbDoctor),
+        envServices(adbDoctor, wdaDoctor),
       );
 
       expect(result.ok).toBe(true);
-      expect(checkIdbInstalledSpy).toHaveBeenCalledTimes(1);
-      expect(checkCompanionSpy).toHaveBeenCalledTimes(1);
-      expect(checkSimulatorBootedSpy).toHaveBeenCalledWith(iosDeviceInfo.serial);
+      expect(checkDevicectlSpy).toHaveBeenCalledTimes(1);
+      expect(checkWdaSpy).toHaveBeenCalledWith(iosDeviceInfo.serial);
       expect(ensureAdbKeyboardSpy).not.toHaveBeenCalled();
       if (result.ok) {
-        const data = result.data as { idbEnvironment?: unknown; adbKeyboard: { skipped: boolean } };
-        expect(data.idbEnvironment).toBeDefined();
+        const data = result.data as { wdaEnvironment?: unknown; adbKeyboard: { skipped: boolean } };
+        expect(data.wdaEnvironment).toBeDefined();
         expect(data.adbKeyboard.skipped).toBe(true);
       }
     });
 
-    it("routes 'doctor' to AdbDoctor.ensureAdbKeyboard (not IdbDoctor) when the resolved target device is platform:android", async () => {
+    it("routes 'doctor' to AdbDoctor.ensureAdbKeyboard (not WdaDoctor) when the resolved target device is platform:android", async () => {
       const androidDeviceInfo = device({ serial: "R58N90ABCDE", platform: "android" });
       const backend = createMockBackend([androidDeviceInfo]);
       const adbDoctor = new AdbDoctor(vi.fn<AdbExecutor>());
-      const idbDoctor = new IdbDoctor(vi.fn());
+      const wdaDoctor = new WdaDoctor(vi.fn());
 
       vi.spyOn(adbDoctor, "checkAdbInstalled").mockResolvedValue({ installed: true, version: "1.0.41" });
       vi.spyOn(adbDoctor, "checkDaemonHealth").mockResolvedValue({ healthy: true });
       const ensureAdbKeyboardSpy = vi
         .spyOn(adbDoctor, "ensureAdbKeyboard")
         .mockResolvedValue({ alreadyInstalled: true, installed: false, enabled: true });
-      const checkIdbInstalledSpy = vi.spyOn(idbDoctor, "checkIdbInstalled");
+      const checkWdaSpy = vi.spyOn(wdaDoctor, "checkWda");
 
-      const result = await runCli(["doctor"], backend, envServices(adbDoctor, idbDoctor));
+      const result = await runCli(["doctor"], backend, envServices(adbDoctor, wdaDoctor));
 
       expect(result.ok).toBe(true);
       expect(ensureAdbKeyboardSpy).toHaveBeenCalledWith(androidDeviceInfo.serial);
-      expect(checkIdbInstalledSpy).not.toHaveBeenCalled();
+      expect(checkWdaSpy).not.toHaveBeenCalled();
       if (result.ok) {
         const data = result.data as { adbKeyboard: { skipped: boolean } };
         expect(data.adbKeyboard.skipped).toBe(false);
       }
     });
 
-    it("routes 'reset' to IdbDoctor.resetDevice (near-no-op) for an iOS-platform target, without touching AdbDoctor.resetDevice", async () => {
+    it("routes 'reset' to WdaDoctor.resetDevice (near-no-op) for an iOS-platform target, without touching AdbDoctor.resetDevice", async () => {
       const iosDeviceInfo = device({ serial: "00008030-IOS", platform: "ios" });
       const backend = createMockBackend([iosDeviceInfo]);
       const adbDoctor = new AdbDoctor(vi.fn<AdbExecutor>());
-      const idbDoctor = new IdbDoctor(vi.fn());
+      const wdaDoctor = new WdaDoctor(vi.fn());
 
       const adbResetSpy = vi.spyOn(adbDoctor, "resetDevice");
-      const idbResetSpy = vi.spyOn(idbDoctor, "resetDevice").mockResolvedValue({
+      const wdaResetSpy = vi.spyOn(wdaDoctor, "resetDevice").mockResolvedValue({
         noOp: true,
-        message: "iOS has no IME/APK state to clean (idb text input is stateless) — nothing to reset.",
+        message: "iOS에는 정리할 IME/APK 상태가 없습니다(WDA 문자 입력은 무상태) — 되돌릴 것이 없습니다.",
       });
 
-      const result = await runCli(["reset"], backend, envServices(adbDoctor, idbDoctor));
+      const result = await runCli(["reset"], backend, envServices(adbDoctor, wdaDoctor));
 
       expect(result.ok).toBe(true);
-      expect(idbResetSpy).toHaveBeenCalledWith(iosDeviceInfo.serial);
+      expect(wdaResetSpy).toHaveBeenCalledWith(iosDeviceInfo.serial);
       expect(adbResetSpy).not.toHaveBeenCalled();
       if (result.ok) {
         const data = result.data as { noOp?: boolean };
@@ -1099,11 +1097,11 @@ describe("runCli", () => {
       }
     });
 
-    it("routes 'reset' to AdbDoctor.resetDevice for an android-platform target (unchanged path), without touching IdbDoctor.resetDevice", async () => {
+    it("routes 'reset' to AdbDoctor.resetDevice for an android-platform target (unchanged path), without touching WdaDoctor.resetDevice", async () => {
       const androidDeviceInfo = device({ serial: "R58N90ABCDE", platform: "android" });
       const backend = createMockBackend([androidDeviceInfo]);
       const adbDoctor = new AdbDoctor(vi.fn<AdbExecutor>());
-      const idbDoctor = new IdbDoctor(vi.fn());
+      const wdaDoctor = new WdaDoctor(vi.fn());
 
       const adbResetSpy = vi.spyOn(adbDoctor, "resetDevice").mockResolvedValue({
         imeReset: true,
@@ -1111,13 +1109,13 @@ describe("runCli", () => {
         adbKeyboardUninstalled: true,
         warnings: [],
       });
-      const idbResetSpy = vi.spyOn(idbDoctor, "resetDevice");
+      const wdaResetSpy = vi.spyOn(wdaDoctor, "resetDevice");
 
-      const result = await runCli(["reset"], backend, envServices(adbDoctor, idbDoctor));
+      const result = await runCli(["reset"], backend, envServices(adbDoctor, wdaDoctor));
 
       expect(result.ok).toBe(true);
       expect(adbResetSpy).toHaveBeenCalledWith(androidDeviceInfo.serial, undefined);
-      expect(idbResetSpy).not.toHaveBeenCalled();
+      expect(wdaResetSpy).not.toHaveBeenCalled();
     });
   });
 

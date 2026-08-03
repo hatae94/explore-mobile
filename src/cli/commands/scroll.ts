@@ -33,7 +33,7 @@ import {
   minNonDegenerateRatio,
   type ScrollDirection,
 } from "./scroll-geometry.js";
-import { errorMessage, type CommandHandler } from "./types.js";
+import { backendFailure, errorMessage, type CommandHandler } from "./types.js";
 
 /**
  * 생략 시 기본 비율(REQ-GEST-SCROLL-003) — SPEC은 구체적 수치를 정하지
@@ -106,7 +106,7 @@ export const scrollCommand: CommandHandler = async (args, source: DeviceSource) 
   try {
     screen = await target.backend.getScreenSize(target.serial);
   } catch (err) {
-    return failure("scroll", "BACKEND_COMMAND_FAILED", errorMessage(err));
+    return backendFailure("scroll", err);
   }
 
   // REQ-GEST-SCROLL-004: 화면 크기를 신뢰할 수 없으면 추측하지 않고
@@ -129,7 +129,7 @@ export const scrollCommand: CommandHandler = async (args, source: DeviceSource) 
   try {
     threshold = await target.backend.getMinEffectiveSwipeThreshold(target.serial);
   } catch (err) {
-    return failure("scroll", "BACKEND_COMMAND_FAILED", errorMessage(err));
+    return backendFailure("scroll", err);
   }
 
   const { from, to } = computeScrollSwipe(directionRaw, ratio, screen);
@@ -167,7 +167,7 @@ export const scrollCommand: CommandHandler = async (args, source: DeviceSource) 
   try {
     await target.backend.swipe(target.serial, from, to, { durationMs: SCROLL_SWIPE_DURATION_MS });
   } catch (err) {
-    return failure("scroll", "BACKEND_COMMAND_FAILED", errorMessage(err));
+    return backendFailure("scroll", err);
   }
 
   // REQ-GEST-SCROLL-005: 방향과 실제 좌표를 응답에 함께 실어, 호출자가

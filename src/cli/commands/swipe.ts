@@ -25,7 +25,7 @@ import type { DeviceBackend, SwipeOptions } from "../../schema/device-backend.js
 import { resolveTargetDevice, type DeviceSource } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { MAX_DURATION_MS, parseCoordinate, parseDurationMs } from "../validators.js";
-import { errorMessage, type CommandHandler } from "./types.js";
+import { backendFailure, errorMessage, type CommandHandler } from "./types.js";
 
 export const swipeCommand: CommandHandler = async (args, source: DeviceSource) => {
   const [x1Raw, y1Raw, x2Raw, y2Raw, ...rest] = args.positionals;
@@ -81,7 +81,7 @@ export const swipeCommand: CommandHandler = async (args, source: DeviceSource) =
   try {
     await target.backend.swipe(target.serial, from, to, options);
   } catch (err) {
-    return failure("swipe", "BACKEND_COMMAND_FAILED", errorMessage(err));
+    return backendFailure("swipe", err);
   }
 
   return success("swipe", {

@@ -12,7 +12,7 @@ import { writeFile } from "node:fs/promises";
 
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
-import { errorMessage, type CommandHandler } from "./types.js";
+import { backendFailure, errorMessage, type CommandHandler } from "./types.js";
 
 export const screenshotCommand: CommandHandler = async (args, source) => {
   const devices = await source.listAllDevices();
@@ -23,7 +23,7 @@ export const screenshotCommand: CommandHandler = async (args, source) => {
   try {
     bytes = await target.backend.screenshot(target.serial);
   } catch (err) {
-    return failure("screenshot", "BACKEND_COMMAND_FAILED", errorMessage(err));
+    return backendFailure("screenshot", err);
   }
 
   const buffer = Buffer.from(bytes);

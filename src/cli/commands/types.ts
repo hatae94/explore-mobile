@@ -1,6 +1,11 @@
+import {
+  WdaPortUnmappedError,
+  WdaResponseLostError,
+  WdaUnreachableError,
+} from "../../backend/wda-errors.js";
 import type { ParsedCommandArgs } from "../args.js";
 import type { DeviceSource } from "../device-targeting.js";
-import type { CommandResult } from "../envelope.js";
+import { failure, type CommandError, type CommandResult } from "../envelope.js";
 import type { EnvServices } from "../env-services.js";
 
 /**
@@ -30,4 +35,31 @@ export type CommandHandler = (
 /** Extracts a readable message from a thrown value of unknown shape. */
 export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * 백엔드가 던진 예외를 명령 실패 봉투로 바꾼다.
+ *
+ * 기본값은 기존 그대로 `BACKEND_COMMAND_FAILED`다(D7 오류 코드 우선순위,
+ * spec.md §C.3 — `IDB_COMMAND_FAILED` 같은 일반 백엔드 실패는 계속 이 코드
+ * 뒤에 놓인다). 다만 **호출자가 서로 다르게 대응해야 하는** WDA 실패 셋만은
+ * 자기 코드를 그대로 노출한다 — `key.ts`가 `UNSUPPORTED_KEY_ON_IOS`에
+ * 적용한 관례("타입이 식별된 백엔드 오류는 일반 코드 뒤에 가리지 않는다")를
+ * 같은 이유로 확장한 것이다.
+ *
+ * 셋을 구분해야 하는 이유(design.md §B.3, AC-VISION-015/016):
+ *   - `WDA_UNREACHABLE`   → WDA를 띄워라 (사용자 행동이 필요)
+ *   - `WDA_RESPONSE_LOST` → 적용됐을 수 있다, 스크린샷으로 확인하라
+ *   - `WDA_PORT_UNMAPPED` → 포트 매핑에 이 기기를 추가하라
+ * 셋을 하나로 뭉개면 호출자는 "왜 안 되는지 모르는 상태"에 놓인다.
+ */
+export function backendFailure(command: string, err: unknown): CommandError {
+  if (
+    err instanceof WdaUnreachableError ||
+    err instanceof WdaResponseLostError ||
+    err instanceof WdaPortUnmappedError
+  ) {
+    return failure(command, err.code, err.message);
+  }
+  return failure(command, "BACKEND_COMMAND_FAILED", errorMessage(err));
 }

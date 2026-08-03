@@ -10,7 +10,7 @@
  */
 
 import { AdbDoctor } from "../backend/doctor.js";
-import { IdbDoctor } from "../backend/idb-doctor.js";
+import { WdaDoctor } from "../backend/wda-doctor.js";
 import type { DeviceBackend } from "../schema/device-backend.js";
 import { toDeviceSource, type DeviceSource } from "./device-targeting.js";
 import { parseCommandArgs } from "./args.js";
@@ -54,7 +54,7 @@ function errorMessage(err: unknown): string {
  * Always resolves (never rejects): parse errors, unknown commands, and
  * handler-thrown exceptions all degrade to a graceful {@link CommandError}.
  *
- * `envServices` defaults to real `AdbDoctor()`/`IdbDoctor()` instances when
+ * `envServices` defaults to real `AdbDoctor()`/`WdaDoctor()` instances when
  * not provided, so every pre-existing call site (`runCli(argv, backend)`,
  * used throughout the test suite) keeps working unchanged — only
  * `doctor`/`reset` command handlers ever touch this parameter
@@ -64,7 +64,7 @@ function errorMessage(err: unknown): string {
 export async function runCli(
   argv: string[],
   backend: DeviceBackend | DeviceSource,
-  envServices: EnvServices = { android: new AdbDoctor(), ios: new IdbDoctor() },
+  envServices: EnvServices = { android: new AdbDoctor(), ios: new WdaDoctor() },
 ): Promise<CommandResult> {
   const [commandName, ...rest] = argv;
   const supported = Object.keys(COMMANDS).join(", ");

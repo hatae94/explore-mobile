@@ -4,7 +4,7 @@
  *
  * Wires the command router to a cross-platform `BackendRegistry`
  * (SPEC-IOS-001, REQ-IOS-ARCH-001~003) merging `AdbBackend` (Android) and
- * `IdbBackend` (iOS), and prints exactly one JSON document to stdout per
+ * `WdaBackend` (iOS — SPEC-VISION-001 M3 replaced `IdbBackend`), and prints exactly one JSON document to stdout per
  * invocation (REQ-ARCH-001). The registry itself implements `DeviceBackend`
  * (registry-as-backend adapter, design.md §C.4), so `runCli`'s existing
  * `(argv, backend, envServices)` signature needs no change to gain cross-
@@ -17,13 +17,13 @@
 
 import { AdbBackend } from "../backend/adb-backend.js";
 import { AdbDoctor } from "../backend/doctor.js";
-import { IdbBackend } from "../backend/idb-backend.js";
-import { IdbDoctor } from "../backend/idb-doctor.js";
+import { WdaBackend } from "../backend/wda-backend.js";
+import { WdaDoctor } from "../backend/wda-doctor.js";
 import { BackendRegistry } from "../backend/registry.js";
 import { runCli } from "./router.js";
 
 const doctor = new AdbDoctor();
-const idbDoctor = new IdbDoctor();
+const wdaDoctor = new WdaDoctor();
 
 const registry = new BackendRegistry([
   {
@@ -33,12 +33,15 @@ const registry = new BackendRegistry([
   },
   {
     platform: "ios",
-    backend: new IdbBackend(),
-    isAvailable: async () => (await idbDoctor.checkIdbInstalled()).installed,
+    // 가용성 게이트는 devicectl이지 WDA가 아니다. WDA 미기동으로 게이트를
+    // 닫으면 연결된 iOS 기기가 `devices` 목록에서 통째로 사라진다
+    // (wda-doctor.ts 상단 @MX:WARN — SPEC-IOS-001에서 겪은 회귀).
+    backend: new WdaBackend(),
+    isAvailable: async () => (await wdaDoctor.checkDevicectl()).available,
   },
 ]);
 
-const result = await runCli(process.argv.slice(2), registry, { android: doctor, ios: idbDoctor });
+const result = await runCli(process.argv.slice(2), registry, { android: doctor, ios: wdaDoctor });
 
 process.stdout.write(`${JSON.stringify(result)}\n`);
 process.exitCode = result.ok ? 0 : 1;

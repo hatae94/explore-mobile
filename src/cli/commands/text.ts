@@ -18,7 +18,7 @@
 import { AdbKeyboardInstallFailedError, ImeBindTimeoutError, ImeRestoreFailedError } from "../../backend/ime-errors.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
-import { errorMessage, type CommandHandler } from "./types.js";
+import { backendFailure, errorMessage, type CommandHandler } from "./types.js";
 import { runWebText } from "./web-support.js";
 
 export const textCommand: CommandHandler = async (args, source) => {
@@ -59,7 +59,7 @@ export const textCommand: CommandHandler = async (args, source) => {
       // dedicated code, instead of degrading to BACKEND_COMMAND_FAILED.
       return failure("text", "IME_BIND_TIMEOUT", err.message, { serial: err.serial });
     }
-    return failure("text", "BACKEND_COMMAND_FAILED", errorMessage(err));
+    return backendFailure("text", err);
   }
 
   return success("text", { serial: target.serial });

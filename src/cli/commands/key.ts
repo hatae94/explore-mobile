@@ -4,7 +4,7 @@ import { KEY_ALIASES, isKeyAlias } from "../../schema/key-alias.js";
 import { UnsupportedKeyOnIosError } from "../../backend/idb-errors.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
-import { errorMessage, type CommandHandler } from "./types.js";
+import { backendFailure, errorMessage, type CommandHandler } from "./types.js";
 
 export const keyCommand: CommandHandler = async (args, source) => {
   const alias = args.positionals[0];
@@ -33,7 +33,7 @@ export const keyCommand: CommandHandler = async (args, source) => {
       // be a graceful, distinguishable reject, not a generic failure.
       return failure("key", err.code, err.message);
     }
-    return failure("key", "BACKEND_COMMAND_FAILED", errorMessage(err));
+    return backendFailure("key", err);
   }
 
   return success("key", { serial: target.serial, key: alias });

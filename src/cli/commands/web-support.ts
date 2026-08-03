@@ -41,7 +41,7 @@ import type { ParsedCommandArgs } from "../args.js";
 import { resolveTargetDevice, type DeviceSource } from "../device-targeting.js";
 import { failure, success, type CommandError, type CommandResult } from "../envelope.js";
 import { parseIndex } from "../validators.js";
-import { errorMessage } from "./types.js";
+import { backendFailure, errorMessage } from "./types.js";
 
 /** Everything the web path reaches the outside world through, injectable for tests. */
 export interface WebRunDeps {
@@ -106,7 +106,7 @@ async function resolveIosTarget(
   try {
     devices = await source.listAllDevices();
   } catch (err) {
-    return { ok: false, error: failure(command, "BACKEND_COMMAND_FAILED", errorMessage(err)) };
+    return { ok: false, error: backendFailure(command, err) };
   }
 
   const target = resolveTargetDevice(devices, args.device, source);

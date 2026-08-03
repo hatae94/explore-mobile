@@ -16,7 +16,7 @@
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { parseCoordinate } from "../validators.js";
-import { errorMessage, type CommandHandler } from "./types.js";
+import { backendFailure, errorMessage, type CommandHandler } from "./types.js";
 import { runWebTap } from "./web-support.js";
 
 export const tapCommand: CommandHandler = async (args, source) => {
@@ -45,7 +45,7 @@ export const tapCommand: CommandHandler = async (args, source) => {
   try {
     await target.backend.tap(target.serial, x, y);
   } catch (err) {
-    return failure("tap", "BACKEND_COMMAND_FAILED", errorMessage(err));
+    return backendFailure("tap", err);
   }
 
   return success("tap", { serial: target.serial, x, y });

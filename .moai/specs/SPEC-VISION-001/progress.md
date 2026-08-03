@@ -586,6 +586,117 @@ devicectl 실행 직전·직후 13회 연속 200으로 **반증됐다**. 실패�
 
 ---
 
+### M3 — iOS 백엔드 WDA 교체 (2026-08-03)
+
+**주장**: iOS 제어 경로가 idb에서 WDA HTTP + `devicectl`로 교체됐고, 캡처·탭·
+한글 입력·앱 종료가 **CLI를 통해** 실기기에서 동작한다.
+
+**측정 조건**: 조사 단계(위 §E.2 "M3 조사")와 동일한 기기·WDA 인스턴스.
+CLI는 `pnpm build` 산출물(`node dist/cli/bin.js`)을 직접 실행했다 —
+mock이 아니라 실제 argv 경로다.
+
+#### 코드 변경 전 실측 4건 (설계 근거)
+
+| 관측 | 결과 | 표본 |
+|---|---|---|
+| `POST /session/:id/wda/apps/terminate` | 응답 항상 유실(`HTTP 000`), **효과는 적용**(state 4→1) | 유실 4/4, 효과 확인 3/3 |
+| `POST /session/:id/actions` (탭) | 대개 200, 간헐 유실 — **유실돼도 효과 적용** | 유실 1/5 (별도 1건 추가 관측) |
+| `POST /session/:id/wda/keys` 한글+이모지 | **HTTP 200, 그대로 입력됨** — 우회 불필요 | 1/1 |
+| `POST /session` 본문 형식 | `{"capabilities":{"alwaysMatch":{},"firstMatch":[{}]}}` → 200 | 1/1 |
+
+응답 유실의 **원인은 여전히 미확정**이다(§E.2 조사 단계의 Gap 3 그대로).
+확정된 것은 "유실돼도 효과는 적용된다"는 관측뿐이며, 설계는 그 관측 위에
+세웠다 — 유실을 성공으로 처리하지 않고 `WDA_RESPONSE_LOST`로 남긴 뒤,
+검증 수단이 있는 `stopApp`만 `apps/state`로 확정 판정한다.
+
+#### 계획서 정정 2건
+
+1. **`plan.md` §B M3 item 3의 `stopApp` 경로가 틀렸다.** `xcrun devicectl
+   device process launch`로 적혀 있으나 `launch`는 실행이지 종료가 아니다.
+   `devicectl`의 서브커맨드는 `launch / resume / sendMemoryWarning / signal /
+   suspend`뿐이고 `signal`은 `--pid`를 요구한다(실측). 종료는 WDA
+   `apps/terminate`가 맡는다.
+2. **`devicectl` 기기 식별자가 둘이다.** 최상위 `identifier`(CoreDevice UUID,
+   `DEDABBFA-…`)와 `hardwareProperties.udid`(`00008130-…`)가 다른 값이며,
+   `iproxy -u` / `xcodebuild -destination`이 쓰는 것은 후자다. `serial`로는
+   udid를 쓴다. `--json-output`은 stdout이 아니라 **파일**에 쓰며, 도움말이
+   그것을 스크립트의 유일한 지원 경로로 명시한다.
+
+#### CLI end-to-end 실측 (판정은 스크린샷)
+
+```
+$ node dist/cli/bin.js devices
+  → iPhone 15 Pro Max(00008130-…) + iPad Pro(00008103-…), serial = udid
+
+$ node dist/cli/bin.js screenshot --device <UDID> --out …
+  → ok, PNG 1290×2796, 4601784 bytes
+
+$ node dist/cli/bin.js tap 645 2640 --device <UDID>     # 스크린샷 픽셀 좌표
+  → 설정 앱 검색 필드 명중 (배율 3.0 환산). 판정: 탭 후 캡처에 키보드 등장
+
+$ node dist/cli/bin.js text "안녕하세요 반갑습니다 🙂" --device <UDID>
+  → 검색창에 그대로 입력됨. 판정: 캡처의 문자열 확인
+
+$ node dist/cli/bin.js stop com.apple.Preferences --device <UDID>
+  → ok:true. 응답 유실 → apps/state 재확인 경로가 실제로 발동했고,
+     이후 상태 조회가 1(미실행)을 반환해 종료를 확정
+```
+
+증거: `.moai/reports/android-verification/SPEC-VISION-001-m3-wda-2026-08-03/`
+04(검색 필드 포커스) · 05(한글+이모지 입력) · 06(CLI 경유 동일 결과)
+
+#### 실패 경로 실측 (REQ-VISION-003 — 조용한 대체 금지)
+
+```
+$ EXPLORE_MOBILE_WDA_PORT=8199 … tap …   → code: WDA_UNREACHABLE
+    메시지에 iproxy/xcodebuild 복구 절차 포함. 탭은 일어나지 않았다.
+$ EXPLORE_MOBILE_WDA_PORTS="<다른 UDID>=8100" … tap …  → code: WDA_PORT_UNMAPPED
+```
+
+두 코드가 top-level에 노출되도록 `backendFailure`(`cli/commands/types.ts`)를
+추가했다. `key.ts`가 `UNSUPPORTED_KEY_ON_IOS`에 이미 적용한 관례("타입이
+식별된 백엔드 오류는 일반 코드 뒤에 가리지 않는다")의 확장이며, 그 밖의
+실패는 종전대로 `BACKEND_COMMAND_FAILED`로 가린다(D7 우선순위 유지).
+
+#### 다기기 안전장치 (사용자 결정 2026-08-03)
+
+`/status`는 기기 **종류**(`"device": "iphone"`)만 알려주므로 CLI는 포트 너머
+기기의 신원을 검증할 수 없다. 그래서 `EXPLORE_MOBILE_WDA_PORTS`로 serial→포트
+매핑을 선언하게 하고, 매핑이 선언된 상태에서 미등록 serial이 오면 기본 포트로
+흘리지 않고 거부한다. **잔여 위험**: 매핑을 선언하지 않은 채 iOS 기기를 2대
+이상 붙이면 검증 없이 기본 포트를 쓴다(`wda-client.ts`의 `@MX:DEBT`).
+
+#### 검증 (2026-08-03)
+
+```
+$ pnpm typecheck   → exit 0
+$ pnpm build       → exit 0
+$ pnpm test        → 34 files, 725 passed | 2 expected fail
+$ grep -rn '/ 3\|\* 3\b\|SCALE = 3' src/backend/wda-*.ts   → 0건 (AC-VISION-025)
+```
+
+테스트 중 **결함 1건을 테스트가 잡았다**: `unwrapEnvelope`가 던지는
+`WdaCommandFailedError`가 네트워크 오류용 `catch`에 걸려, WDA가 정상 전달한
+4xx가 `WDA_UNREACHABLE`로 둔갑했다. 재던지기로 수정.
+
+#### 미검증 (Gaps)
+
+1. **AC-VISION-020(`doctor`의 WDA 항목)은 이 환경에서 확인하지 못했다.**
+   `doctor`가 맨 앞에서 adb 설치 여부로 조기 반환하는데 이 호스트에는 adb가
+   PATH에 없다. 코드상 iOS 분기는 존재하며 단위 테스트가 그 분기를 고정하고
+   있으나, **실기기 JSON 출력으로는 확인하지 못했다.** 순서를 바꾸면
+   SPEC-ANDROID-001의 AC-ANDROID-018("데몬 불량 시 기기 조회 없이 보고")을
+   고정한 테스트 2건이 깨지므로, 다른 SPEC의 계약을 임의로 바꾸지 않고 남겼다.
+2. **`sendKeyEvent`의 `pressButton`(home/volume)·`enter` 경로는 실기기로
+   판정하지 않았다.** 단위 테스트는 argv/본문 형태만 고정한다.
+3. **`swipe`는 실기기로 판정하지 않았다.** 문턱값 33px(11pt × 배율 3)이 실제로
+   화면을 움직이는지는 M6에서 확인한다.
+4. **응답 유실의 원인**은 여전히 미확정이며, 표본도 작다(탭 유실 1/5).
+5. **`WDA_RESPONSE_LOST` 자체를 실기기 탭에서 재현해 보지는 않았다** — 이번
+   CLI 탭은 전부 200이었다. 유실 시 동작은 단위 테스트로만 고정돼 있다.
+
+---
+
 ## §E.3 Run-phase Audit-Ready Signal
 
 (run-phase 완료 시 작성)
@@ -613,11 +724,13 @@ devicectl 실행 직전·직후 13회 연속 200으로 **반증됐다**. 실패�
 | WDA 창 크기 엔드포인트 존재·형식 | M3 | **결정됨(존재·세션 불필요)** | **`GET /window/size`를 쓴다.** 실측(2026-08-03, iPhone16,2/iOS 26.5.2): 세션 없이 `{"value":{"width":430,"height":932}}`를 반환한다. design.md §F가 폴백으로 지목한 PNG IHDR 파싱은 **불필요**하다 — 창 크기를 직접 주는 엔드포인트가 존재하므로 캡처를 떠서 헤더를 파싱할 이유가 없다. 다만 `/screenshot` 역시 세션 없이 동작하므로 폴백 경로 자체는 언제든 되살릴 수 있다 |
 | WDA 세션 ID 재획득 절차 | M3 | **결정됨(POST /session으로 생성)** | **세션이 없으면 `POST /session`(앱 미지정)으로 만들고, 이후 `/status`로 재확인한다.** design.md §B.2의 채택안(“`/status`에서 얻는다”)은 **콜드 스타트에서 성립하지 않는다** — 세션이 없으면 `{"sessionId": null}`이다. §B.2가 기각한 대안이 실측으로 복권됐다. 기각 근거였던 “세션 생성이 앱 활성화를 수반해 화면을 바꾼다”도 반증됐다: 중립 화면(설정)에서 생성 전후 캡처가 118787바이트로 **길이 동일**(해시만 상이 = 상태바 시계)했고, WDA 로그가 새 앱을 띄우는 대신 이미 떠 있던 앱을 찾았다(`Find the Application`). **잔여 위험**: 세션 만료·무효화 시의 재획득은 시험하지 않았다 |
 | iOS 배율 실측 | M3 | **결정됨(3.0, 도출값)** | **캡처 해상도 ÷ 창 크기로 도출하며 상수로 박지 않는다**(design.md §C.1 그대로). 실측: 캡처 1290×2796, 창 430×932 → 1290/430 = 2796/932 = **정확히 3.0**. 인용값 ÷3과 일치했으나, 일치했다는 사실이 하드코딩의 근거가 되지는 않는다 — 기기마다 다르므로 도출 방식을 유지한다(AC-VISION-025) |
-| 시뮬레이터 목록(`simctl`) 존치 여부 | M3 | 미확정 | |
+| 시뮬레이터 목록(`simctl`) 존치 여부 | M3 | **결정됨(제외)** | **iOS 열거는 `xcrun devicectl`만 쓰고 `simctl` 시뮬레이터 열거는 하지 않는다.** 근거: 사용자 결정(2026-08-03). 조사 결과를 제시한 뒤 선택을 받았다. 열거 ~92ms를 절약하고(research.md §1.2 ①), spec.md §C.5가 시뮬레이터를 이미 범위 밖으로 이월했다. **반대 정보(함께 기록)**: 시뮬레이터가 `devices` 목록에서 통째로 사라지므로, 시뮬레이터로 작업하려는 사용자는 이 CLI로 그 기기를 볼 수 없다. 되돌리는 비용은 낮다 — `wda-device-list.ts`에 `simctl` 경로를 더하고 병합하면 된다 |
 | `dump --web` 존치 여부 | M2 | **결정됨(제거)** | **`dump` 명령을 웹 경로까지 전면 제거한다.** 근거: 사용자 결정(2026-08-03). 조사 결과를 제시한 뒤 선택을 받았다 — 존치안(`dump`를 웹 전용으로 축소, spec.md §C.4의 기본값)과 제거안을 대조했고 사용자가 제거를 택했다. **반대 정보(함께 기록)**: `dump --web`은 웹 DOM을 조회하는 유일한 진입점이었고(`tap --web`/`text --web`은 조작이지 조회가 아니다), spec.md §C.4는 "네이티브 dump만 제거"를 기본값으로 두었으며 REQ-VISION-007(웹뷰 회귀 금지)을 상한으로 지목했다. 즉 이 결정은 SPEC의 기본값을 사용자 권한으로 뒤집은 것이다. **회귀 범위 실측**: `runWebDump` + 자체 테스트 4건 제거. 같은 파일의 page 선택 5건·플랫폼 가드 2건은 `runInWebSession`(생존 경로) 커버리지였으므로 삭제하지 않고 `runWebTap`으로 재지정했다 — 삭제했다면 살아남은 경로의 커버리지가 함께 죽었고 그것이야말로 REQ-VISION-007 위반이었을 것이다. `--web` CSS 셀렉터 조작 경로(AC-VISION-031)는 무변경 |
 | `--index` 플래그 제거 여부 (M2에서 새로 발견) | M2 | **결정됨(존치)** | **`--index`는 웹 전용 플래그로 존치한다.** plan.md §B M2 item 4와 AC-VISION-008은 `--index` 제거를 지시하지만, `web-support.ts` `readSelector`가 `tap --web "<CSS>" --index N`에 이 플래그를 쓰고 `web-support.test.ts`가 그 동작을 고정하고 있다(관측: 해당 테스트 2건). 제거하면 SPEC-WEBVIEW-001 기능이 깨진다. spec.md §C.4가 "어느 쪽이든 REQ-VISION-007이 상한"이라 못박았고 §D 제약도 `--web` 동작 유지를 명시하므로, 상한이 plan 항목과 AC 문구를 이긴다. **결과: AC-VISION-008의 `--index` 절은 명시적 미충족**(`--id` 절은 충족). acceptance.md 개정으로 AC에서 `--index`를 빼는 대안이 있으나 SPEC 본문 수정이라 이 마일스톤에서 하지 않았다 |
 | iOS `getScreenSize` 화면 크기 출처 (M2에서 새로 발견) | M2 | **결정됨(undefined 강등)** | **`IdbBackend.getScreenSize`가 항상 `undefined`를 반환하도록 강등한다.** M1이 남긴 임시 구현이 UI 계층 덤프에 의존했는데(그 자체가 `@MX:UPGRADE: M3` 표시가 붙은 임시물이었다) M2가 그 메서드를 제거하므로 iOS는 M2~M3 구간에 화면 크기 출처가 없다. 추측 대신 거부를 택했다 — `SCREEN_SIZE_UNKNOWN` 계약이 그대로 유지되므로 잘못된 좌표로 되돌릴 수 없는 제스처를 보내지 않는다(REQ-VISION-001 오류 계약 보존). **실기기 영향 없음**: iOS 실기기에서 idb UI 계열 명령은 이미 실패한다(research.md §2.1, 인용). 잃는 것은 시뮬레이터 scroll뿐이며 spec.md §C.5가 시뮬레이터를 범위 밖으로 명시 이월했다. **미검증**: 이 "실기기 영향 없음" 판단은 research.md의 **인용**에 근거하며 이번 세션에서 실기기로 확인하지 않았다. M3에서 WDA `getScreenSize`가 공백을 닫는다 |
-| iOS 배율 실측값 | M3 | 미확정 | 인용값 ÷3과 대조 예정 |
+| iOS 배율 실측값 | M3 | **결정됨(3.0, 인용값과 일치)** | 캡처 1290×2796 ÷ 창 430×932 = **3.0**. 인용값 ÷3과 일치했다. 다만 코드는 여전히 도출한다 — 일치가 하드코딩의 근거가 되지는 않는다(AC-VISION-025 grep 0건으로 확인). 위 `iOS 배율 실측` 행과 같은 관측이며, 이 행은 그 값의 기록이다 |
+| iOS `stopApp` 경로 (M3에서 새로 발견) | M3 | **결정됨(WDA terminate + 상태 재확인)** | **`POST /session/:id/wda/apps/terminate`로 종료하고, 응답이 유실되면 `apps/state`로 재확인해 확정한다.** `plan.md` §B M3 item 3이 지목한 `devicectl device process launch`는 종료 명령이 아니며, `devicectl`에는 종료 서브커맨드 자체가 없다(`launch/resume/sendMemoryWarning/signal/suspend`, `signal`은 `--pid` 요구 — 실측). **반대 정보(함께 기록)**: 이 엔드포인트는 응답을 돌려주지 않는다(4/4 유실). 재확인 없이 그대로 쓰면 성공한 종료가 실패로 보고된다. 재확인 경로는 실기기 `stop` 명령에서 발동해 `ok:true`를 냈고 이후 상태 조회가 1(미실행)을 반환했다. **잔여 위험**: 재확인 시점과 실제 종료 시점 사이에 다른 주체가 앱을 다시 띄우면 오판할 수 있다 |
+| iOS 다기기 WDA 포트 귀속 (M3에서 새로 발견) | M3 | **결정됨(serial→포트 매핑)** | **`EXPLORE_MOBILE_WDA_PORTS="<udid>=<port>,…"`로 선언하고, 선언된 상태에서 미등록 serial이 오면 거부한다(`WDA_PORT_UNMAPPED`).** 근거: 사용자 결정(2026-08-03). WDA 포트는 `iproxy -u`가 묶어 준 기기 1대에만 연결되는데 `/status`는 기기 **종류**만 알려주므로(실측: `"device": "iphone"`) CLI가 스스로 신원을 검증할 수 없다. **잔여 위험**: 매핑 미선언 시 기본 8100으로 흘려보내며 검증하지 못한다(`wda-client.ts` `@MX:DEBT`). 실측 당시 iPhone·iPad 2대가 동시 연결된 상태였다 |
 | `webkit-errors.ts` idb 참조 처리 | M4 | 미확정 | 실제 호출 / 문자열 언급 여부에 따라 |
 | Android `wm size`의 `Override size:` 처리 | M1 결정 · M6 검증 | **결정됨(미검증)** | **`Physical size:`만 파싱한다.** 근거: plan.md §B M1(item 3 + 위험 항목)이 그 라인을 파싱 대상으로 명시했고, M1 착수 시 사용자가 그 문구를 따르기로 확정했다. **반대 정보(함께 기록)**: 같은 `wm` 계열 형제 파서 `parseEffectiveDensity`(adb-backend.ts)는 `Override density:`를 우선하며, Physical만 읽는 것이 override 활성 기기에서 **틀린 것으로 실측된 이력**이 있다(spec.md §C.1-⑱). 다만 화면 크기 override가 탭 좌표계를 지배하는지는 이 SPEC에서 **관측된 바 없다** — density의 실측을 size로 옮기는 것은 추론이므로 추론으로 코드를 정하지 않았다. 현재 동작은 `adb-backend.test.ts`의 Override 병기 픽스처가 고정하고 있어 향후 변경 시 테스트가 먼저 깨진다. M6 실기기에서 확인한다 |
 
