@@ -869,6 +869,236 @@ idb는 이 호스트에 **설치돼 있다**(`/Users/hatae/.local/bin/idb`,
 
 ---
 
+### M6 — 실기기 검증 (2026-08-03)
+
+**주장**: M1~M5가 남긴 D 등급 AC와 §G·§H의 미검증 항목을 두 실기기에서 관측했다.
+코드는 한 줄도 바꾸지 않았다 — 검증만 수행했다. 그 결과 **결함 3건**을 새로
+발견했고, §G가 M6로 미룬 미확정 1건이 **반증**으로 닫혔다.
+
+#### 측정 조건 (AC-VISION-036)
+
+```
+커밋 SHA   : 3c90391a4d6915c765be33bab8fd849a29fb1cd3
+작업 트리  : 추적 파일 변경 0건
+측정 일시  : 2026-08-03 13:35 KST
+
+Android    : SM-S938N / Android 16
+  serial   : 192.168.219.106:36807
+  연결     : 무선 TCP/IP 직결(adb connect IP:PORT) — mDNS 이름 경로가 아님(아래 결함 ①)
+  화면     : Physical size 1440x3120, 배율 1.0
+  adb      : 1.0.41 (PATH에 platform-tools 선주입 필요 — adb-executor.ts:33이 이름 고정)
+
+iOS        : iPhone 15 Pro Max / iOS 26.5.2
+  udid     : 00008130-001238880C13803A
+  연결     : USB + iproxy → WDA HTTP
+  화면     : 캡처 1290x2796, 창 430x932, 배율 3.0(도출값)
+
+무대 앱    : 마이클 (Android com.nbdproject.macarong / iOS net.macarong.MacarongAppIOS)
+             크롬 (Android com.android.chrome / iOS com.google.chrome.ios) → htyong.com
+증거       : .moai/reports/android-verification/SPEC-VISION-001-m6-2026-08-03/
+```
+
+#### 새로 발견한 결함 3건
+
+**① Android serial에 공백이 들어가면 기기가 `offline`로 오인된다** (SPEC-ANDROID-001 소유)
+
+무선 TLS 연결의 serial은 mDNS 이름인데, 이름 충돌이 나면 adb가 ` (2)`를 붙여
+**serial 안에 공백**이 생긴다. adb는 serial과 상태를 **탭**으로 구분하지만
+파서는 임의 공백으로 끊는다.
+
+```
+$ adb devices | sed -n 2p | od -c
+  a d b - R 3 C Y 1 0 6 L K V X - x t n 5 z d  ␠  ( 2 ) . _ a d b - t l s
+  - c o n n e c t . _ t c p  \t  d e v i c e \n
+                              ↑ serial 내부 공백        ↑ 진짜 구분자(탭)
+
+src/backend/device-list-parser.ts:38
+  const match = line.match(/^(\S+)\s+(\S+)(.*)$/);
+  → serial = "adb-R3CY106LKVX-xtn5zd"          (잘림)
+  → state  = "(2)._adb-tls-connect._tcp"       (상태가 아님)
+  → "device"가 아니므로 connectionState: "offline"
+```
+
+결과: 해당 기기 대상 모든 명령이 `DEVICE_NOT_CONNECTED`로 거부된다.
+`device-list-parser.test.ts`에 공백 포함 serial 픽스처는 **0건** — mock이 볼 수
+없는 영역이었다. 이 파일은 `6e091be feat(SPEC-ANDROID-001): M4` 소유이며
+SPEC-VISION-001은 건드린 적이 없다(`git log -- src/backend/device-list-parser.ts` 1건).
+**본 SPEC의 실기기 검증이 드러낸 기존 결함**이다.
+회피: `adb connect <IP>:<PORT>`로 직결하면 serial에 공백이 없다(이번 측정에 적용).
+
+**② `wm size` override가 활성이면 좌표계가 어긋난다** (§G 미확정 항목의 반증)
+
+`adb-backend.ts:206`이 `Physical size:`만 읽는다. override를 걸고 관측:
+
+```
+$ adb shell wm size
+Physical size: 1440x3120        ← 파서가 읽는 줄
+Override size: 1080x2340        ← 실제 화면
+
+$ node dist/cli/bin.js screenshot ...   → 1080 x 2340   ← 캡처는 Override를 따른다
+
+$ node dist/cli/bin.js scroll down ...
+  override 없음 : {720,2262} → {720,858}
+  override 활성 : {720,2262} → {720,858}   ← 한 픽셀도 안 바뀜
+  1080x2340이 옳다면 : {540,1697} → {540,644}
+```
+
+비전 루프는 캡처에서 좌표를 읽으므로 캡처(1080)와 파서(1440)가 0.75배로 어긋난다.
+x=720은 화면 중앙(540)이 아니라 폭의 66.7% 지점이고, y=2262는 높이의 **96.7%**
+지점 — Android 시스템 제스처 영역과 겹쳐 콘텐츠 스크롤 대신 뒤로가기로 먹힐 수 있다.
+
+§G는 "화면 크기 override가 탭 좌표계를 지배하는지는 관측된 바 없다"며 추론으로
+코드를 정하지 않고 M6로 미뤘다. **관측 결과 지배한다** — 형제 파서
+`parseEffectiveDensity`가 `Override density:`를 우선하는 쪽이 옳았다.
+현 동작은 override 활성 기기에서 틀린다. (원복 확인: `wm size reset` 후
+`Physical size: 1440x3120`, Override 라인 부재, 캡처 1440x3120)
+
+**③ `WDA_RESPONSE_LOST`가 읽기 전용 호출에도 재시도를 막는다**
+
+`GET /screenshot`에서 응답이 유실됐을 때의 메시지:
+
+```
+WDA가 GET /screenshot 요청의 응답을 돌려주지 않았습니다(...).
+조작이 적용됐을 수 있으니 스크린샷으로 확인하세요 —
+자동 재시도는 두 번 적용될 위험이 있어 수행하지 않았습니다.
+```
+
+스크린샷은 **조작이 아니며 멱등**이라 재시도가 안전하다("두 번 적용"될 것이
+없다). 조작 호출과 읽기 호출을 구분하지 않는 일괄 정책이며, 메시지도 읽기
+호출에서는 사실과 다르다. 수동 재호출은 즉시 성공했다.
+
+#### 항목별 관측
+
+**a1 — Android `doctor` (M3 Gap 1 / M4 Gap 1)** — PASS.
+`adb.installed:true(1.0.41)`, `daemon.healthy:true`, 기기 3대 열거,
+`adbKeyboard: {alreadyInstalled:true, installed:false, enabled:true}`.
+새 설치 없음. 출력 어디에도 idb 항목 없음. M3의 순서 변경 후 Android 분기 정상.
+증거: `a1-android-doctor.json`
+
+**a2 — `Override size:` 처리 (§G)** — 위 결함 ② 참조. 결정은 반증됐다.
+
+**a3 — Android 비전 루프 e2e (AC-VISION-033)** — PASS.
+마이클 앱 내부 5개 화면: 홈(팝업 닫기) → 정비 예약(위치 권한 다이얼로그) →
+검색 → 검색 결과 → 더보기. 전 시퀀스 완주:
+캡처 → 좌표 판정 → 탭 → 검증 캡처 → 한글 입력 → 검증 캡처.
+`안녕하세요 반갑습니다 🙂` 입력 후 `key enter`로 검색 실행 →
+앱이 `'안녕하세요 반갑습니다 🙂' 검색 결과 0건`을 되받아 출력(입력 전달 2차 증거).
+`key back` 복귀 확인. 조작 전원 사전 캡처로 좌표 확인(AC-VISION-035).
+증거: `a3-01`~`a3-09`
+
+**a4 — Android `SCREEN_SIZE_UNKNOWN` 실기기 유발** — **명시적 미검증**.
+이 분기는 *명령이 성공하면서 출력만 파싱 불가*여야 도달한다. 이 기기에서 관측한
+두 상태(override 유/무) 모두 파싱 가능한 `Physical size:` 라인을 냈다. 유발하려면
+시스템을 조작해야 하며 그것은 검증이 아니라 조작이다. acceptance.md
+§미충족 허용 조건에 따라 사유와 함께 미검증으로 닫는다. **U 통과로 대체하지 않았다.**
+
+**i1 — iOS `sendKeyEvent` (M3 Gap 2)** — PASS (4경로).
+`enter`(검색 실행, 키보드 하강) · `home`(메시지 앱 → 홈 화면) ·
+`volume_down`(HUD 슬라이더 음소거까지 하강) · `volume_up`(한 단계 복귀).
+`power`는 화면 잠금 위험으로 **의도적 제외**.
+부수 확인: `key back`이 `UNSUPPORTED_KEY_ON_IOS`로 정확히 거부됐다 —
+M4가 이관한 `WdaUnsupportedKeyError`가 일반 코드에 가려지지 않는 계약이
+실기기에서 성립. 증거: `i1-01`~`i1-04`
+
+**i2 — iOS `swipe` 문턱 33px (M3 Gap 3)** — PASS, 정량 확인.
+
+| 스와이프 | 콘텐츠 이동량 | SAD 잔차 |
+|---|---|---|
+| 20px | **0px** | — |
+| 25px | **0px** | 0 |
+| 30px | **0px** | 0 |
+| **33px (문턱)** | **-3px** | — |
+| 40px | -9px | 0 |
+| 60px | -30px | 4 |
+| 600px | -551px | — |
+
+이동량 = 스와이프 거리 − 30px. 즉 iOS 스크롤뷰의 팬 인식 여유가 **30px(10pt)**
+이고 30px까지는 한 픽셀도 움직이지 않는다. `MEASURED_MIN_EFFECTIVE_SWIPE_POINTS = 11`
+(11pt × 배율 3 = 33px)은 그 바로 한 포인트 위 — **화면을 움직이는 최소값이 맞다**.
+측정 방법: PNG를 zlib으로 직접 디코딩해 행 밝기 시그니처를 만들고 SAD 최소
+시프트를 탐색(해시 비교는 배너 자동 회전 때문에 오라클로 부적합했다).
+증거: `i2-01`~`i2-05-after60`
+
+**i3 — iOS 비전 루프 e2e (AC-VISION-034)** — PASS.
+마이클 앱 4개 화면 + 홈 화면: 홈(팝업 닫기, 배율 3.0 환산 탭 명중 =
+AC-VISION-027 재확인) → 정비 예약 → 검색 → 검색 결과.
+`안녕하세요 반갑습니다 🙂` 입력 성공(Android와 동일 문자열·동일 결과).
+증거: `i3-01`~`i3-05`
+
+**i4 — `WDA_RESPONSE_LOST` 실기기 재현 (M3 Gap 5)** — **재현 성공**.
+정비 예약 탭 전환 중 `POST /session/.../actions`에서 응답 유실. 관측:
+
+| 항목 | 결과 |
+|---|---|
+| 응답 | 유실 (`ok:false`, `WDA_RESPONSE_LOST`, 원인 `fetch failed`) |
+| 실제 효과 | **적용됨** — 다음 캡처에서 화면 전환·하단 탭 활성 확인 |
+| 자동 재시도 | 하지 않음 — **설계대로** |
+| 재시도했다면 | 탭 2회 적용으로 다른 화면 이동 |
+
+M3가 `stop` 경로에서 세운 계약(재시도 금지 + 상태 재확인으로 판정)이 `tap`
+경로에서도 실기기로 확인됐다. 이번 세션 iOS 호출 중 유실 2건 관측
+(`POST .../actions` 1건, `GET /screenshot` 1건) — 후자가 결함 ③의 계기다.
+
+**크롬 → htyong.com 2차 검증 (사용자 지정)**
+
+- **iOS**: 세션이 이미 `94htyong@gmail.com`으로 로그인된 상태였다(지시된
+  `gkxo5959@chungbuk.ac.kr`와 불일치). 사용자 결정(2026-08-03)으로 **로그아웃하지
+  않고** 현재 세션의 로그인 후 플로우를 검증했다 — 근거: `로그아웃` 버튼 바로
+  아래 224px에 `회원 탈퇴`(계정 영구 삭제)가 있고, 알림 배너가 탭을 가로챈 전례가
+  같은 세션에 2건 있었다. 홈 → 탐색 → 마이 탭 전환 및 스크롤 확인.
+  증거: `w2-01`~`w2-07`
+- **Android**: `htyong.com` → `/login` 리다이렉트 → `Google로 계속하기` →
+  OAuth 계정 선택(5개 중 지정 계정 `94htyong@gmail.com`) → `/home` 도달,
+  "하태용님" + 모임 4개 → 모임 상세(`/home/b6f4d8…`, 멤버 3명·투표 목록) 진입.
+  **OAuth 전 구간을 CLI 비전 루프만으로 완주했다.** 비밀번호는 다루지 않았다
+  (크롬의 기존 구글 세션을 계정 선택 탭으로만 사용). 증거: `w1-01`~`w1-08`
+
+**c2 — 커버리지 전후 대조 (AC-VISION-037)** — 기록 완료.
+
+| 시점 | 명령 | Lines | 분자/분모 |
+|---|---|---|---|
+| M2 이후 | `pnpm test:coverage` | 95.29% | 1175/1233 |
+| **M6** | `pnpm test:coverage` | **94.37%** | **1241/1315** |
+
+같은 명령. **분모 +82줄**(M3 WDA 백엔드 유입), 분자 +66줄 → 새 코드 82줄 중
+66줄(80.5%)이 커버됐다. 비율이 0.92%p 내린 것은 커버리지 손실이 아니라 분모
+증가에 따른 희석이다.
+
+#### AC 판정
+
+| AC | 등급 | 판정 |
+|---|---|---|
+| AC-VISION-020 (Android `doctor`) | D | **PASS** — WDA 항목은 iOS 분기 소관, idb 항목 부재 확인 |
+| AC-VISION-033 (Android e2e) | D | **PASS** — 마이클 5개 화면 전 시퀀스 |
+| AC-VISION-034 (iOS e2e) | D | **PASS** — 마이클 4개 화면 전 시퀀스 |
+| AC-VISION-035 (사전 캡처 절차) | D | **PASS** — 전 조작 사전 캡처. 단 실패 1건 기록(아래 Gaps 2) |
+| AC-VISION-036 (측정 조건 기록) | D | **PASS** — 위 측정 조건 블록 |
+| AC-VISION-037 (커버리지 대조) | G/U | **PASS** — 2회분 + 분모 변화 기록 |
+| AC-VISION-003 (`wm size` 파싱) | D | **부분 미충족** — override 미설정 기기에서는 정확, override 활성 시 **틀림**(결함 ②) |
+| AC-VISION-004 (Android 파싱 실패) | D | **명시적 미검증** — 유발 불가(a4) |
+
+#### 미검증 (Gaps)
+
+1. **AC-VISION-004의 Android 파싱 실패 경로는 여전히 U 단독이다** — a4 참조.
+2. **사전 캡처 절차가 한 번 뚫렸다** — iOS에서 캡처 직후 SMS 알림 배너가 깔려
+   제 탭이 앱 뒤로가기 대신 배너를 눌렀고 메시지 앱이 열렸다. 캡처 시점과 조작
+   시점 사이의 간극(TOCTOU)은 사전 확인으로 막을 수 없다. 해당 캡처는 개인 문자
+   내용을 담고 있어 증거 폴더에서 삭제했다. **같은 종류의 간섭이 총 3회 발생했고
+   그중 1회의 발신원은 이 검증 도구 자신이었다**(AskUserQuestion 푸시 알림이
+   iOS 배너로 도착해 탭을 가로챘다). 검증 도구가 검증 대상 기기를 오염시킨다.
+3. **결함 ②의 영향 범위를 `tap` 경로에서 직접 재지는 않았다** — `scroll`의
+   계산 좌표와 캡처 해상도로 판정했다. `tap` 좌표가 실제로 빗나가는 장면을
+   override 상태에서 스크린샷으로 잡지는 않았다.
+4. **iOS 배율은 3.0 한 기기에서만 확인했다** — 다른 배율 기기(iPad 등)에서
+   문턱 30px 여유가 동일한지는 모른다. i2의 "이동량 = 거리 − 30px"는 이
+   기기에서 관측한 규칙이다.
+5. **WDA 권한 상실은 이번 세션에 재발하지 않았다** — M4 Gap 3의 재현 조건은
+   여전히 모른다. 약 40분 세션에서는 만나지 않았다.
+6. **htyong.com iOS 경로의 OAuth 진입 화면은 보지 못했다** — 이미 로그인된
+   세션이라 `/login`을 거치지 않았다. OAuth 진입은 Android에서만 관측했다.
+
+---
+
 ## §E.3 Run-phase Audit-Ready Signal
 
 (run-phase 완료 시 작성)
@@ -883,7 +1113,26 @@ idb는 이 호스트에 **설치돼 있다**(`/Users/hatae/.local/bin/idb`,
 
 ## §F Phase 4 Mode Selection
 
-(run-phase 첫 `Agent()` 스폰 전 오케스트레이터가 작성)
+**M6 (2026-08-03)** — 입력값: tier L / 코드 변경 0파일(검증 전용) / 도메인 1개
+(실기기 관측) / 병렬 이득 없음(단일 기기 상태를 순차로 바꾸며 관측하므로 병렬화
+시 무대가 서로 오염된다).
+
+| 모드 | 선택 | 사유 |
+|---|---|---|
+| 1 trivial | ✗ | 관측 항목 10건, 단순 편집 아님 |
+| 2 background | ✗ | 기기 상태를 바꾸며 진행 — 비동기 완료 부적합 |
+| 3 agent-team | ✗ | RETIRED |
+| 4 parallel | ✗ | 무대 오염. 두 기기조차 알림 배너로 서로 간섭했다 |
+| 5 sub-agent | ✗ | 스폰하지 않음 — 아래 참조 |
+| 6 workflow | ✗ | 기계적 대량 변환 아님 |
+
+**Decision: 오케스트레이터 직접 실행 (Agent 스폰 없음)**
+
+M6는 코드를 쓰지 않고 실기기를 관측하는 마일스톤이다. 관측은 매 단계마다
+스크린샷을 눈으로 판정해 다음 좌표를 정하는 순차 루프이며, 그 판정을 위임하면
+"무엇을 보고 그 좌표를 골랐는가"라는 증거 사슬이 끊긴다. 또한 세션 지시가
+Agent 스폰을 요청하지 않았다. 따라서 `Agent()` 스폰 없이 오케스트레이터가
+직접 CLI를 호출하고 캡처를 판정했다.
 
 ---
 
@@ -904,7 +1153,7 @@ idb는 이 호스트에 **설치돼 있다**(`/Users/hatae/.local/bin/idb`,
 | iOS `stopApp` 경로 (M3에서 새로 발견) | M3 | **결정됨(WDA terminate + 상태 재확인)** | **`POST /session/:id/wda/apps/terminate`로 종료하고, 응답이 유실되면 `apps/state`로 재확인해 확정한다.** `plan.md` §B M3 item 3이 지목한 `devicectl device process launch`는 종료 명령이 아니며, `devicectl`에는 종료 서브커맨드 자체가 없다(`launch/resume/sendMemoryWarning/signal/suspend`, `signal`은 `--pid` 요구 — 실측). **반대 정보(함께 기록)**: 이 엔드포인트는 응답을 돌려주지 않는다(4/4 유실). 재확인 없이 그대로 쓰면 성공한 종료가 실패로 보고된다. 재확인 경로는 실기기 `stop` 명령에서 발동해 `ok:true`를 냈고 이후 상태 조회가 1(미실행)을 반환했다. **잔여 위험**: 재확인 시점과 실제 종료 시점 사이에 다른 주체가 앱을 다시 띄우면 오판할 수 있다 |
 | iOS 다기기 WDA 포트 귀속 (M3에서 새로 발견) | M3 | **결정됨(serial→포트 매핑)** | **`EXPLORE_MOBILE_WDA_PORTS="<udid>=<port>,…"`로 선언하고, 선언된 상태에서 미등록 serial이 오면 거부한다(`WDA_PORT_UNMAPPED`).** 근거: 사용자 결정(2026-08-03). WDA 포트는 `iproxy -u`가 묶어 준 기기 1대에만 연결되는데 `/status`는 기기 **종류**만 알려주므로(실측: `"device": "iphone"`) CLI가 스스로 신원을 검증할 수 없다. **잔여 위험**: 매핑 미선언 시 기본 8100으로 흘려보내며 검증하지 못한다(`wda-client.ts` `@MX:DEBT`). 실측 당시 iPhone·iPad 2대가 동시 연결된 상태였다 |
 | `webkit-errors.ts` idb 참조 처리 | M4 | **결정됨(문자열 언급 — 주석 수정)** | **실제 호출이 아니라 문자열 언급이었다** — 오류 클래스에 `code` 프로퍼티를 두는 패턴의 출처를 적은 3행 주석이다. 해당 언급만 지웠다(`ime-errors.ts` 패턴으로 서술 유지). **반대 정보(함께 기록)**: `src/webview/`는 AC-VISION-029가 무변경을 요구하는 PRESERVE 영역이다. AC-029의 예외 조항이 이 파일을 명시하므로 수정 자체는 조항 안에 있으나, 같은 디렉터리의 `coordinates.test.ts`(조항 미명시)도 함께 수정했다 — 사용자 결정(2026-08-03)이며 그 결과 AC-029의 `git diff`는 더 이상 빈 결과가 아니다. 둘 다 주석만 바뀌어 동작 변화는 없다 |
-| Android `wm size`의 `Override size:` 처리 | M1 결정 · M6 검증 | **결정됨(미검증)** | **`Physical size:`만 파싱한다.** 근거: plan.md §B M1(item 3 + 위험 항목)이 그 라인을 파싱 대상으로 명시했고, M1 착수 시 사용자가 그 문구를 따르기로 확정했다. **반대 정보(함께 기록)**: 같은 `wm` 계열 형제 파서 `parseEffectiveDensity`(adb-backend.ts)는 `Override density:`를 우선하며, Physical만 읽는 것이 override 활성 기기에서 **틀린 것으로 실측된 이력**이 있다(spec.md §C.1-⑱). 다만 화면 크기 override가 탭 좌표계를 지배하는지는 이 SPEC에서 **관측된 바 없다** — density의 실측을 size로 옮기는 것은 추론이므로 추론으로 코드를 정하지 않았다. 현재 동작은 `adb-backend.test.ts`의 Override 병기 픽스처가 고정하고 있어 향후 변경 시 테스트가 먼저 깨진다. M6 실기기에서 확인한다 |
+| Android `wm size`의 `Override size:` 처리 | M1 결정 · **M6 반증** | **반증됨(M6 실측)** | **M6 결론: `Physical size:`만 읽는 현재 동작은 override 활성 기기에서 틀리다.** 실측(2026-08-03, SM-S938N): override 1080x2340을 걸면 `wm size`가 Physical·Override 두 줄을 내고 **캡처는 Override(1080x2340)를 따르는데** 파서는 Physical(1440x3120)을 반환한다. `scroll` 계산 좌표가 override 유무와 무관하게 `{720,2262}→{720,858}`로 동일했다(옳은 값은 `{540,1697}→{540,644}`). 비전 루프는 캡처에서 좌표를 읽으므로 0.75배로 어긋나며, y=2262는 실제 화면 높이의 96.7% 지점이라 시스템 제스처 영역과 겹친다. 아래 M1 결정 기록은 반증 전 근거로 보존한다. 상세: §E.2 M6 결함 ②. **코드 수정은 이 마일스톤 범위 밖**(M6는 검증 전용) — 후속 판단 대상. 원래 결정 ↓ **`Physical size:`만 파싱한다.** 근거: plan.md §B M1(item 3 + 위험 항목)이 그 라인을 파싱 대상으로 명시했고, M1 착수 시 사용자가 그 문구를 따르기로 확정했다. **반대 정보(함께 기록)**: 같은 `wm` 계열 형제 파서 `parseEffectiveDensity`(adb-backend.ts)는 `Override density:`를 우선하며, Physical만 읽는 것이 override 활성 기기에서 **틀린 것으로 실측된 이력**이 있다(spec.md §C.1-⑱). 다만 화면 크기 override가 탭 좌표계를 지배하는지는 이 SPEC에서 **관측된 바 없다** — density의 실측을 size로 옮기는 것은 추론이므로 추론으로 코드를 정하지 않았다. 현재 동작은 `adb-backend.test.ts`의 Override 병기 픽스처가 고정하고 있어 향후 변경 시 테스트가 먼저 깨진다. M6 실기기에서 확인한다 |
 
 ---
 
