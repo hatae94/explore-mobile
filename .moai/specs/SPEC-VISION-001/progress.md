@@ -495,6 +495,26 @@ WDA  : xcodebuild test-without-building (어제 DerivedData 재사용, 재빌드
 경로 : iproxy 8100:8100 -u 00008130-001238880C13803A
 ```
 
+**WDA 재기동 절차 (재현용)**:
+
+```bash
+# 1) iproxy가 없으면 먼저 띄운다
+iproxy 8100:8100 -u 00008130-001238880C13803A &
+
+# 2) 어제 빌드 산출물을 재사용해 WDA를 올린다 (재빌드 불필요)
+xcodebuild test-without-building \
+  -xctestrun ~/Library/Developer/Xcode/DerivedData/WebDriverAgent-cxqdatdnwyclcwczomwgvseyritt/Build/Products/WebDriverAgentRunner_iphoneos26.0-arm64.xctestrun \
+  -destination "id=00008130-001238880C13803A"
+# 이 프로세스가 살아 있는 동안만 WDA가 뜬다. 종료하면 함께 내려간다.
+
+# 3) 확인 — 8초 내 200이 나온다
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8100/status
+```
+
+DerivedData가 지워졌거나 무료 계정 7일 만료(2026-08-02 빌드 기준)에 걸리면
+`-xctestrun` 재사용이 불가능하다. 그때는 전체 빌드 + 수동 관문 3개를 다시
+통과해야 한다 — 절차는 auto-memory `ios-physical-vision-control-verified` 참조.
+
 **기동 절차 관측**: 재빌드가 필요 없었고, **기기 암호 입력도 요구되지 않았다**
 (어제 승인이 남아 있었다). `/status`가 8초 만에 200을 반환했다. 기록된
 "수동 관문 3개"는 최초 1회 비용이며 재기동에는 걸리지 않는다는 뜻이다 — 단
