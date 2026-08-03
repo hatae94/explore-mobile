@@ -313,6 +313,72 @@ Unity 몰입형 전체화면 / 탭 UI)에서 검증했다. 금융·메신저·�
   셀렉터를 제거했으므로 배율 계산을 우회할 CLI 경로가 더 이상 없다. 이번
   검증은 5개 좌표 전부 명중했으나, 배율을 빠뜨리면 조용히 다른 곳을 탭한다.
 
+### AC-VISION-031 (`--web` 회귀) 검증 (2026-08-03)
+
+**전체 기록 + 스크린샷 3장**:
+`.moai/reports/android-verification/SPEC-VISION-001-web-2026-08-03/`
+
+**정정**: `--web`은 Android 경로가 아니라 **iOS 시뮬레이터 전용**이다
+(`web-support.ts:108`이 `platform !== "ios"`를 거부한다). 이 SPEC 문서 어디에도
+그 사실이 적혀 있지 않아 Android 항목으로 오해할 소지가 있었다.
+
+**시나리오 조정**: AC-VISION-031이 재실행을 요구하는 SPEC-WEBVIEW-001의
+AC-WEB-020은 `dump --web` → `tap --web` 순서인데, **첫 단계를 이 SPEC의 M2가
+제거했다**. 따라서 원문 그대로는 실행 불가능하다. `web-support.ts` 헤더가 정한
+해석("`tap --web` / `text --web` 경로는 변경 없이 유지된다")에 따라 살아남은
+경로의 무회귀 확인으로 수행했다. 무대는 DOM이 고정적인 example.com을 썼다.
+
+**증거**:
+
+```
+대상: iPhone 17 Pro 시뮬레이터 (D0B3A18C-...) / iOS 26.0
+
+$ node dist/cli/bin.js tap --web "a" --device D0B3A18C-...
+{"ok":true,...,"page":{"index":0,"title":"Example Domain","url":"https://example.com/"},
+ "selector":{"css":"a","index":0},"tappable":true,"method":"native","x":121,"y":326}
+  -> 화면이 example.com 에서 iana.org 로 실제 전환됨 (스크린샷 확증)
+
+$ node dist/cli/bin.js text --web 'input[name=q]' '안녕하세요 🙂' --page 1 --device D0B3A18C-...
+{"ok":true,...,"selector":{"css":"input[name=q]","index":0},"method":"native","x":147,"y":168}
+  -> 웹 입력란에 한글+이모지 착지 (스크린샷 확증)
+
+부수: --page 없이 실행 시 페이지 2개 -> AMBIGUOUS_PAGE 거부, --page 1로 지정 성공
+      (SPEC-WEBVIEW-001 AC-WEB-021 / AC-WEB-022 동작 확인)
+```
+
+**판정**: AC-VISION-031 **PASS (조건부)** — 셀렉터 경로에 M2 회귀는 없다.
+다만 아래 결함 때문에 프록시를 수동으로 미리 띄워야 했다.
+
+**새로 발견한 결함 — CLI가 스스로 띄운 프록시로는 `--web`이 실패한다**:
+
+프록시가 없는 상태에서 `tap --web`은 3회 중 3회 `NO_WEB_PAGE`로 실패했다.
+같은 인자로 프록시를 미리 띄우고(4초 대기) 실행하면 성공한다 — 페이지·소켓·
+Web Inspector는 모두 정상이므로 `--web` 경로 자체의 결함이 아니다.
+
+```
+프록시 기동 후 경과별 페이지 수 (직접 측정):  0.2s -> 0개,  0.5s 이후 -> 1개
+```
+
+`proxy-service.ts:288-296`의 기동 루프는 spawn 직후 첫 조회에서 빈 목록을 받으면
+재시도 없이 프록시를 죽이고 `NoWebPageError`를 던진다. `probePages`는 프록시가
+닿지 않을 때만 `null`(재시도 대상)을 반환하고, HTTP는 응답하나 열거 전인 상태는
+`[]`(종결)로 받는다. 3/3 실패는 간헐적 경합이 아니라 체계적으로 이른 조회임을
+시사한다. **다만 CLI 자체를 계측하지는 않았으므로 이 설명은 코드 구조와 외부
+측정에 근거한 추론이다.**
+
+USB 연결된 실기기는 원인이 아니다 — 미리 띄운 프록시가 같은 연결 상태에서
+성공했다.
+
+**손대지 않은 이유**: `src/webview/`는 SPEC-WEBVIEW-001 소유이며 plan.md §A.2
+PRESERVE 목록에 명시돼 있다. 존재와 재현 조건만 기록한다.
+
+**미검증 (Gaps)**:
+
+1. **CLI 프록시 기동 경로** — 이 상태로는 사용자가 수동으로 프록시를 띄워야
+   `--web`을 쓸 수 있다. "동작한다"고 단정하기 어려운 조건부 PASS다.
+2. **원래 시나리오의 naver.com** — DOM 안정성을 이유로 example.com으로 대체했다.
+3. **AC-WEB-024(낡은 대상 결함)** — 시험하지 않았다.
+
 ---
 
 ## §E.3 Run-phase Audit-Ready Signal
