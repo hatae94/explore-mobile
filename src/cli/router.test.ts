@@ -941,11 +941,14 @@ describe("runCli", () => {
       // The on-disk `ImeSessionStore` must never touch the real
       // `~/.cache/explore-mobile` directory during tests.
       let imeStoreDir: string;
-      let imeStorePath: string;
+      let imeSessionsDir: string;
 
       beforeEach(async () => {
         imeStoreDir = await mkdtemp(join(tmpdir(), "explore-mobile-router-ime-"));
-        imeStorePath = join(imeStoreDir, "ime-sessions.json");
+        // SPEC-IMESTATE-001 M2부터 생성자 인자 1은 **디렉터리**다. 값을
+        // `ime-sessions.json`으로 두면 M3의 구 파일 폴백 경로(디렉터리의
+        // 형제 `ime-sessions.json`)가 이 디렉터리 자신과 충돌한다.
+        imeSessionsDir = join(imeStoreDir, "ime-sessions");
       });
 
       afterEach(async () => {
@@ -973,7 +976,7 @@ describe("runCli", () => {
           return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 };
         });
 
-        const backend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeStorePath));
+        const backend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeSessionsDir));
         const doctor = new AdbDoctor(adbExec);
 
         // A prior non-ASCII `text` call switches this serial's session IME.
@@ -1023,7 +1026,7 @@ describe("runCli", () => {
           return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 };
         });
 
-        const adbBackend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeStorePath));
+        const adbBackend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeSessionsDir));
         const registry = new BackendRegistry([
           { platform: "android", backend: adbBackend, isAvailable: async () => true },
           { platform: "ios", backend: createMockIosBackend(), isAvailable: async () => false },
@@ -1067,13 +1070,13 @@ describe("runCli", () => {
         // "Process 1" (`text` invocation): a fresh `AdbBackend` +
         // `ImeSessionStore` pair, exactly as `bin.ts` constructs on every
         // CLI invocation.
-        const textProcessBackend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeStorePath));
+        const textProcessBackend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeSessionsDir));
         await textProcessBackend.inputText(serial, "안녕");
 
         // "Process 2" (`reset` invocation): a BRAND-NEW `AdbBackend` +
         // `ImeSessionStore` pair pointed at the SAME on-disk file — no
         // in-memory state is shared with `textProcessBackend`.
-        const resetProcessBackend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeStorePath));
+        const resetProcessBackend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeSessionsDir));
         const doctor = new AdbDoctor(adbExec);
 
         const result = await runCli(["reset"], resetProcessBackend, envServices(doctor));
@@ -1119,7 +1122,7 @@ describe("runCli", () => {
           return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 };
         });
 
-        const backend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeStorePath));
+        const backend = new AdbBackend(adbExec, undefined, new ImeSessionStore(imeSessionsDir));
         const doctor = new AdbDoctor(adbExec);
 
         await backend.inputText(serial, "안녕");

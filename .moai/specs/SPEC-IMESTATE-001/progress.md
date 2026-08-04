@@ -1,10 +1,10 @@
 ---
 id: SPEC-IMESTATE-001
 title: "기기별 IME 세션 상태 격리 — 진행 기록"
-version: "0.4.0"
+version: "0.4.1"
 status: in-progress
 created: 2026-07-29
-updated: 2026-07-30
+updated: 2026-08-03
 author: hatae
 ---
 
@@ -193,6 +193,47 @@ BASE_SHA: b4fdc6a6c684d02e373f415cf3dedc91780c8352
 
 AC-018은 이 값으로 세 명령을 실행한다(양성 대조 → 내용 차이 → 커밋 이력). 명령 형태는 `acceptance.md` AC-018 및 `plan.md` §E를 그대로 따른다. M1 시점에는 소스 파일(`ime-session-store.ts`) 자체를 아직 수정하지 않았으므로 양성 대조는 M2 완료 후에야 성립한다 — 아래 §E5 참조.
 
+### 기준 SHA 재설정 — M2 착수 (2026-08-03)
+
+**위 `BASE_SHA`(`b4fdc6a`)는 M1 증거용으로만 유효하며, M2 이후 AC-018에는 사용할 수 없다.** M1 커밋(`181199e`, 2026-07-30) 이후 이 SPEC과 무관한 커밋 **46개**가 들어왔고, 그 과정에서 PRESERVE 대상 3파일이 **전부** 정당하게 수정됐다. 실측:
+
+```
+$ git rev-list --count 181199e..HEAD
+46
+
+$ git diff --name-only b4fdc6a6c684d02e373f415cf3dedc91780c8352 HEAD -- \
+    src/backend/adb-backend.ts src/cli/commands/reset.ts src/cli/commands/doctor.ts
+src/backend/adb-backend.ts
+src/cli/commands/doctor.ts
+src/cli/commands/reset.ts
+
+$ git diff --name-only 181199e HEAD -- (동일 3파일)
+src/backend/adb-backend.ts
+src/cli/commands/doctor.ts
+src/cli/commands/reset.ts
+```
+
+옛 기준선을 그대로 쓰면 **내가 한 글자도 건드리지 않아도 AC-018이 "PRESERVE 3파일 전부 변경됨"을 출력한다** — 거짓 실패다. AC-018이 증명하려는 것은 "이 SPEC의 작업이 호출자를 건드리지 않았다"이므로, 기준선은 **이 SPEC의 다음 작업이 시작되는 지점**이어야 한다.
+
+```
+BASE_SHA_M2: 3b8e8008893a8658303d21a326a71cf8fe35963a  (short: 3b8e800)
+기록 시점: 2026-08-03 (M2 착수 직전, git rev-parse HEAD 실측)
+용도: M2 이후 모든 AC-018 실행의 $BASE
+```
+
+기록 시점의 작업트리에는 SPEC 산출물 0.4.1 정정(spec.md · plan.md)이 미커밋 상태로 존재했다. **PRESERVE 대상 3파일과 무관한 문서 변경이므로 AC-018 판정에 영향이 없다.**
+
+**M2 착수 시점 테스트 기준선** (`plan.md` §C row 1 / M4 대조용 — 하드코딩 대신 여기 실측 기록):
+
+```
+$ pnpm test       → Test Files 26 passed (26) · Tests 554 passed | 2 expected fail (556), exit 0
+$ pnpm typecheck  → exit 0
+```
+
+`2 expected fail`은 M1이 심은 재현 테스트 2건(`it.fails`)이며 **M2 완료 시 통과로 전환되어야 한다**. 즉 M2 이후의 기대 기준선은 `556 passed | 0 expected fail`이다 — 이 전환 자체가 AC-002·021의 후반 관측이다.
+
+> 0.4.0까지 `plan.md`가 기준선으로 적고 있던 `32 files / 702 tests`는 SPEC-WEBVIEW-002·SPEC-CLEAN-001의 코드 삭제로 낡았다(0.4.1에서 하드코딩 제거). 위 §E.2 M1 사전 점검 표의 `702 / 32 files`는 **2026-07-30 당시의 실측 기록이므로 덮어쓰지 않는다** — 관측 기록과 미래 지시를 분리한다.
+
 ### 사전 점검 (`plan.md` §C rows 0-9) — 전건 통과
 
 | # | 명령 | 실측 결과 |
@@ -287,6 +328,122 @@ M1 커밋의 SHA/push 결과는 이 파일이 그 커밋에 포함되어 자기 
 ### E7 — 블로커
 
 없음. 두 결함 모두 재현에 성공했고 사전 점검 10개 항목 전건이 기대대로 통과했으므로 M1 게이트를 통과한다.
+
+### M2 — 기기별 저장소 + 배타 생성 + 툼스톤 (완료, 2026-08-03)
+
+**판정: M2 통과.** M1이 심은 재현 테스트 2건이 `it.fails`에서 **진짜 통과**로 전환됐고(전후 대조 후반부 성립), 검증 3종이 모두 exit 0이며, PRESERVE 3파일은 새 기준선 대비 **변경 0건**이다.
+
+#### 변경 파일 (6)
+
+| 파일 | 성격 |
+|---|---|
+| `src/backend/ime-session-store.ts` | 주 변경 — 단일 파일 맵 → 기기별 레코드 + 배타 생성 + 툼스톤 |
+| `src/backend/ime-session-store.test.ts` | 테스트 확장 + M1 하네스 조정 + 계약 반전 반영 |
+| `src/cli/router.test.ts` | arg1 의미 변화(파일→디렉터리) 대응. `imeStorePath` → `imeSessionsDir` |
+| `spec.md` · `plan.md` · `progress.md` | 0.4.1 사실 정정 + 기준선 재설정(위 절) |
+
+#### 검증 3종 (실측)
+
+```
+$ pnpm test       → Test Files 26 passed (26) · Tests 571 passed (571), exit 0
+$ pnpm typecheck  → exit 0
+$ pnpm build      → exit 0
+```
+
+M2 착수 시점 기준선은 `554 passed | 2 expected fail (556)`이었다. **`expected fail`이 0이 된 것이 M2의 게이트 신호**다 — `it.fails`가 스스로 FAILURE를 보고했고 그 신호에 따라 modifier를 제거했다. 순증 15건은 M2가 추가한 테스트다.
+
+#### AC 매트릭스 — 관측한 것만
+
+| AC | 판정 | 근거 |
+|---|---|---|
+| AC-002 (인터리빙 유실 없음) | **PASS** | 배리어 하네스 실행, 두 시리얼 모두 조회됨. M1의 FAIL → M2의 PASS 전환 관측 완료 |
+| AC-021 (동시 부재식 기록에서 먼저 쓴 값 보존) | **PASS** | 같은 하네스, `ime.first` 생존 + **생성 시도 2회** 관측 |
+| AC-022 (EEXIST가 오류로 새어 나가지 않음) | **PASS** | `createFailingIO("EEXIST")` → `resolves.toBeUndefined()` |
+| AC-027 (비-`EEXIST`가 거부로 전파) | **PASS** | `ENOENT`·`EACCES`·`ENOSPC` 3종 모두 `rejects.toThrow()` |
+| AC-001 (시리얼별 파일 분리) | **PASS** | 경로 상이 + 레코드 내용이 전체 맵이 아님을 파일에서 직접 확인 |
+| AC-004 (특수문자 시리얼 비충돌) | **PASS** | `192.168.1.5:5555` vs `192_168_1_5_5555` 분리 |
+| AC-006 (예약 문자 잔존 없음) | **PASS** | `/` `\` `:` `.` 모두 부재 |
+| AC-015 (clear 후 3가지 상태) | **PASS** | 레코드 부재 · 툼스톤 존재 · 조회 `undefined` 3건 모두 단정 |
+| AC-016 (기록 없는 clear의 멱등성) | **PASS** | 미추적 시리얼 clear + 2회 연속 clear |
+| AC-017 (공개 메서드 3개 시그니처 불변) | **PASS** | 시그니처 grep 일치 + `adb-backend.ts` 무수정 + typecheck exit 0 |
+| AC-019 (기존 테스트 전부 통과) | **PASS** | 571/571 |
+| AC-018 (호출자 무수정, 기준 SHA 대비 + 양성 대조) | **PASS** | 아래 PRESERVE 절 |
+| AC-005 (대소문자 분리 + 볼륨 특성 관측) | **부분** | 전반부(인코더가 대소문자를 붕괴시키지 않음)만 관측. **볼륨 프로브 미구현** |
+| AC-008 (손실 변환 미재사용) | **판정 불가** | 아래 별도 절 |
+| AC-009·010·012·023·024·025·028 | **미착수** | M3(구 파일 폴백) 범위 |
+| AC-003 (두 프로세스 실측) | **미착수** | M5 범위 |
+| AC-020 (단일 기기 복원 경로) | **미관측** | 실기기 미확보 |
+
+#### AC-008 판정 불가 — 양성 대조 대상이 소멸했다
+
+AC-008은 "손실 있는 정리 코드(`replace(/[^A-Za-z0-9_-]/g, "_")`)를 재사용하지 않았다"를 **양성 대조 필수**로 검증한다. 실행 결과:
+
+```
+[양성 대조] grep -nF 'replace(/[^A-Za-z0-9_-]/g' src/backend/adb-backend.ts
+(출력 없음)          ← 대조 대상이 존재하지 않는다
+
+[본 검사]  grep -cF 'replace(/[^A-Za-z0-9_-]/g' src/backend/ime-session-store.ts
+1                    ← 재사용이 아니라 "재사용 금지" 주석의 인용
+
+[전수]     grep -rn 'A-Za-z0-9_-' src/
+src/backend/ime-session-store.test.ts:230  (주석 인용)
+src/backend/ime-session-store.ts:140       (주석 인용)
+```
+
+**그 변환은 저장소 어디에도 없다** — SPEC 작성(2026-07-29) 이후 제거됐다. 따라서 AC-008은 현재 형태로는 ① 양성 대조가 성립하지 않고 ② 본 검사가 주석 인용에 false positive를 낸다. **통과로 계상하지 않는다.**
+
+부수적으로, 이 검사가 M2 작성 중 **내가 새로 만든 낡은 참조 2건을 잡아냈다** — 새 주석이 `adb-backend.ts:57`을 가리켰는데 그 줄은 현재 `assertSuccess` 본문이다. 두 주석 모두 줄 번호 참조를 제거하고 성질 기술로 교체했다. (교훈 재확인: 수정하면서 새 표면에 새 결함이 생긴다.)
+
+**M4 선행 조건**: AC-008을 실행 가능한 형태로 정정해야 한다 — 대조 대상이 사라졌으므로 "재사용하지 않았다"는 인코더의 성질(단사·소문자 hex)로 검증하고, 주석 인용을 본 검사에서 배제해야 한다. 이는 `acceptance.md` 본문 수정이므로 SPEC 정정 경로로 처리한다.
+
+#### PRESERVE 증명 (AC-018 — 새 기준선 `3b8e800` 대비)
+
+```
+$ git diff --name-only 3b8e8008893a8658303d21a326a71cf8fe35963a -- \
+    src/backend/adb-backend.ts src/cli/commands/reset.ts src/cli/commands/doctor.ts
+(출력 없음 — 변경 0건)
+
+$ git diff --name-only 3b8e800... -- src/backend/ime-session-store.ts   (양성 대조)
+src/backend/ime-session-store.ts    ← 같은 명령이 변화를 감지한다
+```
+
+양성 대조가 성립하므로 위의 빈 출력은 "명령이 고장 나서 조용한 것"이 아니라 **실제 무수정**이다.
+
+부수 확인: 잠금 도입 없음(`lockfile|flock|mutex|semaphore` 0건 — §A.3-② 무저촉), 런타임 의존성 추가 없음(`node:fs/promises` · `node:path` + 기존 내부 import만), 구 파일 쓰기 경로 없음(`legacyStorePath()`는 M3 스텁에서 `void`로만 참조).
+
+#### 공허 검사 방지 — 양성 대조 실험
+
+AC-021 테스트는 **결함이 없어도 통과할 수 있는 구조**였다: 두 주체가 실제로 겹치지 않으면(A가 끝난 뒤 B가 A의 값을 보고 쓰기를 건너뛰면) 배타성이 없어도 최종값이 `ime.first`가 된다. 1차 감사가 지적한 "결함이 있어도 무조건 PASS하는 공허한 검사"와 같은 구조다. 두 가지로 막았다:
+
+1. **관문 단정 추가** — 레코드 경로의 배타 생성 **시도 횟수 = 2**를 값 단정보다 **먼저** 확인한다. 시도가 1회로 떨어지면 하네스가 퇴화한 것이므로 테스트가 즉시 실패한다.
+2. **양성 대조 실험 (스크래치, 커밋하지 않음)** — 가짜 IO의 `createExclusive`에서 `EEXIST`를 제거(= 배타성 없음)하고 같은 하네스를 실행:
+   ```
+   POSITIVE CONTROL observed: ime.second
+   ```
+   결함이 되살아나는 것을 관측했다. 즉 이 테스트는 **결함을 실제로 잡아낸다.** 실험 파일은 실행 후 삭제했고 `git status`로 잔재 없음을 확인했다.
+
+#### 하네스 배리어 지점 이동 (약화 아님 — 지점 정정)
+
+M1의 배리어는 `read`에 걸려 있었다. M1 시점의 `setOriginalIme`은 내부에서 `readAll()`을 했기 때문이다. M2의 `setOriginalIme`은 read-modify-write를 하지 않고 **배타 생성 한 번**으로 끝나므로 `read` 배리어에 애초에 도달하지 않는다 — 그대로 두면 테스트 ①이 게이트가 풀리지 않아 **교착**한다. 배리어를 `read` + `createExclusive` 양쪽에 걸어, "쓰기가 실제로 일어나는 지점에서 인터리빙을 강제한다"는 하네스 요건 2의 의도를 보존했다. 요건 1(경로별 키 저장소)·3(IO 주입)은 M1 그대로다.
+
+#### 계약 반전 기록 (테스트 조정 사유)
+
+`"overwriting an existing entry keeps only the latest value (last write wins)"` 단정을 **first-write-wins로 뒤집었다.** 통과시키려고 약화시킨 것이 아니라 REQ-007이 계약을 반대로 확정했기 때문이며, 뒤집힌 방향을 같은 강도로 단정한다. 근거: 늦게 진입한 프로세스는 이미 ADBKeyBoard로 바뀐 IME를 "원래 IME"로 관측하므로, 그것이 이기면 `reset`이 기기를 ADBKeyBoard 자체로 "복원"한다.
+
+#### M3로 넘긴 것
+
+- `readLegacyFallback()`은 현재 `undefined`를 반환하는 **명시적 스텁**이다(`@MX:TODO` / REQ-003). 3단계 조회의 **순서**는 M2에서 확정했고, 3단계의 **내용**이 M3다.
+- `router.test.ts`의 저장 경로를 디렉터리로 정정했다. 정정 전 값(`ime-sessions.json`)을 그대로 두면 M3의 구 파일 폴백 경로(디렉터리의 형제 `ime-sessions.json`)가 그 디렉터리 자신과 충돌한다 — M2에서는 무해했으나 M3에서 함정이 된다.
+
+#### 블로커
+
+없음. 단 **AC-008은 M4 진입 전 SPEC 정정이 필요**하다(위).
+
+#### 잔여 위험
+
+- AC-021의 결정성은 두 await 체인의 길이가 같다는 성질에 의존한다. 조회 경로가 바뀌어 체인 길이가 달라지면 승자가 뒤집힐 수 있다 — 관문 단정(시도 2회)이 그 퇴화를 잡지만, 승자 자체의 결정성은 하네스 구조에 의존한다는 점을 기록해 둔다.
+- 배타 생성의 원자성은 **실제 파일시스템의 `wx` 플래그**가 보장한다. M2의 증거는 그 원자성을 흉내낸 가짜 IO 위에서 얻은 것이다. 실제 두 OS 프로세스에서의 관측은 **M5**가 담당한다(§C.1-⑰ 미관측 항목).
+- 123바이트 시리얼 상한은 산식으로만 확인했고 실제 경계 시리얼로 실행하지 않았다.
 
 ## §F Phase 4 Mode Selection
 
