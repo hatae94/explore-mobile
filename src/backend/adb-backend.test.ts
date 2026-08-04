@@ -89,7 +89,10 @@ describe("AdbBackend", () => {
 
   beforeEach(async () => {
     imeStoreDir = await mkdtemp(join(tmpdir(), "explore-mobile-adb-backend-"));
-    imeStorePath = join(imeStoreDir, "ime-sessions.json");
+    // 저장소 **디렉터리** 이름은 `ime-sessions.json`이면 안 된다 — M3의 구 파일
+    // 폴백 경로(디렉터리의 형제 `ime-sessions.json`)가 이 디렉터리 자신을
+    // 가리키게 된다. `router.test.ts`가 같은 이유로 먼저 정리한 함정이다.
+    imeStorePath = join(imeStoreDir, "ime-sessions");
   });
 
   afterEach(async () => {

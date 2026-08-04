@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -354,6 +354,203 @@ describe("state-changing operation order (spec.md §A.3-⑦·⑧)", () => {
     await store.setOriginalIme("A", "com.example/.New");
 
     expect(ops).toEqual(["create record", "remove tombstone"]);
+  });
+});
+
+describe("new-session ordering observed against a stale legacy record (AC-IMESTATE-024)", () => {
+  /**
+   * 최종 상태만 보면 반대 순서(툼스톤 제거 → 레코드 생성) 구현도 통과한다.
+   * 그래서 **두 변경 연산 사이의 창**에 조회를 끼워 넣어 순서를 직접 판정한다.
+   *
+   * 구 파일에 낡은 기록이 있어야 두 순서의 차이가 관측된다 — 없으면 반대
+   * 순서에서도 중간 조회가 `undefined`를 반환해 구별되지 않는다(0.3.0의 Given이
+   * 순서를 구별하지 못했던 이유).
+   */
+  it("keeps the in-window lookup on the record instead of falling through to the stale legacy value while replacing a tombstoned session", async () => {
+    const storeDir = "virtual/ime-sessions";
+    const encoded = encodeSerialForFilename("SERIAL-A");
+    const files = new Map<string, Buffer>();
+    // 구 파일은 저장소 디렉터리의 형제다.
+    files.set(
+      "virtual/ime-sessions.json",
+      Buffer.from(JSON.stringify({ "SERIAL-A": { originalIme: "ime.stale" } }), "utf-8"),
+    );
+    // 직전 세션이 종료돼 툼스톤만 남은 상태.
+    files.set(join(storeDir, `${encoded}.cleared`), Buffer.from("{}", "utf-8"));
+
+    const probes: (string | undefined)[] = [];
+    let store!: ImeSessionStore;
+    /** 변경 연산이 시작될 때마다 조회를 끼워 넣는다 — 두 번째가 op1↔op2의 창이다. */
+    async function probe(): Promise<void> {
+      probes.push(await store.getOriginalIme("SERIAL-A"));
+    }
+
+    const io: ImeSessionStoreIO = {
+      read: async (path) => files.get(path) ?? null,
+      write: async (path, data) => {
+        files.set(path, data);
+      },
+      createExclusive: async (path, data) => {
+        await probe();
+        if (files.has(path)) throw fsError("EEXIST", path);
+        files.set(path, data);
+      },
+      remove: async (path) => {
+        await probe();
+        if (!files.has(path)) throw fsError("ENOENT", path);
+        files.delete(path);
+      },
+    };
+    store = new ImeSessionStore(storeDir, io);
+
+    await store.setOriginalIme("SERIAL-A", "ime.new");
+
+    // 공허 검사 방지 관문 — **이 단정이 먼저다.** 변경 연산이 2회 일어나야
+    // "사이의 창"이 존재한다. 1회로 떨어지면 하네스가 퇴화한 것이므로 즉시
+    // 실패해 알린다.
+    expect(probes).toHaveLength(2);
+    // ③ 두 연산 사이의 조회가 구 파일의 낡은 값을 반환하지 않는다. 순서가
+    //    맞으면 1단계(레코드)에 걸려 "ime.new"이고, 반대 순서면 3단계로 떨어져
+    //    "ime.stale"이 나와 여기서 실패한다.
+    expect(probes[1]).toBe("ime.new");
+    // ① 레코드 파일이 생성됐다
+    expect(files.has(join(storeDir, `${encoded}.json`))).toBe(true);
+    // ② 이후 조회가 새 값을 반환한다 — 툼스톤이 억제하지 않는다
+    await expect(store.getOriginalIme("SERIAL-A")).resolves.toBe("ime.new");
+  });
+});
+
+describe("legacy single-file fallback (REQ-IMESTATE-003 — 영구 읽기 전용)", () => {
+  let dir: string;
+  let storeDir: string;
+  /**
+   * 구 단일 파일의 자리 — 저장소 디렉터리의 **형제**다. 기본 배치에서
+   * `resolveImeSessionStorePath()`가 가리키는 것과 같은 관계이므로, 주입된
+   * 임시 디렉터리에서도 같은 경로 규칙이 성립한다.
+   */
+  let legacyPath: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "explore-mobile-ime-legacy-"));
+    storeDir = join(dir, "ime-sessions");
+    legacyPath = join(dir, "ime-sessions.json");
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  /** 구 단일 파일(시리얼 → 기록의 맵)을 그 자리에 만든다. */
+  async function writeLegacyFile(map: Record<string, unknown>): Promise<void> {
+    await writeFile(legacyPath, JSON.stringify(map, null, 2), "utf-8");
+  }
+
+  it("[AC-IMESTATE-009] returns a value that exists ONLY in the legacy file — an in-flight session must not become permanently unrestorable", async () => {
+    await writeLegacyFile({ "SERIAL-A": { originalIme: "com.example/.LegacyIme" } });
+    const store = new ImeSessionStore(storeDir);
+
+    await expect(store.getOriginalIme("SERIAL-A")).resolves.toBe("com.example/.LegacyIme");
+  });
+
+  it("[AC-IMESTATE-010] the record file wins when record and legacy hold DIFFERENT values for the same serial (lookup step 1 beats step 3)", async () => {
+    await writeLegacyFile({ "SERIAL-A": { originalIme: "com.example/.Stale" } });
+    const store = new ImeSessionStore(storeDir);
+    await store.setOriginalIme("SERIAL-A", "com.example/.Fresh");
+
+    await expect(store.getOriginalIme("SERIAL-A")).resolves.toBe("com.example/.Fresh");
+  });
+
+  it("[AC-IMESTATE-023] a tombstone suppresses the legacy fallback, so a cleared serial's legacy record never comes back", async () => {
+    await writeLegacyFile({
+      "SERIAL-A": { originalIme: "com.example/.Zombie" },
+      "SERIAL-B": { originalIme: "com.example/.Live" },
+    });
+    // 툼스톤은 손으로 만든다 — 이 AC는 "억제하는가"만 판정한다(생성 여부는 AC-025).
+    await mkdir(storeDir, { recursive: true });
+    await writeFile(join(storeDir, `${encodeSerialForFilename("SERIAL-A")}.cleared`), "{}", "utf-8");
+    const store = new ImeSessionStore(storeDir);
+
+    await expect(store.getOriginalIme("SERIAL-A")).resolves.toBeUndefined();
+
+    // 양성 대조 — 억제가 걸리지 않은 시리얼은 같은 구 파일에서 값을 돌려준다.
+    // 이 단정이 없으면 폴백 자체가 고장 나 항상 `undefined`인 구현도 위 단정을
+    // 통과한다(공허 검사).
+    await expect(store.getOriginalIme("SERIAL-B")).resolves.toBe("com.example/.Live");
+  });
+
+  it("[AC-IMESTATE-025] clear creates a tombstone even when the record exists ONLY in the legacy file", async () => {
+    await writeLegacyFile({ "SERIAL-A": { originalIme: "com.example/.LegacyOnly" } });
+    const store = new ImeSessionStore(storeDir);
+    // 사전 확인 — clear 전에는 구 파일 값이 조회된다. `clear`가 no-op인 구현이면
+    // 이 값이 그대로 살아남아 좀비가 된다.
+    await expect(store.getOriginalIme("SERIAL-A")).resolves.toBe("com.example/.LegacyOnly");
+
+    await store.clearOriginalIme("SERIAL-A");
+
+    // ① 툼스톤이 존재한다(원본 시리얼을 담아 추적 가능하다)
+    await expect(
+      readFile(join(storeDir, `${encodeSerialForFilename("SERIAL-A")}.cleared`), "utf-8"),
+    ).resolves.toContain("SERIAL-A");
+    // ② 조회가 undefined — 구 파일 기록이 되살아나지 않는다
+    await expect(store.getOriginalIme("SERIAL-A")).resolves.toBeUndefined();
+  });
+
+  it("[AC-IMESTATE-012] a fresh install (no legacy file) survives get/set/clear and never creates the legacy file", async () => {
+    const store = new ImeSessionStore(storeDir);
+
+    // ① 어떤 오류도 발생하지 않는다 ② 조회가 undefined를 반환한다
+    await expect(store.getOriginalIme("SERIAL-A")).resolves.toBeUndefined();
+    await expect(store.setOriginalIme("SERIAL-A", "com.example/.New")).resolves.toBeUndefined();
+    await expect(store.clearOriginalIme("SERIAL-A")).resolves.toBeUndefined();
+
+    // ③ 구 파일이 새로 생기지 않았다 — 생기면 이후 모든 조회가 그것을 폴백
+    //    대상으로 삼게 되므로 회귀 신호다.
+    await expect(stat(legacyPath)).rejects.toThrow();
+  });
+
+  it("[AC-IMESTATE-028] leaves the legacy file present, byte-identical and mtime-unchanged after a fallback lookup, a write, and an invalidation", async () => {
+    await writeLegacyFile({
+      "SERIAL-A": { originalIme: "com.example/.A" },
+      "SERIAL-B": { originalIme: "com.example/.B" },
+    });
+    const contentBefore = await readFile(legacyPath);
+    const mtimeBefore = (await stat(legacyPath)).mtimeMs;
+    const store = new ImeSessionStore(storeDir);
+
+    // 폴백을 유발하는 조회 · 기록 · 무효화 3종을 모두 거친다.
+    await expect(store.getOriginalIme("SERIAL-A")).resolves.toBe("com.example/.A");
+    await store.setOriginalIme("SERIAL-C", "com.example/.C");
+    await store.clearOriginalIme("SERIAL-B");
+
+    // ① 여전히 존재한다(rename·삭제되지 않았다)
+    const contentAfter = await readFile(legacyPath);
+    // ② 내용이 바이트 단위로 동일하다
+    expect(contentAfter.equals(contentBefore)).toBe(true);
+    // ③ mtime이 변하지 않았다 — 내용이 같아도 읽고 그대로 되쓴 구현(공유 파일
+    //    read-modify-write 재도입)은 내용 비교만으로는 잡히지 않고 여기서 걸린다.
+    expect((await stat(legacyPath)).mtimeMs).toBe(mtimeBefore);
+  });
+
+  it("treats a malformed (non-JSON) legacy file as empty rather than throwing", async () => {
+    await writeFile(legacyPath, "{ this is not valid JSON ]]]", "utf-8");
+    const store = new ImeSessionStore(storeDir);
+
+    await expect(store.getOriginalIme("SERIAL-A")).resolves.toBeUndefined();
+  });
+
+  it("treats legacy entries of the wrong shape as empty rather than throwing", async () => {
+    await writeLegacyFile({ "SERIAL-A": "not-a-record", "SERIAL-B": { originalIme: 42 } });
+    const store = new ImeSessionStore(storeDir);
+
+    await expect(store.getOriginalIme("SERIAL-A")).resolves.toBeUndefined();
+    await expect(store.getOriginalIme("SERIAL-B")).resolves.toBeUndefined();
+  });
+
+  it("treats an empty legacy file as empty rather than throwing", async () => {
+    await writeFile(legacyPath, "", "utf-8");
+    const store = new ImeSessionStore(storeDir);
+
+    await expect(store.getOriginalIme("SERIAL-A")).resolves.toBeUndefined();
   });
 });
 

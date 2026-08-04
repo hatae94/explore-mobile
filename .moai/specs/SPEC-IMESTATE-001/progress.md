@@ -445,6 +445,92 @@ M1의 배리어는 `read`에 걸려 있었다. M1 시점의 `setOriginalIme`은 
 - 배타 생성의 원자성은 **실제 파일시스템의 `wx` 플래그**가 보장한다. M2의 증거는 그 원자성을 흉내낸 가짜 IO 위에서 얻은 것이다. 실제 두 OS 프로세스에서의 관측은 **M5**가 담당한다(§C.1-⑰ 미관측 항목).
 - 123바이트 시리얼 상한은 산식으로만 확인했고 실제 경계 시리얼로 실행하지 않았다.
 
+### M3 — 구 파일 읽기 전용 폴백 (완료, 2026-08-04)
+
+**판정: M3 통과.** 3단계 조회의 내용이 채워졌고, 새 테스트 10건이 **변이 실험에서 실제로 결함을 잡아냈다.** 검증 3종 exit 0, PRESERVE 3파일 변경 0건.
+
+#### 변경 파일 (3)
+
+| 파일 | 성격 |
+|---|---|
+| `src/backend/ime-session-store.ts` | 주 변경 — `readLegacyFallback` 스텁 → 구 파일 맵 파싱 구현, `@MX:TODO` → `@MX:NOTE` |
+| `src/backend/ime-session-store.test.ts` | 테스트 10건 추가 (AC 7건 + 견고성 3건) |
+| `src/backend/adb-backend.test.ts` | 저장소 **디렉터리** 이름 `ime-sessions.json` → `ime-sessions` (1줄 + 사유 주석) |
+
+#### 검증 3종 (실측)
+
+```
+$ pnpm test       → Test Files 26 passed (26) · Tests 581 passed (581), exit 0
+$ pnpm typecheck  → exit 0
+$ pnpm build      → exit 0
+```
+
+M3 착수 시점 기준선은 **`26 files / 571 passed`**(착수 직전 실측). 순증 10건이 M3가 추가한 테스트다. 로그: `.moai/state/verify/4ca4f7d8/m3-{baseline-test,test-final,typecheck-final,build-final}.log`.
+
+#### AC 매트릭스 — 관측한 것만
+
+| AC | 판정 | 근거 |
+|---|---|---|
+| AC-009 (구 파일 전용 기록도 조회됨) | **PASS** | 구 파일만 둔 상태에서 `getOriginalIme` → 값 반환. 변이 실험에서 실패로 전환 확인 |
+| AC-010 (레코드가 구 파일보다 우선) | **PASS** | 같은 시리얼에 서로 다른 값 배치 → 레코드 값 반환 |
+| AC-012 (신규 설치에서 구 파일 미생성) | **PASS** | 조회·기록·무효화 3종 무오류 + 조회 `undefined` + `stat(구 파일)` reject |
+| AC-023 (툼스톤이 폴백을 억제) | **PASS** | `SERIAL-A` 억제 `undefined` + **양성 대조** `SERIAL-B`는 같은 구 파일에서 값 반환 |
+| AC-024 (새 세션 순서 — 중간 창 조회) | **PASS** | 주입 IO로 변경 연산마다 조회 삽입. 관문 `probes.length === 2` + `probes[1] === "ime.new"` |
+| AC-025 (구 파일 전용 시리얼의 clear가 툼스톤 생성) | **PASS** | clear 전 값 조회(사전 확인) → clear → 툼스톤 존재 + 조회 `undefined` |
+| AC-028 (구 파일 불변 — 존재·내용·mtime) | **PASS** | 조회·기록·무효화 3종 후 `Buffer.equals` true + `mtimeMs` 동일 |
+
+#### 공허 검사 방지 — 변이 실험 (mutation test)
+
+새 테스트가 **폴백을 실제로 관측하는지**를 통과 사실만으로는 알 수 없다. 그래서 구현을 M3 이전 상태로 되돌리는 변이를 넣고(`readLegacyFallback`의 값 반환을 `undefined`로 고정) 같은 스위트를 실행했다:
+
+```
+$ pnpm vitest run src/backend/ime-session-store.test.ts   (변이 적용 상태)
+  × [AC-IMESTATE-009] returns a value that exists ONLY in the legacy file …
+  × [AC-IMESTATE-023] a tombstone suppresses the legacy fallback …
+  × [AC-IMESTATE-025] clear creates a tombstone even when the record exists ONLY in the legacy file
+  × [AC-IMESTATE-028] leaves the legacy file present, byte-identical and mtime-unchanged …
+  Tests  4 failed | 35 passed (39)          exit 1
+```
+
+**4건이 결함을 잡아냈다.** AC-023이 잡힌 것은 그 테스트에 심어 둔 양성 대조(`SERIAL-B`) 덕분이다 — 억제 단정만 있었다면 폴백이 통째로 고장 나도 통과했을 것이다. AC-010·024는 변이에 걸리지 않는데, 이 둘은 폴백 값이 아니라 **우선순위**와 **연산 순서**를 판정하기 때문이며 의도된 범위다.
+
+변이 되돌림 확인: `grep -rn "TEMP MUTATION" src/` → 0건, 전체 스위트 `581 passed` exit 0 재확인.
+
+#### 구 파일 쓰기 부재 증명 (REQ-003 / plan.md M3)
+
+```
+$ grep -n "legacyStorePath()" src/backend/ime-session-store.ts
+228:  private legacyStorePath(): string {          ← 정의
+277:    const raw = await this.io.read(this.legacyStorePath());   ← 유일한 사용처
+```
+
+구 파일 경로를 만드는 함수의 **호출 지점이 하나뿐이고 그것이 `read`**다. 따라서 `write`·`createExclusive`·`remove`·`rename`·`unlink` 중 어느 것도 구 파일에 닿을 수 없다. 이 검사는 없음-검사가 아니라 **전수 열거**이므로 양성 대조가 필요하지 않다(대조 대상이 소멸해 판정 불가가 된 AC-008과 구조가 다르다).
+
+#### PRESERVE 증명 (기준 SHA `3b8e800` 대비)
+
+```
+$ git diff --name-only 3b8e800 -- \
+    src/backend/adb-backend.ts src/cli/commands/reset.ts src/cli/commands/doctor.ts
+(출력 없음 — 변경 0건)
+
+$ git diff --name-only 3b8e800 -- src/backend/ime-session-store.ts   (양성 대조)
+src/backend/ime-session-store.ts    ← 같은 명령이 변화를 감지한다
+```
+
+#### 부수 정리 — `adb-backend.test.ts`의 이름 충돌
+
+`imeStorePath`가 저장소 **디렉터리**를 `ime-sessions.json`으로 이름 붙이고 있었다. M3의 구 파일 경로는 "디렉터리의 형제 `ime-sessions.json`"이므로, 그 이름이면 **폴백이 저장소 디렉터리 자신을 가리킨다.** 현재는 디렉터리 읽기가 실패하고 그 실패를 `null`로 삼키므로 결과는 정상(`undefined`)이지만, `router.test.ts`가 M2에서 같은 이유로 이미 정리한 함정이다. 변수명(`imeStorePath`)은 그대로 두고 값 1줄과 사유 주석만 바꿨다 — 20여 개 호출 지점을 건드리지 않기 위해서다.
+
+#### 블로커
+
+없음. **AC-008의 M4 선행 조건은 그대로 유효**하다(위 M2 절).
+
+#### 잔여 위험
+
+- AC-028의 mtime 단정은 "파일을 건드리지 않았다"를 macOS/APFS의 mtime 해상도 위에서 관측한 것이다. 되쓰기가 **같은 밀리초 안에** 일어나면 이론상 통과할 수 있다. 다만 되쓰기 구현은 위 "쓰기 부재 증명"(호출 지점 전수 열거)에서 먼저 걸린다 — 두 증거가 서로를 보완한다.
+- 구 파일 폴백은 **호스트 파일 I/O만** 관여하므로 실기기가 필요 없다. 그러나 실제 사용자 캐시에 존재하는 구 파일의 실물 형태(예: 예전 버전이 남긴 필드 구성)로는 실행하지 않았다 — 합성 fixture로만 검증했다.
+- `readLegacyFallback`은 맵의 항목 하나만 검사하므로, 구 파일에 손상된 항목이 섞여 있어도 **다른 시리얼의 조회는 영향받지 않는다.** 이 격리는 코드 구조상 성립하지만 손상 항목 혼재 케이스로 직접 실행하지는 않았다(견고성 테스트는 항목 단위 모양 오류만 다룬다).
+
 ## §F Phase 4 Mode Selection
 
 ```

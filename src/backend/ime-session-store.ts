@@ -261,13 +261,33 @@ export class ImeSessionStore {
   /**
    * 조회 3단계 중 3단계 — 구 단일 파일 폴백(읽기 전용).
    *
-   * @MX:TODO: M3에서 구현한다 — 구 파일을 파싱해 그 시리얼의 기록을 반환한다
+   * 구 파일은 시리얼 → 기록의 **맵**이므로({@link ImeSessionMap}) 레코드 파일
+   * 하나를 읽는 {@link readRecord}와 모양이 다르다. 파싱을 공유하지 않고,
+   * 맵에서 그 시리얼의 항목 하나만 꺼내 검사한다.
+   *
+   * 견고성 규칙은 레코드와 동일하다: 없음 · 빈 파일 · 깨진 JSON · 기대 밖
+   * 모양은 모두 `undefined`이고 예외를 전파하지 않는다(REQ-IMESTATE-004).
+   *
+   * @MX:NOTE: 이 메서드는 구 파일을 **읽기만** 한다 — 쓰기·rename·삭제가
+   *   여기 들어오면 REQ-IMESTATE-003이 깨지고, AC-028이 내용·mtime 불변으로
+   *   그것을 이진 판정한다
    * @MX:SPEC: SPEC-IMESTATE-001 REQ-IMESTATE-003 / AC-009·010·012·028
-   * @MX:PRIORITY: M3
    */
-  private async readLegacyFallback(_serial: string): Promise<string | undefined> {
-    void this.legacyStorePath();
-    return undefined;
+  private async readLegacyFallback(serial: string): Promise<string | undefined> {
+    const raw = await this.io.read(this.legacyStorePath());
+    if (raw === null || raw.length === 0) return undefined;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw.toString("utf-8"));
+    } catch {
+      return undefined;
+    }
+    if (!isPlainObject(parsed)) return undefined;
+
+    const entry = parsed[serial];
+    if (!isPlainObject(entry)) return undefined;
+    return typeof entry.originalIme === "string" ? entry.originalIme : undefined;
   }
 
   /**
