@@ -24,15 +24,20 @@
 
 import { ADBKEYBOARD_IME_ID, ADBKEYBOARD_PACKAGE_ID } from "./adbkeyboard.js";
 import { ensureAdbKeyboardInstalled } from "./adbkeyboard-installer.js";
-import type { AdbExecutor } from "./adb-executor.js";
-import { spawnAdb } from "./adb-executor.js";
+import type { AdbExecutor, AdbPathPredicate } from "./adb-executor.js";
+import { resolveAdbPath, spawnAdb } from "./adb-executor.js";
 import type { ApkAcquirer } from "./apk-downloader.js";
 import { createApkAcquirer } from "./apk-downloader.js";
 import type { ProcessExecutor } from "./process-executor.js";
 import { spawnProcess } from "./process-executor.js";
 
 export interface AdbInstalledCheck {
+  /** Whether a runnable `adb` binary was found — PATH or one of the SDK-relative fallbacks (REQ-READY-001/002). */
   installed: boolean;
+  /** Whether the resolved binary was found specifically via `PATH`. */
+  onPath: boolean;
+  /** Absolute path to the resolved binary, or `null` if none of the four candidates matched. */
+  resolvedPath: string | null;
   version: string | null;
 }
 
@@ -83,17 +88,39 @@ export class AdbDoctor {
     private readonly processExec: ProcessExecutor = spawnProcess,
     private readonly acquireApk: ApkAcquirer = createApkAcquirer(),
     private readonly platform: NodeJS.Platform = process.platform,
+    /**
+     * Injectable test seam (plan.md §B.1), forwarded as-is to
+     * `resolveAdbPath()`. Left `undefined` (the default) so a bare
+     * `new AdbDoctor()` shares the process-wide memoized resolution with
+     * `spawnAdb` — passing a predicate explicitly opts a test into a
+     * fresh, uncached scan of its own fake filesystem.
+     */
+    private readonly adbPathPredicate?: AdbPathPredicate,
   ) {}
 
-  /** Is the `adb` client binary present and runnable? (REQ-DOCTOR-001) */
+  /**
+   * Is the `adb` client binary present and runnable? (REQ-DOCTOR-001,
+   * REQ-READY-001/002). `installed` reports via the shared
+   * `resolveAdbPath()` (plan.md §B.1 — AdbDoctor does not resolve
+   * independently): its meaning is widened to "a runnable `adb` was found
+   * anywhere in the four-candidate search", not merely "on PATH" (§B.2).
+   * When a binary was resolved, `adb version` is still invoked via
+   * `this.adbExec` to fill in `version`; a failure there degrades only
+   * `version` to `null` — it does not flip `installed` back to `false`,
+   * since the binary genuinely exists and is executable.
+   */
   async checkAdbInstalled(): Promise<AdbInstalledCheck> {
+    const { onPath, resolvedPath } = resolveAdbPath(this.adbPathPredicate);
+    if (resolvedPath === null) {
+      return { installed: false, onPath, resolvedPath, version: null };
+    }
     try {
       const result = await this.adbExec(["version"]);
-      if (result.exitCode !== 0) return { installed: false, version: null };
+      if (result.exitCode !== 0) return { installed: true, onPath, resolvedPath, version: null };
       const firstLine = result.stdout.toString("utf-8").split(/\r?\n/)[0]?.trim() ?? null;
-      return { installed: true, version: firstLine };
+      return { installed: true, onPath, resolvedPath, version: firstLine };
     } catch {
-      return { installed: false, version: null };
+      return { installed: true, onPath, resolvedPath, version: null };
     }
   }
 

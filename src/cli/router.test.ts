@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AdbBackend } from "../backend/adb-backend.js";
-import type { AdbExecResult, AdbExecutor } from "../backend/adb-executor.js";
+import type { AdbExecResult, AdbExecutor, AdbPathPredicate } from "../backend/adb-executor.js";
 import type { ApkAcquirer } from "../backend/apk-downloader.js";
 import { AdbDoctor } from "../backend/doctor.js";
 import { WdaClient, type WdaHttpClient } from "../backend/wda-client.js";
@@ -623,13 +623,23 @@ describe("runCli", () => {
     });
   });
   describe("doctor (M6 — REQ-DOCTOR-001~005)", () => {
+    /** A fake `AdbPathPredicate` (plan.md §B.1) that reports "not found anywhere" — none of the four candidates match. */
+    const notFoundAnywherePredicate: AdbPathPredicate = () => false;
+
     async function makeDoctor(overrides: {
       adbExec?: AdbExecutor;
       processExec?: ProcessExecutor;
       acquireApk?: ApkAcquirer;
       platform?: NodeJS.Platform;
+      adbPathPredicate?: AdbPathPredicate;
     }) {
-      return new AdbDoctor(overrides.adbExec, overrides.processExec, overrides.acquireApk, overrides.platform);
+      return new AdbDoctor(
+        overrides.adbExec,
+        overrides.processExec,
+        overrides.acquireApk,
+        overrides.platform,
+        overrides.adbPathPredicate,
+      );
     }
 
     function adbOk(stdout = ""): AdbExecResult {
@@ -643,7 +653,12 @@ describe("runCli", () => {
     it("reports adb missing + install guidance without touching device listing (macOS, no consent)", async () => {
       const backend = createMockBackend();
       const adbExec = vi.fn<AdbExecutor>().mockRejectedValueOnce(new Error("spawn adb ENOENT"));
-      const doctor = await makeDoctor({ adbExec, platform: "darwin" });
+      // REQ-READY-001/002 (SPEC-READY-001 M1): `installed` now reflects
+      // resolveAdbPath()'s four-candidate search, not merely whether
+      // `adbExec` succeeds — inject "not found anywhere" so this genuinely
+      // exercises the missing-adb path regardless of what this host's real
+      // filesystem happens to contain (plan.md §A.1 router.test.ts:657/632).
+      const doctor = await makeDoctor({ adbExec, platform: "darwin", adbPathPredicate: notFoundAnywherePredicate });
 
       const result = await runCli(["doctor"], backend, envServices(doctor));
 
@@ -813,7 +828,10 @@ describe("runCli", () => {
       it("adb 미설치 갈래 — installAttempt가 실리고 wdaEnvironment는 없다", async () => {
         const backend = createMockBackend();
         const adbExec = vi.fn<AdbExecutor>().mockRejectedValueOnce(new Error("spawn adb ENOENT"));
-        const doctor = await makeDoctor({ adbExec, platform: "darwin" });
+        // REQ-READY-001/002 (SPEC-READY-001 M1): force "not found anywhere"
+        // so this genuinely exercises the missing-adb branch regardless of
+        // this host's real filesystem (same fixation as the :653 test above).
+        const doctor = await makeDoctor({ adbExec, platform: "darwin", adbPathPredicate: notFoundAnywherePredicate });
 
         const result = await runCli(["doctor"], backend, envServices(doctor));
 
@@ -1152,7 +1170,12 @@ describe("runCli", () => {
       // adb/daemon checks are eager + unconditional (unchanged from
       // SPEC-ANDROID-001) — mock them healthy so the handler reaches the
       // platform-branch decision point.
-      vi.spyOn(adbDoctor, "checkAdbInstalled").mockResolvedValue({ installed: true, version: "1.0.41" });
+      vi.spyOn(adbDoctor, "checkAdbInstalled").mockResolvedValue({
+        installed: true,
+        onPath: true,
+        resolvedPath: "/fake/path/adb",
+        version: "1.0.41",
+      });
       vi.spyOn(adbDoctor, "checkDaemonHealth").mockResolvedValue({ healthy: true });
       const ensureAdbKeyboardSpy = vi.spyOn(adbDoctor, "ensureAdbKeyboard");
 
@@ -1186,7 +1209,12 @@ describe("runCli", () => {
       const adbDoctor = new AdbDoctor(vi.fn<AdbExecutor>());
       const wdaDoctor = new WdaDoctor(vi.fn());
 
-      vi.spyOn(adbDoctor, "checkAdbInstalled").mockResolvedValue({ installed: true, version: "1.0.41" });
+      vi.spyOn(adbDoctor, "checkAdbInstalled").mockResolvedValue({
+        installed: true,
+        onPath: true,
+        resolvedPath: "/fake/path/adb",
+        version: "1.0.41",
+      });
       vi.spyOn(adbDoctor, "checkDaemonHealth").mockResolvedValue({ healthy: true });
       const ensureAdbKeyboardSpy = vi
         .spyOn(adbDoctor, "ensureAdbKeyboard")

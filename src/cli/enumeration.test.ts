@@ -123,7 +123,7 @@ describe("기기 열거 1회 보장 (REQ-VISION-005)", () => {
     function stubEnvServices() {
       return {
         android: {
-          checkAdbInstalled: vi.fn().mockResolvedValue({ installed: true, version: "test" }),
+          checkAdbInstalled: vi.fn().mockResolvedValue({ installed: true, onPath: true, resolvedPath: "/fake/path/adb", version: "test" }),
           checkDaemonHealth: vi.fn().mockResolvedValue({ healthy: true }),
           ensureAdbKeyboard: vi.fn().mockResolvedValue({ skipped: true, reason: "stub" }),
           resetDevice: vi.fn().mockResolvedValue({ originalImeRestored: true }),

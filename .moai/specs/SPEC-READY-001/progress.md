@@ -2,7 +2,7 @@
 id: SPEC-READY-001
 title: "기기·환경 가용성 보고의 정확성 — 진행 기록"
 version: "0.5.2"
-status: draft
+status: in-progress
 created: 2026-08-04
 updated: 2026-08-05
 author: hatae
@@ -157,7 +157,34 @@ plan_auditor_threshold: 0.80
 
 ## §F Phase 4 Mode Selection
 
-run-phase 진입 시 오케스트레이터가 기록한다. 계획 단계에서는 비어 있다.
+기록 시점: 2026-08-05, M1 위임 직전. 계획 커밋 `04fb196` 푸시 완료 후.
+
+**입력 파라미터**
+
+| 항목 | 값 |
+|---|---|
+| Tier | M |
+| 범위 (파일 수) | M1 기준 4~6 (`adb-executor.ts` · `doctor.ts` + 고정 지점 테스트 3~4개) |
+| 도메인 수 | 1 (Android 도구 경로 해석) |
+| 파일 언어 | TypeScript 단일 |
+| 병렬 이득 | 낮음 — 코드 작성 중심이고 파일 간 의존이 있다(`resolveAdbPath()`를 만든 뒤에야 `doctor.ts`가 그것을 부른다) |
+
+**모드 평가**
+
+| 모드 | 선택 | 사유 |
+|---|---|---|
+| 1 trivial | 아니오 | 의미 변경 + 다중 파일 |
+| 2 background | 아니오 | 쓰기 작업 |
+| 3 agent-team | 아니오 | 은퇴(tombstone) |
+| 4 parallel | 아니오 | 단일 도메인이고 코드 작성 중심 — 조사형이 아니다 |
+| 5 sub-agent | **예** | 기본 폴백이자 이 작업에 맞다 |
+| 6 workflow | 아니오 | 기계적 일괄 변환이 아니고 파일 수도 30 미만 |
+
+**Decision: sub-agent**
+
+**근거**: 코딩 작업은 조사 작업보다 진짜로 병렬화 가능한 조각이 적다는 Anthropic 지침을 따른다. M1 안에서도 순서 의존이 있다 — `resolveAdbPath()` 신설 → `doctor.ts`가 호출 → 고정 지점 테스트 갱신. 마일스톤 단위로 사용자 확인을 받기로 했으므로(사용자 선택) M1 완료 후 결과를 보고하고 M2 진입 여부를 확인한다.
+
+**구현 착수 승인**: 받았다(2026-08-05). 사용자 선호도 두 축이 이 시점에 확정됐다 — 계획 커밋+푸시 선행, 마일스톤 단위 확인.
 
 ---
 
@@ -168,3 +195,55 @@ run-phase 진입 시 오케스트레이터가 기록한다. 계획 단계에서�
 > 2. `pnpm test` → 통과 개수를 같은 절에 기록한다. `plan.md` §C 행 1이 개수를 계획서에 하드코딩하지 말라고 한 이유가 이것이다 — 기준선은 그때 측정한 값이지 문서에 적힌 값이 아니다.
 >
 > `$BASE`가 비어 있으면 `plan.md` §E의 검사 ③이 조용히 종료해 **"출력 없음 = 위반 없음"으로 읽히며 공허하게 통과한다.** §E ③-a 양성 대조가 그 경우를 잡도록 붙어 있으나, 애초에 두 값을 먼저 기록하는 것이 순서다.
+
+---
+
+## §E.2 Run-phase Evidence — M1
+
+### 기준선 (M1 착수 직전 실측, 2026-08-05)
+
+```
+$BASE = 04fb1962d33372148d226c49ab2923b3f52b2ce8   (git rev-parse HEAD)
+$ pnpm test    → Test Files 26 passed (26) / Tests 582 passed (582)
+$ pnpm typecheck → exit 0
+$ pnpm build     → exit 0
+$ which adb      → adb not found
+$ echo $ANDROID_HOME → /Users/hatae/Library/Android/sdk
+$ ls "$ANDROID_HOME/platform-tools/adb" → 존재, 실행 가능(-rwxr-xr-x)
+$ grep -n 'spawnProcess("adb"' src/backend/adb-executor.ts → 33: 매치(고정 리터럴 확인)
+```
+
+이 호스트는 §C-⑤가 요구하는 배치 그대로다 — `which adb` 실패 + `$ANDROID_HOME/platform-tools/adb` 실행 가능. M1 구현 후 `installed`의 뜻이 바뀌면서 이 배치에 의존하는 기존 단언 여러 개가 뒤집혔다(아래 §H 참조).
+
+### M1 구현 요약
+
+- `src/backend/adb-executor.ts` — `resolveAdbPath()` 신설(§B.1의 4단계 탐색, 프로세스 내 1회 캐시, 명시적 술어 주입 시 캐시 우회). `spawnAdb`가 `:33`의 `"adb"` 리터럴 대신 이 결과를 쓴다. `defaultAdbPathPredicate`(존재+`X_OK`)와 `resetAdbPathCache()`(테스트 전용)를 함께 노출한다.
+- `src/backend/doctor.ts` — `AdbInstalledCheck`에 `onPath`·`resolvedPath` 추가(§B.2, 가법). `AdbDoctor` 생성자 5번째 인자로 `adbPathPredicate?`를 받아 `resolveAdbPath()`에 그대로 넘긴다(생략 시 `undefined` → 캐시 공유). `checkAdbInstalled()`는 `resolveAdbPath()`가 아무것도 못 찾으면(`resolvedPath === null`) 즉시 `installed:false`로 반환하고, 찾았으면 `adbExec(["version"])`을 호출해 `version`만 채운다 — 그 호출이 실패해도 `installed`는 `true`로 유지된다(§B.2 "실행 가능한 adb를 찾았는가"로 뜻이 넓어졌으므로).
+
+### AC PASS/FAIL 매트릭스 (M1 대상 — AC-READY-002·003·004·005·018)
+
+| AC | 검증 방식 | 상태 | 근거 |
+|---|---|---|---|
+| AC-READY-002 | unit(mock) | **PASS** | `src/backend/adb-executor.test.ts` "AC-READY-002: PATH and $ANDROID_HOME/platform-tools both have an executable adb — PATH wins" |
+| AC-READY-003 | unit(mock) | **PASS** | `src/backend/adb-executor.test.ts` describe "AC-READY-003: all four candidates individually succeed, plus the all-fail case" — 5개 테스트(후보 1~4 개별 성공 + 넷 다 실패) |
+| AC-READY-004 | unit(mock) | **PASS** | `src/backend/doctor.test.ts` "reports installed=true with the version line when 'adb version' succeeds" — `doctor` 명령 핸들러가 아니라 `AdbDoctor.checkAdbInstalled()` 직접 호출이지만, 검사 대상은 동일 계약(①②③installed/onPath/resolvedPath). ④(설치 권유 없음)는 `src/cli/commands/doctor.ts:81`의 `if (!adb.installed)` 분기가 `installed:true`일 때 `installAttempt` 자체를 만들지 않으므로 코드 경로로 보장됨 — `src/cli/router.test.ts`의 기존 doctor 갈래 테스트들이 이 분기를 계속 밟는다 |
+| AC-READY-005 | unit(mock) | **PASS** | `src/backend/doctor.test.ts` "reports installed=false when adb cannot be resolved anywhere" — `notFoundAnywherePredicate` 주입, `installed:false`+`resolvedPath:null`. ③(설치 안내 존재)은 `src/cli/commands/doctor.ts:82-89`의 `installMissingAdb` 호출 분기로 기존 테스트(`router.test.ts` "reports adb missing + install guidance...")가 계속 검증 |
+| AC-READY-018 | unit(실FS) | **PASS** | `src/backend/doctor.test.ts` describe "checkAdbInstalled — real filesystem + real env vars (AC-READY-018, unit(real FS))" — 실제 임시 디렉터리에 실행 파일 생성, `ANDROID_HOME` 실제 설정, `PATH`에서 실제 제거, `resetAdbPathCache()`로 캐시 무효화 후 `defaultAdbPathPredicate`(이음매 미사용)로 판정 |
+| AC-READY-001 | e2e·manual | **Gap (M4 소관)** | 위임 지시대로 M1에서는 claim하지 않는다. 참고 관측(§H)은 남기되 PASS로 집계하지 않았다 |
+
+### 고정 지점 처리 결과
+
+- `src/backend/doctor.test.ts:33,42`(구 라인) → 재작성. `toEqual`에 `onPath`·`resolvedPath` 추가 + 두 테스트 모두 `AdbPathPredicate` 주입(호스트 독립성 확보 — 아래 §H 참조)
+- `src/cli/enumeration.test.ts:126` → `mockResolvedValue`에 `onPath`·`resolvedPath` 필드 추가(런타임 형태 일치)
+- `src/cli/router.test.ts:1155,1189` → `mockResolvedValue`에 `onPath`·`resolvedPath` 추가(타입 검사 오류 해소, `pnpm typecheck` exit 0으로 확인)
+- `src/cli/router.test.ts:657`(`installed===false` 단언) + `makeDoctor`(`:632`) → `makeDoctor`에 `adbPathPredicate` 오버라이드 추가, 해당 테스트에 `notFoundAnywherePredicate` 주입
+
+### §H 계획 대비 실측 격차 — 계획이 놓친 지점 (추가 발견)
+
+플랜은 `installed`의 뜻 변경이 깨뜨리는 자리로 `router.test.ts:657`(+`makeDoctor`) **하나만** 지목했다. 실제로 `pnpm test`를 돌려보니 **같은 유형의 두 번째 자리**가 더 있었다 — `router.test.ts`의 "출력 키 집합 고정(SPEC-CONTRACT-001) → adb 미설치 갈래" 테스트(789행대)다. 이 테스트도 `makeDoctor({ adbExec, platform: "darwin" })`를 술어 없이 호출했고, 이 호스트의 실제 `$ANDROID_HOME/platform-tools/adb`가 해석되면서 "adb 미설치" 갈래 자체가 더 이상 트리거되지 않아 `installAttempt` 키가 빠졌다(`Expected 5 keys, got 4`). 같은 방식(`notFoundAnywherePredicate` 주입)으로 수정했다.
+
+이 격차는 plan.md §A.1.1이 스스로 예고한 것과 정확히 같은 성격이다 — "확정 열거는 도구가 한다... 목록이 틀려도 pnpm typecheck/test가 M1에서 바로 잡는다." 실제로 그렇게 됐다: 문서 목록은 근사치였고, 도구가 나머지 하나를 잡았다.
+
+### 실기기 관측 (참고, M4 미대체)
+
+PATH에서 `node` 자체를 제외한 완전 격리 환경(`env -i HOME=$HOME PATH=<node bin>:/usr/bin:/bin ANDROID_HOME=$ANDROID_HOME`)에서 `node dist/cli/bin.js doctor` 실행 — 실제 Android 실기기(`2beb9d2309037ece`)가 `devices` 배열에 나타났고, `adb.installed:true`·`onPath:false`·`resolvedPath:"/Users/hatae/Library/Android/sdk/platform-tools/adb"`가 관측됐다. 이 관측은 AC-READY-001의 요구를 만족하는 형태이지만, `doctor` 실행이 부수적으로 `ensureAdbKeyboard`(실기기에 IME 설치/활성화)를 호출해 **부작용이 있는 명령**이었다 — AC-READY-001이 지정하는 `devices`(읽기 전용)가 아니었다. M4가 그 정확한 형태로 재현·판정해야 하며, 이 절은 그 전까지의 참고 근거일 뿐이다.
