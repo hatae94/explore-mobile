@@ -312,14 +312,21 @@ $ git diff --name-only 04fb196..HEAD -- src/backend/ime-session-store.ts src/bac
 $ pnpm vitest run -t "connectionState"   → Test Files 2 passed | 25 skipped (27) / Tests 2 passed | 595 skipped (597), exit 0
 ```
 
-**③-a/③-b(`git log --oneline $BASE..HEAD`)는 아직 커밋 전이라 두 명령 모두 출력이 없다** — 커밋을 만들고 나면 ③-a(`-- src/schema/device-backend.ts`)는 이번 커밋을 보여야 하고 ③-b(PRESERVE 두 파일)는 계속 출력 없음이어야 한다. 이 문서는 그 상태를 커밋 직후에 갱신한다.
+**커밋 후 재확인**(커밋 `457a5af`, `git push origin master` 완료 — `295ec89..457a5af`):
+
+```
+$ git log --oneline 04fb196..HEAD -- src/schema/device-backend.ts
+457a5af feat(SPEC-READY-001): M2 iOS 가용성 상태 unavailable + unavailableReason 추가   (③-a 양성 대조 — 출력 있음, 통과)
+
+$ git log --oneline 04fb196..HEAD -- src/backend/ime-session-store.ts src/backend/apk-downloader.ts
+(출력 없음, ③-b 본 검사 통과)
+```
 
 ### Gaps (미검증)
 
 - AC-READY-009의 `unauthorized`(AdbBackend) 교차 비교는 M3로 이월(위 매트릭스에 기록).
 - `alternateSerials` 관련 전부(M3 몫) — 이 마일스톤은 손대지 않았다.
 - M4 실기기 검증(AC-READY-019 등)은 여전히 미착수.
-- ③-a/③-b 커밋 후 재확인 — 커밋 직후 이 절에 추가 기록 예정.
 
 ### Residual-risk (잔여 위험)
 
