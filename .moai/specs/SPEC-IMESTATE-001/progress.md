@@ -846,7 +846,7 @@ AC 최종 현황: 활성 25건 중 **PASS 24건 · 부분 1건**(AC-005 — 볼�
 ```
 sync_status: audit-ready
 sync_complete_at: 2026-08-04
-sync_commit_sha: pending-backfill-sync
+sync_commit_sha: b139f90
 status_transition: in-progress → implemented → completed (단일 sync 커밋)
 ```
 
