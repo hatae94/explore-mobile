@@ -1,10 +1,10 @@
 ---
 id: SPEC-IMESTATE-001
 title: "기기별 IME 세션 상태 격리 — 구현 계획"
-version: "0.4.1"
+version: "0.4.2"
 status: in-progress
 created: 2026-07-29
-updated: 2026-08-03
+updated: 2026-08-04
 author: hatae
 ---
 
@@ -102,7 +102,7 @@ REQ-007(배타 생성)과 REQ-008(툼스톤)이 같은 경로를 쓰면 충돌�
 | 5 | 캐시 디렉터리 결정 규칙 | `grep -n "resolveApkCacheDir" src/backend/apk-downloader.ts` | 함수 존재 — 재사용 대상 |
 | 6 | 직접 참조 파일 전수 | `grep -rln "ImeSessionStore" src/ \| grep -v test` | **3파일**: `index.ts`(export 표면 변경 대상) · `backend/ime-session-store.ts`(주 변경) · `backend/adb-backend.ts`(직접 호출자). `reset.ts`·`doctor.ts`는 여기 **나오지 않는다** — 간접 호출자다. (0.4.0까지 4번째로 적혀 있던 `webview/calibration.ts`는 SPEC-WEBVIEW-002 삭제로 소멸 — 0.4.1 정정) |
 | 7 | export 표면 확인 | `grep -n "ImeSession\|resolveImeSession" src/index.ts` | `:30-34` 5종 — `spec.md` §C.2 표와 일치 |
-| 8 | 손실 있는 정리 코드 위치 (**양성 대조**) | `grep -nF 'replace(/[^A-Za-z0-9_-]/g' src/backend/adb-backend.ts` | `:57` 매치 — **재사용 금지 대상**임을 재확인. `-F` 없이는 매치되지 않는다(0.1.0의 결함) |
+| 8 | 인코더가 손실 변환일 수 없음 (**자기완결 양성 대조**) | `pnpm vitest run src/backend/ime-session-store.test.ts -t "AC-IMESTATE-008"` | `1 passed`. 0.4.1까지 이 행은 `adb-backend.ts`에서 손실 변환을 grep으로 찾아 양성 대조로 삼았으나 **그 코드가 저장소에서 제거돼 대조가 죽었다** — 0.4.2가 대조를 테스트 안으로 옮겼다(AC-008 재작성). 죽은 명령을 여기 그대로 두면 사전 점검이 매번 거짓 실패한다 — 행 6과 같은 종류의 정정이다 |
 | 9 | `router.test.ts` 영향 지점 | `grep -n "new ImeSessionStore\|imeStorePath = " src/cli/router.test.ts` | 6행(`:1061` 경로 조립 + `:1089 :1139 :1183 :1189 :1235` 구성) |
 
 ## §D. 제약
@@ -142,12 +142,13 @@ git log --oneline "$BASE"..HEAD -- \
   src/backend/adb-backend.ts src/cli/commands/reset.ts src/cli/commands/doctor.ts
 # 기대: 출력 없음
 
-# 손실 있는 정리 코드 미재사용 확인 (spec.md §A.3-④ / AC-008)
-# ① 양성 대조 — 패턴이 유효함을 먼저 증명 (기대: :57 매치)
-grep -nF 'replace(/[^A-Za-z0-9_-]/g' src/backend/adb-backend.ts
-# ② 본 검사 (기대: 매치 없음)
-grep -nF 'replace(/[^A-Za-z0-9_-]/g' src/backend/ime-session-store.ts
+# 인코더가 손실 변환일 수 없음 확인 (spec.md §A.3-④ / AC-008)
+# 0.4.2에서 grep → unit으로 전환했다. 아래 참조.
+pnpm vitest run src/backend/ime-session-store.test.ts -t "AC-IMESTATE-008"
+# 기대: 1 passed (인코더 출력의 성질 + 테스트가 소유한 손실 변환과의 대조)
 ```
+
+**AC-008을 grep에서 unit으로 전환했다 (0.4.2 — M2 실측 반영).** 0.2.0~0.4.1은 `adb-backend.ts`의 손실 변환을 양성 대조 대상으로 지목했으나, 그 코드가 SPEC 작성 이후 저장소에서 제거돼 **대조가 죽었다**(2026-08-03 실측). 대조가 비면 본 검사의 "매치 없음"이 깨끗함인지 패턴 고장인지 구별되지 않고, 이는 `acceptance.md:19`의 원칙 ②가 금지한 공허 검사다. 대조 대상을 저장소에서 **테스트 안으로 옮겨** 저장소 변화와 무관하게 성립하도록 했고, 검사 대상도 "금지 문자열의 부재"에서 "**인코더 출력의 성질**"로 바꿔 표기가 다른 손실 변환(`/[^\w-]/g` 등)까지 걸리게 했다. 잠금 미도입 grep과 같은 부류의 결함이지만 처분은 다르다 — 잠금은 REQ 보호의 기계적 증거가 아니어서 **제거**했고, 이것은 REQ-002의 증거이므로 **성립하는 형태로 교체**했다.
 
 **잠금 미도입 확인은 grep으로 하지 않는다 (0.3.0 — 2차 감사 N-SF-4).** 0.2.0은 `grep -nEi 'lockfile|flock|acquireLock|\.lock'`를 §E에 두었으나, **양성 대조를 붙일 대상이 없는 없음-검사**였다 — 패턴이 틀렸어도 통과하고, `mkdir` 기반 뮤텍스·다른 이름의 잠금 라이브러리·세마포어 파일 등 패턴을 우회하는 구현도 통과한다. 즉 `acceptance.md:19`가 0.2.0에서 **스스로 신설한 원칙**("없음을 확인하는 검사는 양성 대조를 동반해야 한다")을 그 검사 자신이 위반했다. 잠금 미도입은 `spec.md` §D의 제외 항목이며 REQ 보호의 기계적 증거가 아니므로, **코드 리뷰로 확인**한다 — 대기·타임아웃·부생 상태를 만드는 구조가 도입되지 않았는지가 판단 기준이다.
 

@@ -237,6 +237,34 @@ describe("serial → filename encoding (REQ-IMESTATE-002)", () => {
     expect(a).not.toBe(b);
   });
 
+  /**
+   * 손실 있는 정리 변환의 **참조 구현** — 이 테스트가 직접 소유한다.
+   *
+   * `spec.md` §A.3-④가 재사용을 기각한 그 변환이며, 저장소에는 더 이상
+   * 존재하지 않는다(SPEC 작성 후 제거). 양성 대조 대상을 저장소 코드에
+   * 의존시키면 그 코드가 사라질 때 대조도 함께 죽는다 — 실제로 죽어서
+   * AC-008이 판정 불가가 됐고(0.4.1 기록), 0.4.2가 대조를 여기로 옮겼다.
+   */
+  const lossy = (serial: string): string => serial.replace(/[^A-Za-z0-9_-]/g, "_");
+
+  it("[AC-IMESTATE-008] emits an alphabet that a lossy sanitizing transform cannot produce (self-contained positive control)", () => {
+    // 손실이 실제로 일어나는 입력이어야 양성 대조가 성립한다 — 순수 영숫자
+    // 입력에서는 `lossy`가 입력을 그대로 통과시켜 ③이 무너진다.
+    const serial = "192.168.1.5:5555";
+    const encoded = encodeSerialForFilename(serial);
+
+    // ① 소문자 hex 알파벳에만 속한다
+    expect(/^[0-9a-f]+$/.test(encoded)).toBe(true);
+    // ② `_`가 없다 — 손실 변환의 지문이 없다
+    expect(encoded).not.toContain("_");
+
+    // ③ 양성 대조 — 같은 입력에서 손실 변환은 ①②를 **모두** 위반한다.
+    //    이 단정이 무너지면 위 두 검사가 "무엇이든 통과시키는" 검사라는 뜻이다.
+    const collapsed = lossy(serial);
+    expect(/^[0-9a-f]+$/.test(collapsed)).toBe(false);
+    expect(collapsed).toContain("_");
+  });
+
   it("emits only lowercase hex, so a case-insensitive filesystem cannot collapse two serials", () => {
     const upper = encodeSerialForFilename("ABC123");
     const lower = encodeSerialForFilename("abc123");
