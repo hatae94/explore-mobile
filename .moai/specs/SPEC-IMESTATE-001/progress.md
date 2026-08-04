@@ -550,6 +550,99 @@ M2가 "M4 진입 전 정정 필요"로 남겨 둔 AC-008을 같은 세션에서 
 - 구 파일 폴백은 **호스트 파일 I/O만** 관여하므로 실기기가 필요 없다. 그러나 실제 사용자 캐시에 존재하는 구 파일의 실물 형태(예: 예전 버전이 남긴 필드 구성)로는 실행하지 않았다 — 합성 fixture로만 검증했다.
 - `readLegacyFallback`은 맵의 항목 하나만 검사하므로, 구 파일에 손상된 항목이 섞여 있어도 **다른 시리얼의 조회는 영향받지 않는다.** 이 격리는 코드 구조상 성립하지만 손상 항목 혼재 케이스로 직접 실행하지는 않았다(견고성 테스트는 항목 단위 모양 오류만 다룬다).
 
+### M4 — 회귀 확인 (완료, 2026-08-04)
+
+**판정: M4 통과 (단, AC-020은 미관측).** `plan.md` §E 자체 검증을 전건 실행했고 모두 기대대로다. 코드 변경은 없다 — 검증만 수행했다.
+
+#### §E 자체 검증 (실측)
+
+```
+$ pnpm test       → Test Files 26 passed (26) · Tests 582 passed (582), exit 0
+$ pnpm typecheck  → exit 0
+$ pnpm build      → exit 0
+```
+
+AC-018 (호출자 무수정, `$BASE` = `3b8e800` — M2에서 재설정한 기준):
+
+```
+[① 양성 대조 — 이 SPEC이 반드시 수정하는 파일이 감지되는가]
+$ git diff --name-only 3b8e800 -- src/backend/ime-session-store.ts
+src/backend/ime-session-store.ts        ← 감지된다. 아래 빈 출력이 "명령 고장"이 아님을 보증
+
+[② 내용 차이 — PRESERVE 3파일]
+$ git diff --name-only 3b8e800 -- \
+    src/backend/adb-backend.ts src/cli/commands/reset.ts src/cli/commands/doctor.ts
+(출력 없음)
+
+[③ 커밋 이력 — 원상 복구된 변경까지 잡는다]
+$ git log --oneline 3b8e800..HEAD -- \
+    src/backend/adb-backend.ts src/cli/commands/reset.ts src/cli/commands/doctor.ts
+(출력 없음)
+```
+
+AC-008 (0.4.2 정정 후 첫 정식 판정):
+
+```
+$ pnpm vitest run src/backend/ime-session-store.test.ts -t "AC-IMESTATE-008"
+  Test Files  1 passed (1) · Tests  1 passed | 39 skipped (40)
+```
+
+M2에서 **판정 불가**였던 항목이 M4에서 처음으로 판정됐다. 이것이 정정의 목적이었다.
+
+#### 테스트 조정 여부 — 단정 약화 없음
+
+`plan.md` M4는 "조정이 필요한 테스트가 있으면 조정 사실과 이유를 기록한다. 통과시키기 위해 단정을 약화시키는 것은 금지한다"를 요구한다. M2 커밋(`1bad249`) 대비 **M3·정정이 제거한 줄은 정확히 2개**이며 둘 다 단정이 아니다:
+
+```
+$ git diff 1bad249 -- src/backend/ime-session-store.test.ts | grep '^-[^-]'
+-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";   ← stat 추가로 교체
+
+$ git diff 1bad249 -- src/backend/adb-backend.test.ts | grep '^-[^-]'
+-    imeStorePath = join(imeStoreDir, "ime-sessions.json");   ← 임시 디렉터리 이름
+
+$ git diff 1bad249 -- src/cli/router.test.ts | grep '^-[^-]'
+(제거된 줄 없음)
+```
+
+**기존 단정은 한 줄도 건드리지 않았다.** M2가 뒤집은 계약 반전(last-write-wins → first-write-wins)은 M2 절에 이미 기록돼 있으며 M3·M4에서는 추가 조정이 없었다.
+
+`3b8e800` 대비로 세면 `ime-session-store.test.ts`의 제거 줄이 100개로 나오는데, 그것은 **M2의 작업**(단일 파일 → 기기별 배치 전환, `it.fails` 제거)이며 M2 절이 근거를 기록하고 있다. 기준을 `1bad249`로 옮겨야 M3 이후의 조정만 분리된다 — 기준을 잘못 잡으면 남의 작업을 내 조정으로 오인한다.
+
+#### 잠금 미도입 — 코드 리뷰 (grep 아님)
+
+`plan.md` §E는 이 확인을 **grep으로 하지 않는다**고 정했다(양성 대조를 붙일 대상이 없는 없음-검사이므로). 코드 리뷰 판정: `readLegacyFallback`이 추가한 것은 `io.read` 1회 + `JSON.parse` + 모양 검사뿐이며, **대기·타임아웃·재시도·부생 상태를 만드는 구조가 없다.** 보조 확인으로 구현 파일 전수 스캔 결과 `lock|flock|mutex|semaphore|setTimeout|setInterval|sleep|retry|while (` 매치 0건이었고, 같은 패턴이 `adb-backend.ts`·`ime-errors.ts`·`ime-enable-retry-predicate.ts`에서는 매치한다(패턴이 죽지 않았다는 대조). 다만 이 스캔은 보조 근거이며 판정 주체는 코드 리뷰다.
+
+#### AC-020 — 미관측 (Android 실기기 미확보)
+
+```
+$ node dist/cli/bin.js devices
+{"ok":true,"data":[
+  {"serial":"00008103-…","model":"iPad Pro (12.9-inch) (5th generation)","connectionState":"offline","platform":"ios"},
+  {"serial":"00008130-…","model":"iPhone 15 Pro Max","connectionState":"offline","platform":"ios"}]}
+```
+
+연결된 기기는 iOS 2대뿐이고 둘 다 `offline`이다. 이 SPEC의 IME 세션 저장소는 **Android 전용**(ADBKeyBoard 전환/복원)이므로 단일 기기 복원 경로를 실행할 수 없다. `plan.md` M4의 단서("실기기 확보 시")에 따라 **미관측으로 기록하고 PASS로 계상하지 않는다**(`acceptance.md` 원칙: 관측하지 않은 것을 PASS로 기록하지 않는다).
+
+#### AC 매트릭스 갱신
+
+| AC | 판정 | 근거 |
+|---|---|---|
+| AC-018 (호출자 무수정) | **PASS** | 양성 대조 성립 + ②③ 빈 출력 |
+| AC-019 (기존 테스트 전부 통과) | **PASS** | 582/582, 단정 약화 0건 |
+| AC-008 (인코더가 손실 변환일 수 없음) | **PASS** | 0.4.2 정정 후 unit 1 passed. M2의 판정 불가 해소 |
+| AC-005 (대소문자 분리 + 볼륨 프로브) | **부분** | M2와 동일 — 전반부만 관측, 볼륨 프로브 미구현 |
+| AC-020 (단일 기기 복원 경로) | **미관측** | Android 실기기 미확보(위) |
+| AC-003 (두 프로세스 실측) | **미착수** | M5 범위 |
+
+#### 블로커
+
+없음. M5(두 프로세스 실측) 진입 가능.
+
+#### 잔여 위험
+
+- AC-020이 미관측이므로 **실제 기기에서의 단일 기기 복원 경로는 이 SPEC이 끝날 때까지 한 번도 실행되지 않았을 수 있다.** 호스트 단위 테스트가 저장소 계층을 덮지만, `adb` 명령 조립부터 IME 전환까지의 전 경로는 별개 표면이다. M5도 CLI를 거치지 않으므로(빌드 산출물 직접 임포트) 이 공백은 M5로 메워지지 않는다.
+- AC-005의 볼륨 무구분성 프로브가 여전히 미구현이다 — 대소문자 무구분 볼륨에서의 실제 충돌 부재는 인코더의 성질(소문자 hex 단일 계열)로만 논증했고 실행으로 확인하지 않았다.
+
 ## §F Phase 4 Mode Selection
 
 ```
