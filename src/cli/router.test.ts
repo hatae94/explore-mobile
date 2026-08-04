@@ -54,6 +54,7 @@ function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
     model: "Pixel_7",
     osVersion: "14",
     connectionState: "device",
+    unavailableReason: null,
     isEmulator: false,
     platform: "android",
     ...overrides,

@@ -45,6 +45,7 @@ describe("parseDevicectlDevices", () => {
         model: "iPad Pro (12.9-inch) (5th generation)",
         osVersion: "26.5.2",
         connectionState: "device",
+        unavailableReason: null,
         isEmulator: false,
         platform: "ios",
       },
@@ -53,6 +54,7 @@ describe("parseDevicectlDevices", () => {
         model: "iPhone 15 Pro Max",
         osVersion: "26.5.2",
         connectionState: "device",
+        unavailableReason: null,
         isEmulator: false,
         platform: "ios",
       },
@@ -71,19 +73,111 @@ describe("parseDevicectlDevices", () => {
     expect(parsed.map((d) => d.serial)).toContain("00008130-001238880C13803A");
   });
 
-  it("connected가 아닌 tunnelState는 offline으로 강등한다 (예: 'connected (no DDI)')", () => {
-    const parsed = parseDevicectlDevices({
-      result: {
-        devices: [
-          {
-            connectionProperties: { tunnelState: "connected (no DDI)" },
-            deviceProperties: { osVersionNumber: "26.5.2" },
-            hardwareProperties: { udid: "UDID-A", marketingName: "iPad" },
-          },
-        ],
-      },
+  /**
+   * SPEC-READY-001 REQ-READY-003 (AC-READY-006/007/008/016) — `tunnelState`가
+   * `"connected"`가 아니지만 **존재하면** `offline`이 아니라 `unavailable`로
+   * 승격되고, 관측된 원문을 포함한 `unavailableReason`이 함께 실린다. 이전에는
+   * `"connected (no DDI)"`를 포함한 이 모든 값이 `offline`(미연결)으로
+   * 접혔다 — "준비 안 됨"과 "미연결"을 구별하지 못하는 결함이었다(spec.md
+   * §A.1 ②).
+   */
+  describe("SPEC-READY-001 — unavailable 상태 + 사유 (AC-READY-006/007/008/016)", () => {
+    function withTunnelState(tunnelState: unknown) {
+      return parseDevicectlDevices({
+        result: {
+          devices: [
+            {
+              connectionProperties: { tunnelState },
+              deviceProperties: { osVersionNumber: "26.5.2" },
+              hardwareProperties: { udid: "UDID-A", marketingName: "iPad" },
+            },
+          ],
+        },
+      });
+    }
+
+    it("AC-READY-006 — 대표 픽스처 'disconnected'는 unavailable + 매핑표 안내가 실린 사유로 보고된다", () => {
+      const parsed = withTunnelState("disconnected");
+      expect(parsed[0]?.connectionState).toBe("unavailable");
+      expect(parsed[0]?.unavailableReason).toContain("disconnected");
+      expect(parsed[0]?.unavailableReason).toBe(
+        "disconnected — 터널이 연결되지 않았다 — WDA·신뢰 설정을 확인한다",
+      );
     });
-    expect(parsed[0]?.connectionState).toBe("offline");
+
+    /**
+     * 이름 충돌 주의(spec.md §C.1-② 3번): 이 원본 `tunnelState` 값
+     * `"unavailable"`은 `connectionState`의 값 `"unavailable"`과 글자만
+     * 같고 다른 축이다 — 별도 상수로 취급하며 서로 공유하지 않는다.
+     */
+    it("AC-READY-006 — 부가 케이스 'unavailable'(원본 tunnelState 값)도 unavailable + 매핑표 안내로 보고된다", () => {
+      const RAW_TUNNEL_STATE_UNAVAILABLE = "unavailable";
+      const parsed = withTunnelState(RAW_TUNNEL_STATE_UNAVAILABLE);
+      expect(parsed[0]?.connectionState).toBe("unavailable");
+      expect(parsed[0]?.unavailableReason).toContain(RAW_TUNNEL_STATE_UNAVAILABLE);
+      expect(parsed[0]?.unavailableReason).toBe(
+        "unavailable — 터널을 쓸 수 없다 — 기기 잠금 해제 후 WDA를 다시 띄운다",
+      );
+    });
+
+    it("AC-READY-006 — 'connected (no DDI)'도 unavailable + 매핑표 안내로 보고된다", () => {
+      const parsed = withTunnelState("connected (no DDI)");
+      expect(parsed[0]?.connectionState).toBe("unavailable");
+      expect(parsed[0]?.unavailableReason).toBe(
+        "connected (no DDI) — 개발자 디스크 이미지가 안 올라왔다 — 이미지 마운트가 필요하다",
+      );
+    });
+
+    it("AC-READY-006 규칙 2 — 매핑표에 없는 값은 원문만 싣고 안내를 지어내지 않는다", () => {
+      const parsed = withTunnelState("pairing (some future value)");
+      expect(parsed[0]?.connectionState).toBe("unavailable");
+      expect(parsed[0]?.unavailableReason).toBe("pairing (some future value)");
+    });
+
+    it("AC-READY-007 — connectionProperties 자체가 없으면 offline이고 unavailableReason은 null이다", () => {
+      const parsed = parseDevicectlDevices({
+        result: {
+          devices: [
+            {
+              deviceProperties: { osVersionNumber: "26.5.2" },
+              hardwareProperties: { udid: "UDID-A", marketingName: "iPad" },
+            },
+          ],
+        },
+      });
+      expect(parsed[0]?.connectionState).toBe("offline");
+      expect(parsed[0]?.unavailableReason).toBeNull();
+    });
+
+    it("AC-READY-007 — tunnelState가 없으면(connectionProperties는 있음) offline이고 unavailableReason은 null이다", () => {
+      const parsed = parseDevicectlDevices({
+        result: {
+          devices: [
+            {
+              connectionProperties: {},
+              deviceProperties: { osVersionNumber: "26.5.2" },
+              hardwareProperties: { udid: "UDID-A", marketingName: "iPad" },
+            },
+          ],
+        },
+      });
+      expect(parsed[0]?.connectionState).toBe("offline");
+      expect(parsed[0]?.unavailableReason).toBeNull();
+    });
+
+    it("AC-READY-008/016 — 'connected'는 여전히 device이고 unavailableReason은 null이다 (의미 불변)", () => {
+      const parsed = withTunnelState("connected");
+      expect(parsed[0]?.connectionState).toBe("device");
+      expect(parsed[0]?.unavailableReason).toBeNull();
+    });
+
+    it("AC-READY-009 — 네 상태(device/offline/unavailable + AdbBackend의 unauthorized) 모두 같은 키 집합을 갖는다", () => {
+      const device = withTunnelState("connected")[0]!;
+      const offline = withTunnelState(undefined)[0]!;
+      const unavailable = withTunnelState("disconnected")[0]!;
+      expect(Object.keys(device).sort()).toEqual(Object.keys(offline).sort());
+      expect(Object.keys(device).sort()).toEqual(Object.keys(unavailable).sort());
+    });
   });
 
   it("udid가 없는 항목은 버린다 — 조작 대상이 될 수 없다", () => {

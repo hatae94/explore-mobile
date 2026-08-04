@@ -247,3 +247,81 @@ $ grep -n 'spawnProcess("adb"' src/backend/adb-executor.ts → 33: 매치(고정
 ### 실기기 관측 (참고, M4 미대체)
 
 PATH에서 `node` 자체를 제외한 완전 격리 환경(`env -i HOME=$HOME PATH=<node bin>:/usr/bin:/bin ANDROID_HOME=$ANDROID_HOME`)에서 `node dist/cli/bin.js doctor` 실행 — 실제 Android 실기기(`2beb9d2309037ece`)가 `devices` 배열에 나타났고, `adb.installed:true`·`onPath:false`·`resolvedPath:"/Users/hatae/Library/Android/sdk/platform-tools/adb"`가 관측됐다. 이 관측은 AC-READY-001의 요구를 만족하는 형태이지만, `doctor` 실행이 부수적으로 `ensureAdbKeyboard`(실기기에 IME 설치/활성화)를 호출해 **부작용이 있는 명령**이었다 — AC-READY-001이 지정하는 `devices`(읽기 전용)가 아니었다. M4가 그 정확한 형태로 재현·판정해야 하며, 이 절은 그 전까지의 참고 근거일 뿐이다.
+
+---
+
+## §E.2 Run-phase Evidence — M2
+
+### 착수 전 사전 점검 (2026-08-05)
+
+```
+$ git rev-parse HEAD → 295ec89f0d20a5a35ce810ed4aebbaa6884ee048 (M1 HEAD, 이 마일스톤의 시작점)
+$ pnpm test    → Test Files 27 passed (27) / Tests 590 passed (590)
+$ grep -n "DeviceConnectionState =" src/schema/device-backend.ts → :33 3값(device|offline|unauthorized)
+$ grep -n -A 3 "function mapConnectionState" src/backend/wda-device-list.ts → :64-66, connected ? device : offline (2분기)
+```
+
+`plan.md` §E는 `$BASE=04fb196`(M1 이전 기준선)을 계속 쓴다 — M1이 그렇게 기록했고, 이 절도 그 기준을 그대로 따른다.
+
+### M2 구현 요약
+
+- `src/schema/device-backend.ts` — `DeviceConnectionState`에 `"unavailable"` 추가(3값 → 4값). `DeviceInfo`에 `unavailableReason: string | null` 추가 — `unavailable`이 아니면 항상 `null`(§B.3 키 집합 고정).
+- `src/backend/wda-device-list.ts` — `mapConnectionState`를 3분기로 확장: `tunnelState === "connected"` → `device`; 값이 **존재**하면 → `unavailable`; `tunnelState` 자체가 `undefined`(항목 부재) → `offline`. `UNAVAILABLE_REASON_GUIDANCE` 매핑표(§B.3.1의 3행: disconnected/unavailable/connected (no DDI))와 `deriveUnavailableReason()`을 신설 — `<원본 tunnelState> — <행동 안내>` 형식이며, 매핑표에 없는 값은 원문만 싣는다(규칙 2). `parseDevicectlDevices()`가 `connectionState`에 따라 `unavailableReason`을 계산해 항목에 싣는다.
+- `src/backend/adb-backend.ts` — `:311-320`의 `DeviceInfo` 리터럴에 `unavailableReason: null` 추가(Android는 `unavailable`을 만들지 않는다).
+- `.claude/skills/explore-mobile/SKILL.md` — `:115-121`의 `devices` JSON 예시에 `unavailableReason` 필드 반영, § Device targeting에 `unavailable` 상태 한 줄 설명 추가. 전체 문서 동기화는 M5 소관 — 여기서는 예시가 거짓말하지 않게만 한다.
+
+### 고정 지점 처리 결과
+
+- `src/schema/device-backend.test.ts:31-42` — 키 집합 계약 6 → **7**(`unavailableReason` 추가, `toHaveLength(7)`).
+- `src/backend/registry.test.ts`, `src/cli/device-targeting.test.ts`, `src/cli/router.test.ts`, `src/cli/enumeration.test.ts`, `src/cli/commands/swipe.test.ts`, `src/cli/commands/scroll.test.ts`의 `DeviceInfo` 팩토리/리터럴에 `unavailableReason: null` 추가 — `pnpm typecheck`가 지목한 7개 파일(§H 참조, 계획 목록과 정확히 일치).
+- `src/backend/adb-backend.test.ts`의 `toEqual` 정확 비교 리터럴 2곳(`device`/`offline`)에 `unavailableReason: null` 추가 — `pnpm test`가 런타임에 지목했다(타입 검사로는 안 잡힘, `toEqual` 인자는 `unknown`).
+- `src/backend/wda-device-list.test.ts`의 `toEqual` 정확 비교 리터럴 2곳에 `unavailableReason: null` 추가. 기존 "`connected가 아닌 tunnelState는 offline으로 강등한다`" 테스트는 **새 동작(offline이 아니라 unavailable)을 반영해 재작성**했다 — 이 테스트가 검증하던 옛 2분기 동작 자체가 이 마일스톤이 바꾸는 대상이었다.
+
+### §H 계획 대비 실측 격차 — 도구가 목록을 그대로 확정했다
+
+`plan.md` §A.1.1이 예고한 대로, `pnpm typecheck`가 지목한 7개 테스트 파일은 계획서 §A.1의 "8개 테스트 중 M2 몫" 목록과 **정확히 일치**했고(계획 목록의 `wda-device-list.test.ts`·`adb-backend.test.ts`는 M2에서 `toEqual` 런타임으로, 나머지는 typecheck로 잡힘 — 8개 전부 M2·M3 중 M2가 처리), M1과 달리 **계획에 없던 새 사이트는 나오지 않았다**. `unavailableReason`은 항상 필수(`string | null`)이고 `alternateSerials`(M3)는 아직 없으므로 이번 회차의 타입 오류는 M2 몫으로 깔끔하게 갈렸다.
+
+### AC PASS/FAIL 매트릭스 (M2 대상 — AC-READY-006·007·008·009·015·016; AC-009는 M3 몫과 분리해 M2 몫만 판정)
+
+| AC | 검증 방식 | 상태 | 근거 |
+|---|---|---|---|
+| AC-READY-006 | unit | **PASS** | `src/backend/wda-device-list.test.ts` describe "SPEC-READY-001 — unavailable 상태 + 사유" — 대표 픽스처 `"disconnected"`(①②③ 전부 확인) + 부가 케이스 `"unavailable"`(원본값, 이름 충돌 주석 명시) + `"connected (no DDI)"` + 매핑표에 없는 값(규칙 2, 원문만) |
+| AC-READY-007 | unit | **PASS** | 같은 describe — `connectionProperties` 자체 부재 / `tunnelState`만 부재 두 경우 모두 `offline` + `unavailableReason: null` |
+| AC-READY-008 | unit | **PASS** | 같은 describe "AC-READY-008/016" — `tunnelState === "connected"` → `device` + `unavailableReason: null` (의미 불변) |
+| AC-READY-009 | unit | **PASS-WITH-DEBT (M2 몫만)** | 같은 describe "AC-READY-009" — `parseDevicectlDevices()`가 만드는 `device`/`offline`/`unavailable` 세 상태의 키 집합이 동일함을 확인. **Gap**: AC-009 원문은 `unauthorized`(`AdbBackend.listDevices()` 산출)까지 네 상태 전부의 키 집합 일치를 요구하는데, 그 비교는 아직 작성하지 않았다 — M2 스코프의 `parseDevicectlDevices()` 세 상태 확인은 끝났지만, `AdbBackend`쪽과 교차 비교하는 마지막 조각은 M3에서 함께 마감한다(두 함수 다 `DeviceInfo`를 반환하므로 M3의 `alternateSerials` 필드가 들어와야 완전한 매트릭스가 완성된다). |
+| AC-READY-015 | unit | **PASS** | `device-backend.test.ts:32`의 `Record<keyof DeviceInfo, true>`에 `unavailableReason` 포함, `toHaveLength(7)`로 갱신 확인. 이 SPEC의 M2 몫(6→7)만 해당 — 8로의 최종 갱신은 M3 |
+| AC-READY-016 | unit | **PASS** | 같은 describe "AC-READY-008/016" + 표에 없는 값 처리(규칙 2) — 상수표 기대값과 정확 일치(§E 상세 표 그대로 구현) |
+
+### Toolchain 실행 결과
+
+```
+$ pnpm test        → Test Files 27 passed (27) / Tests 597 passed (597)   (기준선 590 + 신규 7)
+$ pnpm typecheck   → exit 0
+$ pnpm build       → exit 0
+```
+
+### §E 자체 검증 ($BASE=04fb196, $TOUCHED=src/schema/device-backend.ts)
+
+```
+$ grep -n "DeviceConnectionState =" src/schema/device-backend.ts
+42:export type DeviceConnectionState = "device" | "offline" | "unauthorized" | "unavailable";   (4값 확인)
+
+$ git diff --name-only 04fb196..HEAD -- src/schema/device-backend.ts   → src/schema/device-backend.ts (① 양성 대조 — 출력 있음, 통과)
+$ git diff --name-only 04fb196..HEAD -- src/backend/ime-session-store.ts src/backend/apk-downloader.ts   → (출력 없음, ② 본 검사 통과)
+
+$ pnpm vitest run -t "connectionState"   → Test Files 2 passed | 25 skipped (27) / Tests 2 passed | 595 skipped (597), exit 0
+```
+
+**③-a/③-b(`git log --oneline $BASE..HEAD`)는 아직 커밋 전이라 두 명령 모두 출력이 없다** — 커밋을 만들고 나면 ③-a(`-- src/schema/device-backend.ts`)는 이번 커밋을 보여야 하고 ③-b(PRESERVE 두 파일)는 계속 출력 없음이어야 한다. 이 문서는 그 상태를 커밋 직후에 갱신한다.
+
+### Gaps (미검증)
+
+- AC-READY-009의 `unauthorized`(AdbBackend) 교차 비교는 M3로 이월(위 매트릭스에 기록).
+- `alternateSerials` 관련 전부(M3 몫) — 이 마일스톤은 손대지 않았다.
+- M4 실기기 검증(AC-READY-019 등)은 여전히 미착수.
+- ③-a/③-b 커밋 후 재확인 — 커밋 직후 이 절에 추가 기록 예정.
+
+### Residual-risk (잔여 위험)
+
+- `UNAVAILABLE_REASON_GUIDANCE` 매핑표는 알려진 값 3개만 다룬다 — `spec.md` §C.1-②가 명시하듯 새 `tunnelState` 값이 언제든 나타날 수 있고, 규칙 2(원문만)가 그 경우를 안전하게 흡수하지만 안내 문구 자체는 없다. 이는 설계상 의도된 한계다(§B.3.1).
+- `unavailableReason`의 정확한 원본 값 일치는 실기기(AC-READY-019)에서만 최종 확인된다 — 현재는 픽스처 기반 unit 검증뿐이다.

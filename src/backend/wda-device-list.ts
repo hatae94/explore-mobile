@@ -56,13 +56,41 @@ function stringField(value: unknown): string {
 }
 
 /**
- * `tunnelState`를 공유 `DeviceConnectionState`로 매핑한다.
- * 관측값: `"connected"` (사용 가능), 그리고 표 형식에서 본
- * `"connected (no DDI)"` — 개발자 디스크 이미지가 안 올라온 상태다.
- * "지금 조작 가능한가"만이 이 열거형의 질문이므로 `connected`만 `device`다.
+ * `tunnelState`를 공유 `DeviceConnectionState`로 3분기 매핑한다
+ * (SPEC-READY-001 §B.3). `"connected"`면 `device`, 항목 자체가 없으면
+ * (기기가 열거는 됐지만 연결 정보가 아예 없음) `offline`, 그 외 값이
+ * **존재하면** `unavailable` — 물리적으로는 잡히지만 지금 조작할 수 없는
+ * 상태다(터널 미연결, DDI 미마운트 등). "지금 조작 가능한가"만 보던 이전
+ * 2분기는 "준비 안 됨"과 "미연결"을 구별하지 못했다.
  */
 function mapConnectionState(tunnelState: unknown): DeviceInfo["connectionState"] {
-  return stringField(tunnelState).toLowerCase() === "connected" ? "device" : "offline";
+  if (tunnelState === undefined) return "offline";
+  return stringField(tunnelState).toLowerCase() === "connected" ? "device" : "unavailable";
+}
+
+/**
+ * `unavailableReason`의 행동 안내 부분 — 관측된 `tunnelState` 값(소문자
+ * 비교) → 안내 문구(SPEC-READY-001 §B.3.1 매핑표). 표에 없는 값은 안내를
+ * 지어내지 않는다.
+ *
+ * **이름 충돌 주의**: 이 표의 키 `"unavailable"`은 원본 `tunnelState`
+ * 값이며, 이 SPEC이 새로 정의하는 `connectionState`의 값
+ * `"unavailable"`과 글자만 같고 다른 축이다.
+ */
+const UNAVAILABLE_REASON_GUIDANCE: Readonly<Record<string, string>> = {
+  disconnected: "터널이 연결되지 않았다 — WDA·신뢰 설정을 확인한다",
+  unavailable: "터널을 쓸 수 없다 — 기기 잠금 해제 후 WDA를 다시 띄운다",
+  "connected (no ddi)": "개발자 디스크 이미지가 안 올라왔다 — 이미지 마운트가 필요하다",
+};
+
+/**
+ * `unavailableReason` 문자열을 만든다 — `<관측된 tunnelState 원문> —
+ * <행동 안내>` (매핑표에 있을 때) 또는 원문만(없을 때). 앞부분은 항상
+ * 원본 값 그대로를 포함해 진단 정보를 잃지 않는다.
+ */
+function deriveUnavailableReason(rawTunnelState: string): string {
+  const guidance = UNAVAILABLE_REASON_GUIDANCE[rawTunnelState.toLowerCase()];
+  return guidance === undefined ? rawTunnelState : `${rawTunnelState} — ${guidance}`;
 }
 
 /**
@@ -87,11 +115,15 @@ export function parseDevicectlDevices(raw: unknown): DeviceInfo[] {
     const serial = stringField(device.hardwareProperties?.udid);
     if (serial.length === 0) continue; // udid 없는 항목은 조작 대상이 될 수 없다
 
+    const rawTunnelState = stringField(device.connectionProperties?.tunnelState);
+    const connectionState = mapConnectionState(device.connectionProperties?.tunnelState);
+
     parsed.push({
       serial,
       model: stringField(device.hardwareProperties?.marketingName),
       osVersion: stringField(device.deviceProperties?.osVersionNumber),
-      connectionState: mapConnectionState(device.connectionProperties?.tunnelState),
+      connectionState,
+      unavailableReason: connectionState === "unavailable" ? deriveUnavailableReason(rawTunnelState) : null,
       // devicectl은 실기기만 열거한다 — 시뮬레이터는 simctl 소관이고
       // 이 SPEC에서 제외하기로 결정했다.
       isEmulator: false,

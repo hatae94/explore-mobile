@@ -26,6 +26,7 @@ function androidDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
     model: "SM_S938N",
     osVersion: "16",
     connectionState: "device",
+    unavailableReason: null,
     isEmulator: false,
     platform: "android",
     ...overrides,

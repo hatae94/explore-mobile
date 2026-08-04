@@ -107,7 +107,10 @@ exactly one device is **connected** — it is auto-selected. Otherwise you get
 
 A device counts as **connected** only when `connectionState` is `"device"`.
 `offline` entries still appear in the `devices` list but are excluded from
-counting and auto-select.
+counting and auto-select. A device can also be `"unavailable"` — physically
+connected but not currently operable (e.g. an iOS device whose tunnel/DDI/WDA
+preconditions are not met) — with `unavailableReason` explaining why and what
+to do about it; `unavailableReason` is `null` for every other state.
 
 ```bash
 node dist/cli/bin.js devices
@@ -115,9 +118,9 @@ node dist/cli/bin.js devices
 ```json
 {"ok":true,"command":"devices","data":[
   {"serial":"192.168.219.106:36807","model":"SM_S938N","osVersion":"16",
-   "connectionState":"device","isEmulator":false,"platform":"android"},
+   "connectionState":"device","unavailableReason":null,"isEmulator":false,"platform":"android"},
   {"serial":"00008130-001238880C13803A","model":"iPhone 15 Pro Max","osVersion":"26.5.2",
-   "connectionState":"device","isEmulator":false,"platform":"ios"}]}
+   "connectionState":"device","unavailableReason":null,"isEmulator":false,"platform":"ios"}]}
 ```
 
 `platform` tells you which backend owns the device. You never choose a

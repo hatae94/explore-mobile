@@ -17,7 +17,7 @@ function device(
   platform: DevicePlatform = "android",
   connectionState: DeviceConnectionState = "device",
 ): DeviceInfo {
-  return { serial, model: "m", osVersion: "14", connectionState, isEmulator: false, platform };
+  return { serial, model: "m", osVersion: "14", connectionState, unavailableReason: null, isEmulator: false, platform };
 }
 
 /**

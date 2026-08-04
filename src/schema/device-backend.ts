@@ -29,8 +29,17 @@
  * and the command layer above it.
  */
 
-/** Device connection state as reported by the platform's device-listing tool. */
-export type DeviceConnectionState = "device" | "offline" | "unauthorized";
+/**
+ * Device connection state as reported by the platform's device-listing tool.
+ *
+ * `"unavailable"` (SPEC-READY-001 REQ-READY-003) means the device is
+ * physically connected but cannot currently be operated (e.g. an iOS
+ * device whose tunnel/DDI/WDA preconditions have not yet been met). It is
+ * distinct from `"offline"` (no connection information at all) — the two
+ * previously collapsed into one value, which made "unplugged" and
+ * "plugged in but not ready" indistinguishable to a caller.
+ */
+export type DeviceConnectionState = "device" | "offline" | "unauthorized" | "unavailable";
 
 /**
  * A device-pixel coordinate for a gesture endpoint (REQ-GEST-SWIPE-001,
@@ -124,6 +133,13 @@ export interface DeviceInfo {
   osVersion: string;
   /** Current connection state. */
   connectionState: DeviceConnectionState;
+  /**
+   * Why the device is `"unavailable"` (SPEC-READY-001 REQ-READY-003).
+   * `null` for every other connection state. Always present (never
+   * conditionally omitted) so the field-set contract stays fixed across all
+   * connection states (SPEC-CONTRACT-001).
+   */
+  unavailableReason: string | null;
   /** True for an emulator/simulator, false for a physical device. */
   isEmulator: boolean;
   /** Which backend owns this device (REQ-IOS-SCHEMA-001, additive field). */

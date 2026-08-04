@@ -315,6 +315,9 @@ export class AdbBackend implements DeviceBackend {
         connectionState: CONNECTED_STATES.has(entry.state)
           ? (entry.state as DeviceInfo["connectionState"])
           : "offline",
+        // Android never produces "unavailable" — that value is iOS-only
+        // (SPEC-READY-001 §B.3). Always present, per the field-set contract.
+        unavailableReason: null,
         isEmulator: entry.isEmulator,
         platform: "android",
       });
