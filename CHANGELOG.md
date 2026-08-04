@@ -400,6 +400,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Driving two devices at once could lose one IME session record — or
+  both** (SPEC-IMESTATE-001). Every device's session lived in a single
+  JSON file that was written whole: read the map, add the entry, write
+  the map back. Two CLI processes that read before either wrote produced
+  a lost update, and `adb-backend.ts`'s check-then-act ("record the
+  original IME only if none is tracked yet") reproduced the same race
+  even for a single serial. The user-visible consequence is not a
+  missing record but a **wrong** one: a process arriving late records
+  ADBKeyBoard itself as the "original" IME, and `reset` then "restores"
+  the device to ADBKeyBoard.
+  Records now live one file per device under `<cache>/ime-sessions/`,
+  named by the serial's UTF-8 bytes in lowercase hex — injective, so no
+  two serials collide; case-insensitive-safe, since only `[0-9a-f]` is
+  emitted; and free of `/`, `\`, `:`. Creation is **exclusive** (`wx`):
+  `EEXIST` is not an error but the normal "another process won" result
+  and preserves the existing value, while every other failure
+  (`ENOENT` · `EACCES` · `ENOSPC`) rejects the call instead of being
+  swallowed. Invalidation writes a `.cleared` tombstone **before**
+  removing the record, so no window exists in which a lookup sees
+  neither and falls through to the legacy file. The pre-existing single
+  file is kept **read-only** as a last-resort fallback — it is never
+  written, renamed, or deleted.
+  Measured with two separate OS processes released from a common
+  barrier, 20 rounds each: **before the fix 0/20 survived, after the fix
+  20/20**. The pre-fix failures split two ways — 8 plain lost updates,
+  and 12 in which the store file itself was corrupted: the two writes
+  overlapped byte-wise, leaving the shorter payload trailed by the
+  longer one's final `}`, so the file was invalid JSON and *every*
+  device's session in it read back as absent. That second mode was not
+  anticipated in the SPEC; it is unreachable once records are per-device
+  files created exclusively.
 - **A wireless Android device whose mDNS name collided was reported as
   `offline` and could not be driven at all** (SPEC-ANDROID-002). When the
   mDNS name is already taken, `adb` appends ` (2)` — putting a **space

@@ -2,7 +2,7 @@
 id: SPEC-IMESTATE-001
 title: "기기별 IME 세션 상태 격리 — 진행 기록"
 version: "0.4.1"
-status: in-progress
+status: completed
 created: 2026-07-29
 updated: 2026-08-04
 author: hatae
@@ -840,6 +840,36 @@ AC 최종 현황: 활성 25건 중 **PASS 24건 · 부분 1건**(AC-005 — 볼�
 
 1. **Android 2대 병렬** (`plan.md` M5) — 기기 미확보. `adb devices` 2줄이 같은 기기임을 하드웨어 시리얼로 확인.
 2. **AC-005 볼륨 무구분성 프로브** — 실제 캐시 디렉터리 볼륨의 대소문자 무구분 여부를 실행으로 확인하지 않았다(`spec.md` §C.1-⑲ 유지).
+
+## §E.4 Sync-phase Audit-Ready Signal
+
+```
+sync_status: audit-ready
+sync_complete_at: 2026-08-04
+sync_commit_sha: pending-backfill-sync
+status_transition: in-progress → implemented → completed (단일 sync 커밋)
+```
+
+sync에서 한 일 — 문서를 실측 결과에 맞췄다. 코드 변경 없음.
+
+| 대상 | 변경 | 근거 |
+|---|---|---|
+| `CHANGELOG.md` | `[Unreleased] / Fixed` 항목 1건 추가 | 사전 `grep -c 'SPEC-IMESTATE-001' CHANGELOG.md` → `0` (중복 없음 확인 후 추가). 기존 항목이 영어이므로 문체를 맞췄다 |
+| `README.md` | 로드맵에서 `기기별 IME 세션 격리 (SPEC-IMESTATE-001)` 1줄 제거 | 완료 항목. `3b8e800`(docs(README): 완료된 로드맵 항목 정리)이 세운 관행을 따른다 |
+| SPEC 산출물 4건 | `status: in-progress → completed` · `updated: 2026-08-04` | 3단계 마감(plan→run→sync)의 종결 전이 |
+
+**README 본문은 수정하지 않았다.** `README.md:164`("기기별 상태는 시리얼 단위로 격리되므로, 두 기기를 동시에 몰아도 서로의 입력기 상태를 오염시키지 않는다")는 이 SPEC 이전에 이미 쓰여 있었고 **그때는 사실이 아니었다** — 이 SPEC이 그 문장을 사실로 만들었다. 문장 자체가 이제 정확하므로 손대지 않는다.
+
+AC 개수는 세는 명령으로 확인했다(손으로 세지 않는다):
+
+```
+$ grep -cE '^\| ~?~?AC-IMESTATE-[0-9]{3}' acceptance.md   → 28   (표 행 총계)
+$ grep -cE '^\| ~~AC-IMESTATE-[0-9]{3}' acceptance.md     → 3    (그중 폐기)
+$ grep -cE '^### AC-IMESTATE-[0-9]{3}' acceptance.md      → 25   (활성 상세 섹션)
+$ grep -cE '^### ~~AC-IMESTATE-[0-9]{3}' acceptance.md    → 3    (폐기 상세 섹션)
+```
+
+표(25 활성 + 3 폐기)와 상세 섹션(25 + 3)이 일치한다. §E.3이 적은 "활성 25건"은 이 실측에 근거한다.
 
 ## §F Phase 4 Mode Selection
 
