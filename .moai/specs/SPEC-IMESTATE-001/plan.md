@@ -1,10 +1,10 @@
 ---
 id: SPEC-IMESTATE-001
 title: "기기별 IME 세션 상태 격리 — 구현 계획"
-version: "0.4.0"
+version: "0.4.1"
 status: in-progress
 created: 2026-07-29
-updated: 2026-07-30
+updated: 2026-08-03
 author: hatae
 ---
 
@@ -17,6 +17,8 @@ author: hatae
 > **0.3.0 변경 요약** — plan-auditor 2차 감사 FAIL(0.77, 1차 0.63 → +0.14) 반영: ① M2의 `clear` 순서가 **위험한 반대 순서**(레코드 제거 → 툼스톤 생성)를 명시하고 있었다 → 툼스톤 우선으로 확정 ② M3에 **이관 단위(일괄)와 툼스톤 게이트**를 확정 — 0.2.0은 둘 다 미규정이었고, 게이트 없이는 이관이 툼스톤을 무력화한다(감사관 시뮬레이션 재현) ③ M2의 `EEXIST` 처리를 **종류 한정** — 비-`EEXIST` 실패를 삼키면 조용한 실패가 새로 생긴다 ④ §E의 잠금 grep 제거 — 양성 대조 없는 없음-검사여서 `acceptance.md`가 0.2.0에서 스스로 신설한 원칙을 위반했다.
 >
 > **0.4.0 변경 요약** — plan-auditor 3차(최종) 감사 FAIL(0.76, 2차 0.77 대비 **하락** → STOP 신호, 반복 3/3 소진) 반영 + 사용자 결정에 따른 **범위 축소**: ① **이관·폐기를 범위에서 제외** — §B.1의 미확정 설계가 사라졌고 M3이 "구 파일 읽기 전용 폴백"으로 축소됐다(`spec.md` REQ-003 개정). 3차 MUST-FIX 2건이 이 경로에서 나왔으므로 원인을 제거했다 ② **§C 행 0의 기준 SHA 보관 위치를 `progress.md` §E.2로 이전** — `manager-develop`은 `plan.md` 본문 수정이 금지돼 있어 그 SHA를 여기 적을 수 없었다(N3-MF-4) ③ **M4의 잠금 grep 지시 제거** — 0.3.0이 §E에서는 그 검사를 지우고 M4에서는 여전히 실행하라고 지시해 **같은 파일 안에서 모순**이었다(N-SF-4 미완결) ④ M2에 **새 세션 경로 순서**(레코드 먼저 → 툼스톤 나중) 반영(N3-MF-1) ⑤ M2의 비-`EEXIST` 처리를 "거부한다"로 확정(N3-MF-3).
+>
+> **0.4.1 변경 요약** — 계획·마일스톤·리스크 판단 무변경, **낡은 사실 2종을 5곳에서 정정**: **(가) 소멸한 파일 참조 2곳** — §A PRESERVE 목록의 `src/webview/calibration.ts`(SPEC-WEBVIEW-002가 삭제해 소멸; 없는 파일은 무수정 증명 대상이 될 수 없다)와 §C 사전 점검 row 6의 "직접 참조 **4파일**"(→ **3파일**). **(나) 하드코딩된 기준선 숫자 3곳** — §B.3 대응 · §C 사전 점검 row 1 · §E 자체 검증 블록의 "702 tests / 32 files"를 제거하고 `progress.md` §E.2의 M2 착수 시점 실측값 대조로 교체(M4 항목 포함 시 4곳). 최초 정정 시 (나)를 M4 1곳으로만 셌으나 숫자 grep으로 3곳이 더 나왔다 — **손으로 센 개수 대신 세는 명령을 남기라**는 이 정정의 취지가 정정 작업 자체에서 재확인됐다. 배경과 처분 원칙은 `spec.md` HISTORY 0.4.1 참조.
 
 ## §A. 컨텍스트
 
@@ -35,7 +37,7 @@ author: hatae
 - `src/cli/commands/reset.ts` · `src/cli/commands/doctor.ts` — **간접** 호출자. `ImeSessionStore`를 직접 참조하지 않고 `AdbBackend.getTrackedOriginalIme`/`clearTrackedOriginalIme`를 경유한다(`reset.ts:80, 90`)
 - `src/schema/device-backend.ts` — `DeviceBackend` 10개 메서드 표면 불변
 - `src/backend/apk-downloader.ts` — `resolveApkCacheDir()`는 읽기만 한다(캐시 디렉터리 결정 규칙 재사용)
-- `src/webview/calibration.ts` — 같은 결함군이지만 `spec.md` §C.4로 이월. **이 SPEC에서 건드리지 않는다**
+- ~~`src/webview/calibration.ts`~~ — **[0.4.1] 항목 소멸**. SPEC-WEBVIEW-002가 `src/webview/`를 삭제해 이 파일은 존재하지 않는다(실측 2026-08-03: `ls src/webview` → 없음). PRESERVE 대상으로 셀 수 없으므로 목록에서 무효화한다 — 없는 파일을 "건드리지 않았다"고 증명할 방법이 없다. 이월 종결 근거는 `spec.md` §C.4
 
 **부수 변경 가능 대상 (테스트 3파일 + barrel)**
 
@@ -70,7 +72,7 @@ REQ-IMESTATE-002 성질 2의 인코딩 측면은 실행으로 확인됐다(`ABC1
 
 영향 지점(실측): `router.test.ts` 5곳 + 경로 조립 1곳, 그 외 `ime-session-store.test.ts` · `adb-backend.test.ts`.
 
-대응: 주입 파라미터에 기본값을 주어 기존 호출 형태를 최대한 보존하고, M4에서 702개 전체 통과를 마감 조건으로 확인한다.
+대응: 주입 파라미터에 기본값을 주어 기존 호출 형태를 최대한 보존하고, M4에서 **기준선 전체 통과**를 마감 조건으로 확인한다(개수는 `progress.md` §E.2의 M2 착수 시점 실측값 — 하드코딩 금지, 0.4.1).
 
 ### B.4 재현 하네스의 함정 [중간 — 거짓 음성·거짓 실패 양방향, 실측됨]
 
@@ -93,12 +95,12 @@ REQ-007(배타 생성)과 REQ-008(툼스톤)이 같은 경로를 쓰면 충돌�
 | # | 확인 | 방법 | 기대 |
 |---|---|---|---|
 | 0 | **기준 SHA 기록** | `git rev-parse HEAD` → 이 값을 **`progress.md` §E.2에 기록**하고 `$BASE`로 사용(AC-018) | SHA 1개가 `progress.md` §E.2에 남아 있다 |
-| 1 | 기준선 테스트 통과 | `pnpm test` | 32 files / 702 tests pass, exit 0 |
+| 1 | 기준선 테스트 통과 | `pnpm test` | exit 0. **개수는 여기 하드코딩하지 않고 실측값을 `progress.md` §E.2에 기록**한다(0.4.1 — 0.4.0의 "32 files / 702 tests"는 SPEC-WEBVIEW-002·SPEC-CLEAN-001의 삭제로 낡았고, 그대로 두면 이 행이 거짓 실패한다). M1의 `it.fails` 2건은 **expected fail로 계상**되며 exit 0을 깨지 않는다 |
 | 2 | 기준선 타입·빌드 | `pnpm typecheck` · `pnpm build` | 양쪽 exit 0 |
 | 3 | 결함 ① 주석 존재 | `grep -n "NOT atomic" src/backend/ime-session-store.ts` | `:22` 부근 매치 |
 | 4 | 결함 ② check-then-act 존재 | `grep -n "existingOriginal" src/backend/adb-backend.ts` | `:454` 부근 매치 |
 | 5 | 캐시 디렉터리 결정 규칙 | `grep -n "resolveApkCacheDir" src/backend/apk-downloader.ts` | 함수 존재 — 재사용 대상 |
-| 6 | 직접 참조 파일 전수 | `grep -rln "ImeSessionStore" src/ \| grep -v test` | **4파일**: `webview/calibration.ts`(주석 참조·§C.4 이월) · `index.ts`(export 표면 변경 대상) · `backend/ime-session-store.ts`(주 변경) · `backend/adb-backend.ts`(직접 호출자). `reset.ts`·`doctor.ts`는 여기 **나오지 않는다** — 간접 호출자다 |
+| 6 | 직접 참조 파일 전수 | `grep -rln "ImeSessionStore" src/ \| grep -v test` | **3파일**: `index.ts`(export 표면 변경 대상) · `backend/ime-session-store.ts`(주 변경) · `backend/adb-backend.ts`(직접 호출자). `reset.ts`·`doctor.ts`는 여기 **나오지 않는다** — 간접 호출자다. (0.4.0까지 4번째로 적혀 있던 `webview/calibration.ts`는 SPEC-WEBVIEW-002 삭제로 소멸 — 0.4.1 정정) |
 | 7 | export 표면 확인 | `grep -n "ImeSession\|resolveImeSession" src/index.ts` | `:30-34` 5종 — `spec.md` §C.2 표와 일치 |
 | 8 | 손실 있는 정리 코드 위치 (**양성 대조**) | `grep -nF 'replace(/[^A-Za-z0-9_-]/g' src/backend/adb-backend.ts` | `:57` 매치 — **재사용 금지 대상**임을 재확인. `-F` 없이는 매치되지 않는다(0.1.0의 결함) |
 | 9 | `router.test.ts` 영향 지점 | `grep -n "new ImeSessionStore\|imeStorePath = " src/cli/router.test.ts` | 6행(`:1061` 경로 조립 + `:1089 :1139 :1183 :1189 :1235` 구성) |
@@ -116,7 +118,7 @@ REQ-007(배타 생성)과 REQ-008(툼스톤)이 같은 경로를 쓰면 충돌�
 각 마일스톤 종료 시 아래를 실행하고 **출력을 근거로** 보고한다. "통과했을 것"은 보고가 아니다.
 
 ```bash
-pnpm test          # 32 files / 702+ tests, exit 0
+pnpm test          # exit 0 (개수는 progress.md §E.2 기준선과 대조 — 하드코딩 금지, 0.4.1)
 pnpm typecheck     # exit 0
 pnpm build         # exit 0
 ```
@@ -186,7 +188,7 @@ grep -nF 'replace(/[^A-Za-z0-9_-]/g' src/backend/ime-session-store.ts
 ### M4 — 회귀 확인 [필수 · 호출자 무수정 증명]
 
 - §E의 자체 검증 전체를 실행한다(기준 SHA 대비 `git diff` + `git log` + 양성 대조 grep 포함). **잠금 미도입 grep은 실행하지 않는다** — §E가 0.3.0에서 그 검사를 제거했는데 이 항목이 여전히 실행을 지시해 같은 파일 안에서 모순이었다(3차 감사 N-SF-4 미완결). 잠금 미도입은 `spec.md` §D의 제외 항목이므로 **코드 리뷰로 확인**한다.
-- 기존 702개 테스트가 전부 통과하는지 확인한다. 조정이 필요한 테스트가 있으면 **조정 사실과 이유를 기록한다** — 통과시키기 위해 단정을 약화시키는 것은 금지한다. 영향 예상: `ime-session-store.test.ts` · `adb-backend.test.ts` · `router.test.ts`(6지점).
+- 기존 테스트가 전부 통과하는지 확인한다. **기준 개수를 이 문서에 하드코딩하지 않는다** — `progress.md` §E.2에 기록된 **M2 착수 시점 `pnpm test` 실측값**과 대조한다. (0.4.0까지 이 항목이 적고 있던 "702개"는 그 뒤 SPEC-WEBVIEW-002·SPEC-CLEAN-001의 코드 삭제로 낡았다. 손으로 센 숫자는 조용히 낡으므로 **세는 명령**을 남긴다 — 0.4.1 정정.) 조정이 필요한 테스트가 있으면 **조정 사실과 이유를 기록한다** — 통과시키기 위해 단정을 약화시키는 것은 금지한다. 영향 예상: `ime-session-store.test.ts` · `adb-backend.test.ts` · `router.test.ts`(6지점).
 - 단일 기기 경로(한 기기에 한글 입력 → `reset` 복원)가 이전과 동일하게 동작하는지 확인한다(AC-020, 실기기 확보 시).
 
 ### M5 — 두 프로세스 실측 [마감 조건]
