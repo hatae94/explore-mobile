@@ -196,6 +196,11 @@ secret-*.*
 # ===========================================
 .moai/state/
 .moai/cache/
+# 중첩 경로도 막는다. 위 두 줄은 저장소 루트에만 적용되는데, 런타임이 cwd를
+# 잘못 잡으면 `.moai/specs/<SPEC>/.moai/state/`처럼 하위에 상태 파일을 흘린다
+# (실제로 흘린 것을 추적할 뻔했다).
+**/.moai/state/
+**/.moai/cache/
 
 # ===========================================
 # Plan Audit Reports (local artifacts)
