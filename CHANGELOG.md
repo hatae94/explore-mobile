@@ -1128,3 +1128,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discipline) and AC-GEST-034 (`minValidRatio` never recommending a
   value it would itself reject) are both satisfied by the 0.8.0
   amendment's own changes above.
+
+### Changed
+
+- **Device/environment availability reporting made accurate (SPEC-READY-001)
+  — breaking change for JSON consumers.** The prior shapes silently hid or
+  mislabeled real environment states; four contract surfaces changed:
+  - **`DeviceInfo` grew from 6 to 8 keys.** `unavailableReason: string | null`
+    and `alternateSerials: string[]` are now always present (never
+    conditionally omitted, per the field-set contract). Any consumer doing
+    an exact key-count or `toEqual` comparison against `DeviceInfo` will
+    break.
+  - **`DeviceConnectionState` grew from 3 to 4 values** — a new
+    `"unavailable"` state was added. It takes over the subset of iOS
+    devices that previously collapsed into `"offline"` (physically
+    connected but not currently operable — tunnel/DDI/WDA preconditions not
+    met); the existing `"device"` / `"offline"` / `"unauthorized"` keep
+    their prior meanings unchanged.
+  - **`doctor`'s `adb` payload gained `onPath: boolean` and
+    `resolvedPath: string | null`, and `installed`'s meaning changed.**
+    `installed` now means "an executable `adb` was found anywhere" (`PATH`
+    or an SDK-relative fallback), not "`adb version` succeeded on `PATH`".
+    A host with `adb` only under `$ANDROID_HOME/platform-tools` now reports
+    `installed: true` where it previously reported `false`.
+  - **`--device <serial>` now resolves alternate transport serials.** A
+    single physical Android device reachable over more than one `adb`
+    transport at once (USB + wireless IP + mDNS) is merged into one
+    `DeviceInfo` item; `--device` accepts either the representative serial
+    or any of its `alternateSerials`, and any response `serial` field is
+    always normalized to the representative — both on the shared
+    device-targeting path (`resolveTargetDevice`, used by 10 mutating
+    commands) and on `devices --device <serial>`'s own separate filter
+    (`src/cli/commands/devices.ts`, which does not go through the shared
+    path). A serial simultaneously claimed as one item's representative and
+    another item's alternate is rejected (`BACKEND_COMMAND_FAILED`) rather
+    than silently picked.
+  - Implementation: `src/backend/adb-executor.ts` (`resolveAdbPath`),
+    `src/backend/doctor.ts`, `src/schema/device-backend.ts`,
+    `src/backend/wda-device-list.ts`, `src/backend/adb-backend.ts`,
+    `src/backend/device-grouping.ts` (new), `src/cli/device-targeting.ts`,
+    `src/cli/commands/devices.ts`.
+  - Recorded as **19 PASS / 1 unobserved (AC-READY-013) / 0 FAIL** across
+    20 acceptance criteria in
+    `.moai/specs/SPEC-READY-001/progress.md` (§E.3 final roll-up).
+    AC-READY-013 — the sole real-environment confirmation for
+    REQ-READY-004 (physical-device identity merging) and REQ-READY-006
+    (alternate-serial targeting) — could not be observed: reproducing it
+    needs the same Android phone visible over two transports at once
+    (e.g. USB + wireless debugging), which requires the user to enable
+    wireless debugging on the device, and the grouping code had already
+    landed by the time a second transport was sought, so no
+    before/after contrast remains possible. Both requirements' unit-level
+    acceptance criteria (AC-READY-010/011/012/017/020) are PASS; only the
+    real-device final confirmation is open. This is **not** rounded up to
+    "all criteria met" per `acceptance.md` 원칙 ①.

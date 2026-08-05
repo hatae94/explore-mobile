@@ -2,7 +2,7 @@
 id: SPEC-READY-001
 title: "기기·환경 가용성 보고의 정확성 — 구현 계획"
 version: "0.5.2"
-status: in-progress
+status: completed
 created: 2026-08-04
 updated: 2026-08-05
 author: hatae

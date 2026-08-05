@@ -2,7 +2,7 @@
 id: SPEC-READY-001
 title: "기기·환경 가용성 보고의 정확성 — 진행 기록"
 version: "0.5.2"
-status: in-progress
+status: completed
 created: 2026-08-04
 updated: 2026-08-05
 author: hatae
@@ -757,3 +757,33 @@ src/schema/device-backend.ts
 | 백필 수행일 | 2026-08-05 |
 | 대상 파일 | `spec.md`, `plan.md`, `acceptance.md` (frontmatter만) |
 | 근거 | `.claude/rules/moai/development/spec-frontmatter-schema.md` § Status Transition Ownership Matrix |
+
+---
+
+## §E.4 Sync-phase Audit-Ready Signal
+
+```
+sync_complete_at: 2026-08-05
+sync_commit_sha: pending-backfill-SPEC-READY-001-sync   (이 커밋 자신의 해시는 커밋이 만들어지기 전에는 알 수 없다 — 후속 커밋에서 백필한다. spec-frontmatter-schema.md의 SHA placeholder backfill exemption(D3)에 따른 정규 패턴이다)
+sync_status: complete-with-gap   (§E.3의 run_status를 이어받는다 — AC-READY-013 1건 미관측, PASS 19 · FAIL 0 · 미관측 1)
+changelog_entry_position: CHANGELOG.md [Unreleased] 섹션 끝, "### Changed" 새 항목(SPEC-READY-001 전용) — 아래 §sync 산출물 참조
+frontmatter_status_transitions.spec_md: in-progress → completed
+frontmatter_status_transitions.plan_md: in-progress → completed
+frontmatter_status_transitions.acceptance_md: in-progress → completed
+frontmatter_status_transitions.progress_md: in-progress → completed
+```
+
+### sync 산출물
+
+- `CHANGELOG.md` `[Unreleased]` 섹션 끝에 SPEC-READY-001 전용 `### Changed` 항목 추가(breaking-change 4건: `DeviceInfo` 6→8키, `DeviceConnectionState` 3→4값, `doctor`의 `adb.installed` 의미 변경 + `onPath`/`resolvedPath` 신설, `--device`의 부속 시리얼 해석). 사전에 `grep -c 'SPEC-READY-001' CHANGELOG.md` → `0` 확인 후 추가(중복 없음).
+- `README.md` — `devices`·`doctor` 사용 예의 JSON이 갱신 전 6키/구형태였다(§C.1 관측). 8키 `DeviceInfo`(`unavailableReason`·`alternateSerials` 포함)와 `doctor.adb`의 `onPath`/`resolvedPath`를 반영해 갱신. `기기 지정 규칙` 절은 `"device"`만 연결로 센다는 서술이 이미 4값 타입과 일치했으므로 손대지 않았다.
+- `SKILL.md`는 M5(run-phase)가 이미 4개 지점을 갱신·확인 완료(AC-READY-014, 위 §E.2 M5) — sync-phase에서 추가 변경 없음.
+
+### Gaps (미검증)
+
+- `sync_commit_sha`는 이 커밋이 실제로 만들어진 뒤에만 알 수 있다 — placeholder 상태이며 후속 백필 커밋이 채운다(D3 예외 패턴, `SPEC-IMESTATE-001`이 같은 패턴을 쓴 선례가 `git log`에 있다).
+- AC-READY-013(미관측)은 sync-phase에서도 재시도하지 않는다 — run-phase M4가 이미 원칙 ①에 따라 마감한 판정이고, sync-phase의 소관은 문서 동기화이지 재검증이 아니다.
+
+### Residual-risk (잔여 위험)
+
+- CHANGELOG의 breaking-change 서술은 JSON 소비자(다른 스크립트·CI·서드파티)가 `DeviceInfo`/`DeviceConnectionState`/`doctor.adb`/`--device`를 어떻게 소비하는지에 대한 이 저장소 밖의 정보가 없다 — 영향 범위 판단은 소비자 쪽 책임으로 남긴다.

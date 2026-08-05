@@ -109,7 +109,8 @@ JSON 본문이 유일한 계약이다.
 ```bash
 $ npx explore-mobile devices
 {"ok":true,"command":"devices","data":[{"serial":"R3CY106LKVX","model":"SM_S938N",
- "osVersion":"16","connectionState":"device","isEmulator":false,"platform":"android"}]}
+ "osVersion":"16","connectionState":"device","unavailableReason":null,
+ "alternateSerials":[],"isEmulator":false,"platform":"android"}]}
 
 $ npx explore-mobile launch com.android.settings
 {"ok":true,"command":"launch","data":{"serial":"R3CY106LKVX","package":"com.android.settings"}}
@@ -136,7 +137,9 @@ $ npx explore-mobile scroll down
 ```bash
 $ npx explore-mobile doctor
 {"ok":true,"command":"doctor","data":{
-  "adb":{"installed":true,"version":"Android Debug Bridge version 1.0.41"},
+  "adb":{"installed":true,"onPath":false,
+    "resolvedPath":"/Users/me/Library/Android/sdk/platform-tools/adb",
+    "version":"Android Debug Bridge version 1.0.41"},
   "daemon":{"healthy":true},
   "devices":[...],
   "adbKeyboard":{...}}}
@@ -151,8 +154,11 @@ $ npx explore-mobile doctor
 `AMBIGUOUS_DEVICE` 오류가 연결된 시리얼 전부를 나열해 반환한다.
 
 **"연결됨"의 정의**: `devices`가 `connectionState`를 `"device"`로 보고하는
-경우만이다. `offline` / `unauthorized` 항목은 `devices` 목록에는 계속 나오지만
-자동 선택과 모호성 판정에서는 제외된다. Xcode가 설치된 Mac이라면 부팅되지 않은
+경우만이다. `offline` / `unauthorized` / `unavailable` 항목은 `devices`
+목록에는 계속 나오지만 자동 선택과 모호성 판정에서는 제외된다.
+`unavailable`은 물리적으로는 연결돼 있으나 조작 전제(iOS의 터널·DDI·WDA 등)가
+아직 성립하지 않은 상태이며, `unavailableReason`에 원인과 조치가 함께 실린다.
+Xcode가 설치된 Mac이라면 부팅되지 않은
 iOS 시뮬레이터 수십 개가 목록에 함께 나오는데, 이들도 같은 이유로 계수에서
 빠진다. 다만 **목록 자체에서 숨기지는 않는다** — 전체 그림은 `devices` 출력과
 대조해 보면 된다.
