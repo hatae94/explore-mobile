@@ -19,6 +19,7 @@ function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
     osVersion: "14",
     connectionState: "device",
     unavailableReason: null,
+    alternateSerials: [],
     isEmulator: false,
     platform: "android",
     ...overrides,

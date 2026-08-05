@@ -87,6 +87,32 @@ function connectedOnly(devices: DeviceInfo[]): DeviceInfo[] {
 }
 
 /**
+ * `requestedSerial`이 `device`의 대표 시리얼이거나 부속 시리얼 중 하나면
+ * 참이다 (SPEC-READY-001 REQ-READY-006, §B.6). 그룹핑(REQ-READY-004)이
+ * 만드는 회귀를 닫는 지점 — 이 술어 하나로 조회 범위와 충돌 판정이 함께
+ * 넓어진다.
+ */
+export function matchesRequestedSerial(device: DeviceInfo, requestedSerial: string): boolean {
+  return device.serial === requestedSerial || device.alternateSerials.includes(requestedSerial);
+}
+
+/**
+ * 한 시리얼이 둘 이상 기기 항목에 걸릴 때의 오류 문구 (§B.6.2). 경로 A
+ * (`resolveTargetDevice`)와 경로 B(`devicesCommand`)가 이 문구를 공유한다
+ * — 같은 사건("요청 시리얼이 한 기기로 특정되지 않는다")에 경로마다 다른
+ * 문구를 내면 안 된다는 §B.6.3의 원칙 그대로다.
+ *
+ * 코드(`BACKEND_COMMAND_FAILED`)는 이전 그대로 유지한다 — 이 사건은 오늘도
+ * 이 코드로 거부되던 것과 같은 사건이며(요청 시리얼이 한 기기로 특정되지
+ * 않는다), 그룹핑으로 적용 범위가 넓어졌다고 해서 다른 사건이 된 것은
+ * 아니다. 문구만 고친다: 이전 문구("No backend owns…")는 백엔드 소유권을
+ * 말했는데, 부속 시리얼 충돌은 소유권과 무관한 사건이다.
+ */
+export function collidingSerialMessage(requestedSerial: string, matchCount: number): string {
+  return `Serial '${requestedSerial}' matches ${matchCount} device entries (it is the representative or an alternate serial of more than one device). Run 'devices' to see the current grouping and specify an unambiguous serial.`;
+}
+
+/**
  * 확정된 기기의 소유 백엔드를 붙인다. 소유자를 알 수 없으면 실패로
  * 승격한다 — 아무 백엔드로나 보내지 않는다.
  *
@@ -136,7 +162,7 @@ export function resolveTargetDevice(
   lookup: BackendOwnerLookup,
 ): DeviceTargetResolution {
   if (requestedSerial !== undefined) {
-    const matches = devices.filter((d) => d.serial === requestedSerial);
+    const matches = devices.filter((d) => matchesRequestedSerial(d, requestedSerial));
 
     if (matches.length === 0) {
       return {
@@ -151,7 +177,7 @@ export function resolveTargetDevice(
       return {
         ok: false,
         code: "BACKEND_COMMAND_FAILED",
-        message: `No backend owns device serial '${requestedSerial}'.`,
+        message: collidingSerialMessage(requestedSerial, matches.length),
         details: { requestedSerial, collidingEntries: matches.length },
       };
     }

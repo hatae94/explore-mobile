@@ -140,6 +140,21 @@ export interface DeviceInfo {
    * connection states (SPEC-CONTRACT-001).
    */
   unavailableReason: string | null;
+  /**
+   * Other transport serials that identify the SAME physical device
+   * (SPEC-READY-001 REQ-READY-004, M3). Populated only for `AdbBackend` —
+   * a single physical Android device can be reachable over more than one
+   * `adb` transport (USB + wireless IP + mDNS) at once, and those
+   * transports are merged into one `DeviceInfo` item keyed by `ro.serialno`
+   * (see `groupDevicesByPhysicalIdentity` in `backend/device-grouping.ts`).
+   * `serial` above is the REPRESENTATIVE transport (lexicographically first
+   * among the group); this field holds the rest. iOS (`devicectl`) never
+   * has more than one transport per device, so `WdaBackend` always emits an
+   * empty array here. Always present (never conditionally omitted) — same
+   * field-set-contract reasoning as `unavailableReason` above
+   * (SPEC-CONTRACT-001).
+   */
+  alternateSerials: string[];
   /** True for an emulator/simulator, false for a physical device. */
   isEmulator: boolean;
   /** Which backend owns this device (REQ-IOS-SCHEMA-001, additive field). */

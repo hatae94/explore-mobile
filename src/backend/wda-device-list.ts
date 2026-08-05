@@ -124,6 +124,10 @@ export function parseDevicectlDevices(raw: unknown): DeviceInfo[] {
       osVersion: stringField(device.deviceProperties?.osVersionNumber),
       connectionState,
       unavailableReason: connectionState === "unavailable" ? deriveUnavailableReason(rawTunnelState) : null,
+      // devicectl은 기기를 UDID 하나로만 열거한다 — 합칠 다른 전송이 없으므로
+      // 항상 빈 배열이다. 필드 자체는 키 집합 고정을 위해 항상 실린다
+      // (SPEC-READY-001 §B.4.1).
+      alternateSerials: [],
       // devicectl은 실기기만 열거한다 — 시뮬레이터는 simctl 소관이고
       // 이 SPEC에서 제외하기로 결정했다.
       isEmulator: false,

@@ -35,6 +35,7 @@ import { spawnAdb } from "./adb-executor.js";
 import type { ApkAcquirer } from "./apk-downloader.js";
 import { createApkAcquirer } from "./apk-downloader.js";
 import { parseAdbDevicesList } from "./device-list-parser.js";
+import { groupDevicesByPhysicalIdentity } from "./device-grouping.js";
 import { ImeSessionStore } from "./ime-session-store.js";
 import { AdbKeyboardInstallFailedError, ImeBindTimeoutError } from "./ime-errors.js";
 import type { InputMethodBindingState } from "./ime-binding-parser.js";
@@ -285,12 +286,28 @@ export class AdbBackend implements DeviceBackend {
     await this.imeSessions.clearOriginalIme(serial);
   }
 
+  /**
+   * REQ-READY-004 (SPEC-READY-001 §B.4/§B.4.1, M3): a single physical
+   * Android device can be reachable over more than one `adb` transport
+   * (USB + wireless IP + mDNS) at once. This method both QUERIES each
+   * connected transport's `ro.serialno` (the ONLY class with `this.exec`,
+   * §B.4.1's rejected-alternatives table) and GROUPS the result — the
+   * grouping rule itself is a pure function (`device-grouping.ts`),
+   * unit-testable without a real device.
+   *
+   * Cost constraint (§D): `ro.serialno` is queried AT MOST ONCE per
+   * transport, and ONLY for transports whose state is `"device"` — same
+   * condition the pre-existing `ro.build.version.release` query already
+   * uses. `listAllDevices()` remains the single enumeration point
+   * (REQ-VISION-005); this method makes zero additional calls to it.
+   */
   async listDevices(): Promise<DeviceInfo[]> {
     const listResult = await this.exec(["devices", "-l"]);
     assertSuccess(listResult, "devices -l");
 
     const entries = parseAdbDevicesList(listResult.stdout.toString("utf-8"));
     const devices: DeviceInfo[] = [];
+    const identifiers = new Map<string, string>();
 
     for (const entry of entries) {
       let osVersion = "";
@@ -306,6 +323,16 @@ export class AdbBackend implements DeviceBackend {
         if (propResult.exitCode === 0) {
           osVersion = propResult.stdout.toString("utf-8").trim();
         }
+
+        const serialnoResult = await this.exec(["-s", entry.serial, "shell", "getprop", "ro.serialno"]);
+        if (serialnoResult.exitCode === 0) {
+          const physicalSerial = serialnoResult.stdout.toString("utf-8").trim();
+          if (physicalSerial.length > 0) {
+            identifiers.set(entry.serial, physicalSerial);
+          }
+        }
+        // 조회 실패 시 identifiers에 등록하지 않는다 — groupDevicesByPhysicalIdentity가
+        // 그 경우를 "합치지 않고 독립 항목으로 남긴다"로 처리한다(§B.4).
       }
 
       devices.push({
@@ -318,12 +345,16 @@ export class AdbBackend implements DeviceBackend {
         // Android never produces "unavailable" — that value is iOS-only
         // (SPEC-READY-001 §B.3). Always present, per the field-set contract.
         unavailableReason: null,
+        // groupDevicesByPhysicalIdentity fills this in for merged items;
+        // an un-grouped transport keeps the empty array (field-set
+        // contract, §B.4.1).
+        alternateSerials: [],
         isEmulator: entry.isEmulator,
         platform: "android",
       });
     }
 
-    return devices;
+    return groupDevicesByPhysicalIdentity(devices, identifiers);
   }
 
 

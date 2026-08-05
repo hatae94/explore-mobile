@@ -100,7 +100,7 @@ describe("AdbBackend", () => {
   });
 
   describe("listDevices", () => {
-    it("calls 'adb devices -l' then 'getprop ro.build.version.release' per connected device (REQ-DEVICES-001)", async () => {
+    it("calls 'adb devices -l' then 'getprop ro.build.version.release' + 'getprop ro.serialno' per connected device (REQ-DEVICES-001, REQ-READY-004)", async () => {
       const exec = vi
         .fn<AdbExecutor>()
         .mockResolvedValueOnce(
@@ -109,7 +109,8 @@ describe("AdbBackend", () => {
               "emulator-5554          device product:sdk model:sdk_gphone64_arm64 device:emu64a transport_id:1\n",
           ),
         )
-        .mockResolvedValueOnce(ok("14\n"));
+        .mockResolvedValueOnce(ok("14\n"))
+        .mockResolvedValueOnce(ok("EMULATOR5554SERIAL\n"));
 
       const backend = new AdbBackend(exec);
       const devices = await backend.listDevices();
@@ -122,6 +123,7 @@ describe("AdbBackend", () => {
         "getprop",
         "ro.build.version.release",
       ]);
+      expect(exec).toHaveBeenNthCalledWith(3, ["-s", "emulator-5554", "shell", "getprop", "ro.serialno"]);
       expect(devices).toEqual([
         {
           serial: "emulator-5554",
@@ -129,13 +131,14 @@ describe("AdbBackend", () => {
           osVersion: "14",
           connectionState: "device",
           unavailableReason: null,
+          alternateSerials: [],
           isEmulator: true,
           platform: "android",
         },
       ]);
     });
 
-    it("does not query getprop for offline/unauthorized devices", async () => {
+    it("does not query getprop (osVersion or ro.serialno) for offline/unauthorized devices", async () => {
       const exec = vi.fn<AdbExecutor>().mockResolvedValueOnce(
         ok("List of devices attached\n" + "R58N90ABCDE             offline\n"),
       );
@@ -151,6 +154,7 @@ describe("AdbBackend", () => {
           osVersion: "",
           connectionState: "offline",
           unavailableReason: null,
+          alternateSerials: [],
           isEmulator: false,
           platform: "android",
         },
@@ -163,7 +167,8 @@ describe("AdbBackend", () => {
         .mockResolvedValueOnce(
           ok("List of devices attached\n" + "R58N90ABCDE             device model:Pixel_7\n"),
         )
-        .mockResolvedValueOnce(fail("adb: getprop failed", 1));
+        .mockResolvedValueOnce(fail("adb: getprop failed", 1))
+        .mockResolvedValueOnce(ok("R58N90ABCDE\n"));
 
       const backend = new AdbBackend(exec);
       const devices = await backend.listDevices();
@@ -180,6 +185,89 @@ describe("AdbBackend", () => {
       const devices = await backend.listDevices();
 
       expect(devices[0]?.connectionState).toBe("offline");
+    });
+
+    describe("SPEC-READY-001 §B.4/§B.4.1 — 물리 기기 단위 그룹핑 (REQ-READY-004, M3)", () => {
+      it("AC-READY-010/011/013 — 같은 ro.serialno를 반환하는 두 전송이 항목 1개로 합쳐진다", async () => {
+        const ipTransport = "192.168.219.106:36807";
+        const mdnsTransport = "adb-R3CY106LKVX-xtn5zd (2)._adb-tls-connect._tcp";
+        const exec = vi
+          .fn<AdbExecutor>()
+          .mockResolvedValueOnce(
+            ok(
+              "List of devices attached\n" +
+                `${ipTransport}                              device model:SM_S938N\n` +
+                `${mdnsTransport}   device model:SM_S938N\n`,
+            ),
+          )
+          // ipTransport: osVersion, then ro.serialno
+          .mockResolvedValueOnce(ok("16\n"))
+          .mockResolvedValueOnce(ok("R3CY106LKVX\n"))
+          // mdnsTransport: osVersion, then ro.serialno
+          .mockResolvedValueOnce(ok("16\n"))
+          .mockResolvedValueOnce(ok("R3CY106LKVX\n"));
+
+        const backend = new AdbBackend(exec);
+        const devices = await backend.listDevices();
+
+        expect(devices).toHaveLength(1);
+        expect(devices[0]?.serial).toBe(ipTransport);
+        expect(devices[0]?.alternateSerials).toEqual([mdnsTransport]);
+      });
+
+      it("AC-READY-012 — ro.serialno 조회가 실패한 전송은 합치지 않고 독립 항목으로 남긴다", async () => {
+        const transportA = "192.168.219.106:36807";
+        const transportB = "R58N90ABCDE";
+        const exec = vi
+          .fn<AdbExecutor>()
+          .mockResolvedValueOnce(
+            ok(
+              "List of devices attached\n" +
+                `${transportA}   device model:SM_S938N\n` +
+                `${transportB}             device model:Pixel_7\n`,
+            ),
+          )
+          // transportA: osVersion ok, ro.serialno ok
+          .mockResolvedValueOnce(ok("16\n"))
+          .mockResolvedValueOnce(ok("R3CY106LKVX\n"))
+          // transportB: osVersion ok, ro.serialno FAILS
+          .mockResolvedValueOnce(ok("14\n"))
+          .mockResolvedValueOnce(fail("adb: getprop failed", 1));
+
+        const backend = new AdbBackend(exec);
+        const devices = await backend.listDevices();
+
+        expect(devices).toHaveLength(2);
+        expect(devices.every((d) => d.alternateSerials.length === 0)).toBe(true);
+      });
+
+      it("§D 비용 제약 — 연결된 전송마다 ro.serialno를 최대 1회만 조회하고, 열거(devices -l) 호출은 1회다", async () => {
+        const transportA = "R58N90ABCDE";
+        const transportB = "R3CY106LKVX";
+        const exec = vi
+          .fn<AdbExecutor>()
+          .mockResolvedValueOnce(
+            ok(
+              "List of devices attached\n" +
+                `${transportA}             device model:Pixel_7\n` +
+                `${transportB}             offline\n`,
+            ),
+          )
+          .mockResolvedValueOnce(ok("14\n"))
+          .mockResolvedValueOnce(ok("R58N90ABCDE\n"));
+
+        const backend = new AdbBackend(exec);
+        await backend.listDevices();
+
+        // 열거(devices -l) 1 + 연결된 전송 1개당(osVersion + ro.serialno) 2 = 3.
+        // offline 전송(transportB)에는 어느 getprop도 호출되지 않는다.
+        expect(exec).toHaveBeenCalledTimes(3);
+        const serialnoCalls = exec.mock.calls.filter(
+          (call) => call[0][3] === "getprop" && call[0][4] === "ro.serialno",
+        );
+        expect(serialnoCalls).toHaveLength(1);
+        expect(serialnoCalls[0]?.[0]?.[1]).toBe(transportA);
+      });
     });
   });
 

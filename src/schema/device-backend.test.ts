@@ -28,18 +28,19 @@ describe("DeviceBackend interface (type-level)", () => {
     expect(Object.keys(methodPresence)).toHaveLength(10);
   });
 
-  it("DeviceInfo.platform is additive alongside the pre-existing 5 fields (REQ-IOS-SCHEMA-001, AC-IOS-001); unavailableReason added by SPEC-READY-001 M2 (REQ-READY-003, AC-READY-015)", () => {
+  it("DeviceInfo.platform is additive alongside the pre-existing 5 fields (REQ-IOS-SCHEMA-001, AC-IOS-001); unavailableReason added by SPEC-READY-001 M2 (REQ-READY-003, AC-READY-015); alternateSerials added by SPEC-READY-001 M3 (REQ-READY-004, AC-READY-015)", () => {
     const fieldPresence: Record<keyof DeviceInfo, true> = {
       serial: true,
       model: true,
       osVersion: true,
       connectionState: true,
       unavailableReason: true,
+      alternateSerials: true,
       isEmulator: true,
       platform: true,
     };
 
-    expect(Object.keys(fieldPresence)).toHaveLength(7);
+    expect(Object.keys(fieldPresence)).toHaveLength(8);
   });
 
   it("DevicePlatform is exactly the 2-value union android|ios", () => {

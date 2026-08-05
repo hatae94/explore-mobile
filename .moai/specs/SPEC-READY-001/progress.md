@@ -332,3 +332,122 @@ $ git log --oneline 04fb196..HEAD -- src/backend/ime-session-store.ts src/backen
 
 - `UNAVAILABLE_REASON_GUIDANCE` 매핑표는 알려진 값 3개만 다룬다 — `spec.md` §C.1-②가 명시하듯 새 `tunnelState` 값이 언제든 나타날 수 있고, 규칙 2(원문만)가 그 경우를 안전하게 흡수하지만 안내 문구 자체는 없다. 이는 설계상 의도된 한계다(§B.3.1).
 - `unavailableReason`의 정확한 원본 값 일치는 실기기(AC-READY-019)에서만 최종 확인된다 — 현재는 픽스처 기반 unit 검증뿐이다.
+
+---
+
+## §E.2 Run-phase Evidence — M3
+
+### 착수 전 사전 점검 (2026-08-05)
+
+```
+$ git rev-parse HEAD → 06a4270799f4fa125a2fa4cc34fd1664a59e4998 (M2 HEAD, 이 마일스톤의 시작점)
+$ pnpm test    → Test Files 27 passed (27) / Tests 597 passed (597)
+$ grep -n "getprop" src/backend/adb-backend.ts → :303 1건(비용 기준선, 연결된 기기마다 ro.build.version.release 1회)
+$ grep -rn "No backend owns device serial" src/ --include='*.test.ts' → device-targeting.test.ts:238(COLLIDING), :251(A) 2건
+```
+
+`plan.md` §E는 `$BASE=04fb196`(M1 이전 기준선)을 계속 쓴다 — M1·M2가 그렇게 기록했고, 이 절도 그 기준을 그대로 따른다.
+
+### M3 구현 요약
+
+- `src/schema/device-backend.ts` — `DeviceInfo`에 `alternateSerials: string[]` 추가(§B.4 — 항상 존재, 합칠 대상이 없으면 빈 배열). 키 집합 7 → 8.
+- `src/backend/device-grouping.ts` (신설) — 그룹핑 규칙을 순수 함수로 분리(§B.4.1, §F M3): `groupDevicesByPhysicalIdentity(devices, identifiers)`. 입력은 `(전송 목록, 전송→ro.serialno 맵)`, 출력은 합쳐진 목록. 식별자 맵에 없는 전송(조회 안 함 또는 조회 실패)은 독립 항목으로 남긴다(§B.4 — 두 경우의 처분이 같다). 그룹 안에서는 전송 시리얼 사전순 정렬 후 첫 번째를 대표로 삼는다(입력 순서 무관 — AC-READY-011).
+- `src/backend/adb-backend.ts` — `listDevices()`가 `state === "device"`인 전송에만 `getprop ro.serialno`를 추가로 조회하고(§D 비용 제약: 전송당 최대 1회, 연결된 전송만), 조회 결과를 `groupDevicesByPhysicalIdentity`에 넘겨 반환한다. `registry.ts`와 `DeviceBackend` 인터페이스는 무변경(§B.4.1 확정대로).
+- `src/backend/wda-device-list.ts` — `:121-131`의 iOS `DeviceInfo` 리터럴에 `alternateSerials: []` 추가(합칠 대상이 없어 항상 빈 배열이지만 키 집합 고정을 위해 항상 싣는다).
+- `src/cli/device-targeting.ts` — `matchesRequestedSerial(device, requestedSerial)` 신설(대표 또는 부속 시리얼 매치)로 `:139`의 조회를 넓힌다(REQ-READY-006). `collidingSerialMessage(requestedSerial, matchCount)` 신설로 충돌 분기(`:150`)의 오류 **문구만** 고친다 — 코드(`BACKEND_COMMAND_FAILED`)는 유지(§B.6.2). `withOwner()`의 "소유 백엔드 미등록" 메시지는 별개 사건이므로 손대지 않았다(아래 §H 참조). `withOwner`는 무수정(§B.6.1 — 넓어진 조회가 자연히 정규화를 만든다).
+- `src/cli/commands/devices.ts` (경로 B, §A.2 예외 승격) — `matchesRequestedSerial`/`collidingSerialMessage`를 재사용해 같은 세 규칙(조회 범위·정규화·충돌 거부)을 적용한다. 연결 상태 검사는 하지 않는다(§B.6.3 마지막 행 — 의도적 차이, 무변경).
+- `.claude/skills/explore-mobile/SKILL.md` — `:115-121`(현 라인) `devices` JSON 예시에 `alternateSerials` 반영 + 다중 전송 병합 설명 한 단락 추가. `§ Command reference`의 `devices` 행 등 전체 문서 동기화는 M5 소관.
+
+### 고정 지점 처리 결과
+
+- `src/schema/device-backend.test.ts:32-43` — 키 집합 계약 7 → **8**(`alternateSerials` 추가, `toHaveLength(8)`).
+- `src/backend/registry.test.ts`, `src/cli/enumeration.test.ts`, `src/cli/commands/swipe.test.ts`, `src/cli/commands/scroll.test.ts`, `src/cli/router.test.ts`의 `DeviceInfo` 팩토리에 `alternateSerials: []` 추가 — `pnpm typecheck`가 지목한 5개 파일.
+- `src/backend/adb-backend.test.ts`의 `toEqual` 정확 비교 리터럴 2곳(`device`/`offline`)에 `alternateSerials: []` 추가 — `pnpm test`가 런타임에 지목했다(§H 참조, M2와 같은 유형).
+- `src/backend/wda-device-list.test.ts`의 `toEqual` 정확 비교 리터럴 2곳에 `alternateSerials: []` 추가 + AC-READY-009 테스트를 확장해 `AdbBackend`의 `unauthorized` 산출물과 실제로 교차 비교(1차 감사 D4 — 손으로 만든 리터럴 비교는 이 AC를 만족하지 않는다).
+- `src/cli/device-targeting.test.ts:20`의 `device()` 팩토리에 `alternateSerials` 4번째 인자(기본값 `[]`) 추가.
+- **충돌 문구 단언 — 예상과 달랐던 지점(§H 참조)**: 계획서(§A.1)는 `device-targeting.test.ts:238`과 `:251` 둘 다 깨진다고 적었으나, 실제로는 `:238`(충돌 분기, `matches.length > 1`)만 깨졌다. `:251`은 `withOwner()`의 "소유 백엔드 미등록" 메시지를 검사하는 별개 시나리오이고, 이 메시지는 §B.6.2가 고치라는 대상이 아니어서 손대지 않았다 — 그래서 그 단언은 그대로 통과한다. 아래 §H에 정정 기록을 남긴다.
+
+### AC PASS/FAIL 매트릭스 (M3 대상 — AC-READY-009·010·011·012·015·017·020; AC-013은 e2e·manual, M4 Gap)
+
+| AC | 검증 방식 | 상태 | 근거 |
+|---|---|---|---|
+| AC-READY-009 | unit | **PASS** (M2의 PASS-WITH-DEBT 마감) | `src/backend/wda-device-list.test.ts` "AC-READY-009" — `parseDevicectlDevices()`의 세 상태(M2)에 더해, `AdbBackend.listDevices()`가 만드는 `unauthorized` 산출물과 실제로 교차 비교. `Command: pnpm vitest run -t "AC-READY-009"` → `Test Files 1 passed / Tests 1 passed`, exit 0 |
+| AC-READY-010 | unit | **PASS** | `src/backend/device-grouping.test.ts` "AC-READY-010/011/013" 2건 + `src/backend/adb-backend.test.ts` "AC-READY-010/011/013 — 같은 ro.serialno를 반환하는 두 전송이 항목 1개로 합쳐진다"(AdbBackend 통합 수준). `Command: pnpm vitest run device-grouping.test.ts adb-backend.test.ts` → 전건 PASS |
+| AC-READY-011 | unit | **PASS** | `device-grouping.test.ts` "AC-READY-011 — 대표 전송 선택은 입력 순서를 뒤집어도 결정적이다" — 순방향·역방향 입력의 대표 `serial`·`alternateSerials`가 동일함을 확인 |
+| AC-READY-012 | unit | **PASS** | `device-grouping.test.ts` "AC-READY-012" + `adb-backend.test.ts` "AC-READY-012 — ro.serialno 조회가 실패한 전송은 합치지 않고 독립 항목으로 남긴다"(AdbBackend 통합 수준, exec가 두 번째 전송의 getprop을 `fail()`로 응답) |
+| AC-READY-015 | unit | **PASS** (7→8 최종 갱신) | `device-backend.test.ts:32-43`의 `Record<keyof DeviceInfo, true>`에 `alternateSerials` 포함, `toHaveLength(8)` |
+| AC-READY-017 | unit | **PASS** | 경로 A: `device-targeting.test.ts` "AC-READY-017 — 대표 시리얼과 부속 시리얼 어느 쪽으로 지정해도 같은 기기가 대상이 되고, 반환 serial은 대표로 정규화된다" — ①②③④ 전부 확인(대표/부속 각각 호출 성공, 같은 `device`, `DEVICE_NOT_FOUND` 아님, 반환 `serial`이 대표). 경로 B: `router.test.ts` "AC-READY-017 경로 B — 부속 시리얼로도 조회가 성공하고 대표로 정규화된다" — `devicesCommand`가 부속 시리얼로 병합된 항목 자체(대표 `serial` 포함)를 돌려줌을 확인 |
+| AC-READY-020 | unit | **PASS** | 경로 A: `device-targeting.test.ts` "AC-READY-020 — 한 시리얼이 A 항목의 대표이면서 동시에 B 항목의 부속이면 거부하고 임의로 고르지 않는다" — 코드 `BACKEND_COMMAND_FAILED` + 새 문구 + `collidingEntries: 2`. 경로 B: `router.test.ts` "AC-READY-020 경로 B" — 같은 코드·문구·details를 `devicesCommand`에서 확인 |
+| AC-READY-013 | e2e·manual | **Gap (M4 소관)** | 위임 지시대로 M3에서는 claim하지 않는다 |
+
+### §D 비용 제약 증거
+
+```
+$ pnpm vitest run adb-backend.test.ts -t "§D 비용 제약"
+```
+`src/backend/adb-backend.test.ts` "§D 비용 제약 — 연결된 전송마다 ro.serialno를 최대 1회만 조회하고, 열거(devices -l) 호출은 1회다" — 연결 전송 1개 + offline 전송 1개를 섞은 픽스처로 exec 총 호출 3회(목록 1 + osVersion 1 + ro.serialno 1)를 확인하고, `ro.serialno` 호출이 정확히 1건이며 그 인자가 연결된 전송의 serial임을 확인. **PASS**.
+
+`cli/enumeration.test.ts`(REQ-VISION-005, `listAllDevices()` 호출 횟수)는 M3에서 무수정으로 전건(15/15) 통과 — 그룹핑이 `AdbBackend.listDevices()` 내부에서 끝나므로 `registry.listAllDevices()`의 호출 횟수에 영향을 주지 않는다는 §B.4.1의 주장을 실측으로 확인했다.
+
+### 양쪽 경로가 실제로 넓어졌다는 증거 (경로 B 실행 확인)
+
+`router.test.ts`의 두 신규 테스트(AC-READY-017/020 경로 B)는 `devicesCommand`(경로 B)를 `runCli(["devices", "--device", ...], backend)`로 직접 실행한다 — 경로 A(`resolveTargetDevice`)를 거치지 않고 `devices.ts:14`의 자체 필터가 실제로 호출된다. 5차례의 감사가 반복해서 돌아온 지점("경로 B만 여전히 깨진 채 남는다")이 이번에는 두 AC 모두에서 실행됐다.
+
+### Toolchain 실행 결과
+
+```
+$ pnpm test        → Test Files 28 passed (28) / Tests 611 passed (611)   (기준선 597 + 신규 14)
+$ pnpm typecheck   → exit 0
+$ pnpm build       → exit 0
+```
+
+### §E 자체 검증 ($BASE=04fb196, $TOUCHED=src/schema/device-backend.ts)
+
+```
+$ grep -n "DeviceConnectionState =" src/schema/device-backend.ts
+42:export type DeviceConnectionState = "device" | "offline" | "unauthorized" | "unavailable";   (4값, M2 이후 무변경 — M3은 이 타입을 건드리지 않는다)
+
+$ git diff --name-only 04fb196..HEAD -- src/schema/device-backend.ts   → src/schema/device-backend.ts (① 양성 대조 — 출력 있음, 통과)
+$ git diff --name-only 04fb196..HEAD -- src/backend/ime-session-store.ts src/backend/apk-downloader.ts   → (출력 없음, ② 본 검사 통과)
+
+$ pnpm vitest run -t "connectionState"
+```
+(③-a/③-b는 커밋 후 재확인 — 아래 커밋 절 참조)
+
+### 확정 열거 도구 재확인 (probe ①·④)
+
+```
+$ grep -rln "DeviceInfo" src/ | grep '\.test\.ts$' | sort
+src/backend/device-grouping.test.ts
+src/backend/registry.test.ts
+src/backend/wda-device-list.test.ts
+src/cli/commands/scroll.test.ts
+src/cli/commands/swipe.test.ts
+src/cli/device-targeting.test.ts
+src/cli/enumeration.test.ts
+src/cli/router.test.ts
+src/schema/command-payloads.test.ts   ← 주석 한 줄에만 걸린 오탐(§A.1.1이 예고한 맹점 그대로) — 실제 리터럴 없음, 무수정
+src/schema/device-backend.test.ts
+
+$ grep -rn "No backend owns device serial" src/ --include='*.test.ts'
+src/cli/device-targeting.test.ts:264   (withOwner() 시나리오 — §B.6.2가 고치라는 대상이 아니므로 무수정, 그대로 통과)
+```
+
+### §H 계획 대비 실측 격차 — 계획이 놓친(과잉 예상한) 지점
+
+`plan.md` §A.1은 `device-targeting.test.ts:238`과 `:251` **둘 다** 충돌 문구 변경으로 깨진다고 적었다. 실제로 코드를 읽어 보니 두 줄은 서로 다른 함수를 검사한다 — `:238`은 `resolveTargetDevice`의 `matches.length > 1` 충돌 분기(§B.6.2가 고치라는 대상), `:251`(현재 `:264`)은 `withOwner()`의 "소유 백엔드가 등록돼 있지 않다" 분기(플랫폼에 백엔드가 없다는, 시리얼 충돌과 무관한 별개 사건)다. 두 함수는 우연히 **같은 텍스트**("No backend owns device serial 'X'.")를 내고 있었을 뿐이다. §B.6.2는 충돌 사건의 문구만 고치라고 하므로, `withOwner()`의 문구는 그대로 두는 것이 맞다 — 고쳤다면 시리얼 충돌과 무관한 사건의 사용자 메시지를 근거 없이 바꾸는 것이었다(AC-READY-020의 범위 밖). 실제로 `pnpm test` 실행 결과 `:251`(→`:264`) 단언은 무수정 상태로 그대로 통과했다 — 이번 회차의 실측이 계획의 과잉 예상을 확인했다(§A.1.1이 스스로 "확정 열거는 도구가 한다"고 적은 것과 같은 성격 — 문서 목록은 근사치다).
+
+### 실기기 관측 (참고, M4 미대체)
+
+M3 범위는 순수 함수(`device-grouping.ts`)와 mock exec 기반 unit 테스트로 전건 판정했다 — §F M3이 요구하는 "실기기 없이 판정 가능"을 그대로 따랐다. AC-READY-013(실기기 중복 전송 확인, REQ-READY-006의 실환경 판정)은 M4 소관으로 이월한다(원칙 ①, PASS로 계상하지 않음).
+
+### Gaps (미검증)
+
+- AC-READY-013(실기기 e2e·manual)은 M4 소관 — 여전히 미착수.
+- M5 문서 동기화(`SKILL.md`의 `§ Command reference` `devices` 행 등)는 여전히 미착수.
+- M4 실기기 검증(AC-READY-019 등)은 여전히 미착수.
+
+### Residual-risk (잔여 위험)
+
+- 그룹핑 규칙(사전순 대표 선택)은 재연결을 가로지르는 안정성을 주지 않는다 — `plan.md` §B.4가 명시적으로 인정하는 한계이며 이 SPEC의 범위 밖이다(spec.md §D.2).
+- `collidingSerialMessage()`의 정확한 문구는 이 SPEC이 자유롭게 선택한 것이다(§B.5 — REQ-READY-006 자유도 "없음"으로 닫혀 있지만, AC-READY-020은 코드만 못박고 문구 자체의 정확한 표현은 열어 둔다). `SKILL.md`의 오류 코드 표에 이 문구가 반영돼 있는지는 M5에서 확인한다.

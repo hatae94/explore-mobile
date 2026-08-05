@@ -16,8 +16,18 @@ function device(
   serial: string,
   platform: DevicePlatform = "android",
   connectionState: DeviceConnectionState = "device",
+  alternateSerials: string[] = [],
 ): DeviceInfo {
-  return { serial, model: "m", osVersion: "14", connectionState, unavailableReason: null, isEmulator: false, platform };
+  return {
+    serial,
+    model: "m",
+    osVersion: "14",
+    connectionState,
+    unavailableReason: null,
+    alternateSerials,
+    isEmulator: false,
+    platform,
+  };
 }
 
 /**
@@ -232,10 +242,13 @@ describe("resolveTargetDevice — 소유 백엔드 확정 (M5)", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      // facade가 throw하던 것과 같은 코드·문구를 유지한다 — 검출 시점만
-      // 앞당겼을 뿐 사용자가 보는 계약은 그대로다.
+      // 코드는 그대로 유지한다 — 검출 시점만 앞당겼을 뿐 사용자가 보는
+      // 계약은 그대로다. 문구는 SPEC-READY-001 §B.6.2가 바꾸라고 한다 —
+      // 이전 문구("No backend owns…")는 백엔드 소유권을 말했는데, 부속
+      // 시리얼 충돌은 소유권과 무관한 사건이다(AC-READY-020).
       expect(result.code).toBe("BACKEND_COMMAND_FAILED");
-      expect(result.message).toBe("No backend owns device serial 'COLLIDING'.");
+      expect(result.message).toContain("matches 2 device entries");
+      expect(result.message).not.toContain("No backend owns");
       expect(result.details?.["collidingEntries"]).toBe(2);
     }
   });
@@ -267,5 +280,50 @@ describe("resolveTargetDevice — 소유 백엔드 확정 (M5)", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("DEVICE_NOT_CONNECTED");
     expect(looked).toBe(0);
+  });
+});
+
+// ── SPEC-READY-001 §B.6 — 부속 시리얼 대상 조회 (REQ-READY-006, M3) ──
+//
+// 그룹핑(REQ-READY-004)이 대표가 아닌 전송 시리얼을 어떤 항목의 `serial`도
+// 아니게 만들므로, 이 describe는 부속 시리얼로도 조회가 성공하고(AC-017
+// 경로 A) 대표로 정규화되는지, 그리고 넓어진 조회가 만드는 충돌도 여전히
+// 거부되는지(AC-020 경로 A)를 검사한다.
+describe("resolveTargetDevice — 부속 시리얼 대상 조회 (REQ-READY-006, AC-READY-017/020 경로 A)", () => {
+  it("AC-READY-017 — 대표 시리얼과 부속 시리얼 어느 쪽으로 지정해도 같은 기기가 대상이 되고, 반환 serial은 대표로 정규화된다", () => {
+    const merged = device("REPRESENTATIVE", "android", "device", ["ALTERNATE-1", "ALTERNATE-2"]);
+    const devices = [merged];
+
+    const byRepresentative = resolveTargetDevice(devices, "REPRESENTATIVE", lookup);
+    const byAlternate = resolveTargetDevice(devices, "ALTERNATE-1", lookup);
+
+    expect(byRepresentative.ok).toBe(true);
+    expect(byAlternate.ok).toBe(true);
+    if (byRepresentative.ok && byAlternate.ok) {
+      // ④ 반환 항목의 serial이 대표 시리얼이다 — 부속으로 지정해도
+      // 요청한 값이 아니라 대표 값이 돌아온다(§B.6.1).
+      expect(byRepresentative.serial).toBe("REPRESENTATIVE");
+      expect(byAlternate.serial).toBe("REPRESENTATIVE");
+      // ② 두 호출이 같은 기기 항목을 돌려준다.
+      expect(byRepresentative.device).toEqual(byAlternate.device);
+    }
+  });
+
+  it("AC-READY-020 — 한 시리얼이 A 항목의 대표이면서 동시에 B 항목의 부속이면 거부하고 임의로 고르지 않는다", () => {
+    // S가 A의 대표이면서 동시에 B의 부속인 상태 — 올바른 그룹핑에서는
+    // 생기지 않지만, 그룹핑이 깨졌을 때 "일어난다면 조용히 아무거나
+    // 고르지 않는다"를 검사한다(acceptance.md AC-READY-020).
+    const deviceA = device("S", "android", "device", []);
+    const deviceB = device("OTHER", "android", "device", ["S"]);
+    const devices = [deviceA, deviceB];
+
+    const result = resolveTargetDevice(devices, "S", lookup);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("BACKEND_COMMAND_FAILED");
+      expect(result.message).toContain("matches 2 device entries");
+      expect(result.details?.["collidingEntries"]).toBe(2);
+    }
   });
 });

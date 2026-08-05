@@ -46,6 +46,7 @@ describe("parseDevicectlDevices", () => {
         osVersion: "26.5.2",
         connectionState: "device",
         unavailableReason: null,
+        alternateSerials: [],
         isEmulator: false,
         platform: "ios",
       },
@@ -55,6 +56,7 @@ describe("parseDevicectlDevices", () => {
         osVersion: "26.5.2",
         connectionState: "device",
         unavailableReason: null,
+        alternateSerials: [],
         isEmulator: false,
         platform: "ios",
       },
@@ -171,12 +173,26 @@ describe("parseDevicectlDevices", () => {
       expect(parsed[0]?.unavailableReason).toBeNull();
     });
 
-    it("AC-READY-009 — 네 상태(device/offline/unavailable + AdbBackend의 unauthorized) 모두 같은 키 집합을 갖는다", () => {
+    it("AC-READY-009 — 네 상태(device/offline/unavailable + AdbBackend의 unauthorized) 모두 같은 키 집합을 갖는다", async () => {
       const device = withTunnelState("connected")[0]!;
       const offline = withTunnelState(undefined)[0]!;
       const unavailable = withTunnelState("disconnected")[0]!;
       expect(Object.keys(device).sort()).toEqual(Object.keys(offline).sort());
       expect(Object.keys(device).sort()).toEqual(Object.keys(unavailable).sort());
+
+      // 네 번째 상태 `unauthorized`는 parseDevicectlDevices()가 아니라
+      // AdbBackend.listDevices()가 만든다(plan.md §A.1 표) — 서로 다른 두
+      // 생산 함수의 산출물을 실제로 호출해 비교한다(1차 감사 D4: 손으로
+      // 만든 리터럴 비교는 이 AC를 만족하지 않는다).
+      const exec = vi.fn().mockResolvedValueOnce({
+        stdout: Buffer.from("List of devices attached\nR58N90ABCDE             unauthorized\n", "utf-8"),
+        stderr: Buffer.alloc(0),
+        exitCode: 0,
+      });
+      const { AdbBackend } = await import("./adb-backend.js");
+      const backend = new AdbBackend(exec);
+      const [unauthorized] = await backend.listDevices();
+      expect(Object.keys(device).sort()).toEqual(Object.keys(unauthorized!).sort());
     });
   });
 

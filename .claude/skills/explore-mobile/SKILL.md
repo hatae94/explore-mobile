@@ -112,15 +112,27 @@ connected but not currently operable (e.g. an iOS device whose tunnel/DDI/WDA
 preconditions are not met) — with `unavailableReason` explaining why and what
 to do about it; `unavailableReason` is `null` for every other state.
 
+A single Android device reachable over more than one `adb` transport at once
+(USB + wireless IP, wireless IP + mDNS, ...) is reported as **one** `devices`
+entry — `serial` is the representative transport and `alternateSerials` lists
+the rest. `--device <serial>` accepts either the representative or any
+alternate serial; either way the device it resolves to is the same, and any
+response `serial` field is always the representative. iOS never has more than
+one transport per device, so `alternateSerials` is always `[]` there.
+`alternateSerials` is always present (empty array when there is nothing to
+merge).
+
 ```bash
 node dist/cli/bin.js devices
 ```
 ```json
 {"ok":true,"command":"devices","data":[
   {"serial":"192.168.219.106:36807","model":"SM_S938N","osVersion":"16",
-   "connectionState":"device","unavailableReason":null,"isEmulator":false,"platform":"android"},
+   "connectionState":"device","unavailableReason":null,"alternateSerials":[],
+   "isEmulator":false,"platform":"android"},
   {"serial":"00008130-001238880C13803A","model":"iPhone 15 Pro Max","osVersion":"26.5.2",
-   "connectionState":"device","unavailableReason":null,"isEmulator":false,"platform":"ios"}]}
+   "connectionState":"device","unavailableReason":null,"alternateSerials":[],
+   "isEmulator":false,"platform":"ios"}]}
 ```
 
 `platform` tells you which backend owns the device. You never choose a

@@ -55,6 +55,7 @@ function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
     osVersion: "14",
     connectionState: "device",
     unavailableReason: null,
+    alternateSerials: [],
     isEmulator: false,
     platform: "android",
     ...overrides,
@@ -136,6 +137,34 @@ describe("runCli", () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe("DEVICE_NOT_FOUND");
+    });
+
+    // SPEC-READY-001 §B.6.3 — `devices`는 `resolveTargetDevice()`(경로 A)를
+    // 거치지 않는 유일한 device-facing 명령이라 자체 필터를 갖는다
+    // (3차 감사 P0). REQ-READY-006이 넓히는 조회 범위·정규화·충돌 거부를
+    // 이 경로에서도 검사한다.
+    it("AC-READY-017 경로 B — 부속 시리얼로도 조회가 성공하고 대표로 정규화된다", async () => {
+      const merged = device({ serial: "REPRESENTATIVE", alternateSerials: ["ALTERNATE-1"] });
+      const backend = createMockBackend([merged]);
+
+      const result = await runCli(["devices", "--device", "ALTERNATE-1"], backend);
+
+      expect(result).toEqual({ ok: true, command: "devices", data: [merged] });
+    });
+
+    it("AC-READY-020 경로 B — 한 시리얼이 둘 이상 항목에 걸리면 대상을 고르지 않고 거부한다", async () => {
+      const deviceA = device({ serial: "S", alternateSerials: [] });
+      const deviceB = device({ serial: "OTHER", alternateSerials: ["S"] });
+      const backend = createMockBackend([deviceA, deviceB]);
+
+      const result = await runCli(["devices", "--device", "S"], backend);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("BACKEND_COMMAND_FAILED");
+        expect(result.error.message).toContain("matches 2 device entries");
+        expect(result.error.details?.["collidingEntries"]).toBe(2);
+      }
     });
   });
 
