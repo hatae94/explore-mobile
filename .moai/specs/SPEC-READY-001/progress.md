@@ -764,7 +764,7 @@ src/schema/device-backend.ts
 
 ```
 sync_complete_at: 2026-08-05
-sync_commit_sha: pending-backfill-SPEC-READY-001-sync   (이 커밋 자신의 해시는 커밋이 만들어지기 전에는 알 수 없다 — 후속 커밋에서 백필한다. spec-frontmatter-schema.md의 SHA placeholder backfill exemption(D3)에 따른 정규 패턴이다)
+sync_commit_sha: 596a798   (백필 완료 — spec-frontmatter-schema.md SHA placeholder backfill exemption(D3))
 sync_status: complete-with-gap   (§E.3의 run_status를 이어받는다 — AC-READY-013 1건 미관측, PASS 19 · FAIL 0 · 미관측 1)
 changelog_entry_position: CHANGELOG.md [Unreleased] 섹션 끝, "### Changed" 새 항목(SPEC-READY-001 전용) — 아래 §sync 산출물 참조
 frontmatter_status_transitions.spec_md: in-progress → completed
