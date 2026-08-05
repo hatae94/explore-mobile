@@ -461,3 +461,123 @@ M3 범위는 순수 함수(`device-grouping.ts`)와 mock exec 기반 unit 테스
 
 - 그룹핑 규칙(사전순 대표 선택)은 재연결을 가로지르는 안정성을 주지 않는다 — `plan.md` §B.4가 명시적으로 인정하는 한계이며 이 SPEC의 범위 밖이다(spec.md §D.2).
 - `collidingSerialMessage()`의 정확한 문구는 이 SPEC이 자유롭게 선택한 것이다(§B.5 — REQ-READY-006 자유도 "없음"으로 닫혀 있지만, AC-READY-020은 코드만 못박고 문구 자체의 정확한 표현은 열어 둔다). `SKILL.md`의 오류 코드 표에 이 문구가 반영돼 있는지는 M5에서 확인한다.
+
+---
+
+## §E.2 Run-phase Evidence — M4
+
+M4는 **관측·기록 전용 마일스톤**이다 — 이 회차는 생산 코드를 수정하지 않았다(`plan.md` §F M4 "§E 자체 검증 전체를 실행한다" + "실기기로 4건을 각각 재현 확인한다").
+
+### 착수 전 사전 점검 (2026-08-05)
+
+```
+$ git rev-parse HEAD → ae7c30205e16eccd9d419e27f25023ba887f4997 (M3 커밋 후 재확인 커밋 HEAD, 이 마일스톤의 시작점)
+$ git status --short → (SPEC 관련 추적 파일 변경 없음 — 무관한 미추적 하네스/설정 경로만 존재)
+```
+
+`plan.md` §E는 `$BASE=04fb196`(M1 이전 기준선)을 계속 쓴다 — M1·M2·M3가 그렇게 기록했고, 이 절도 그 기준을 그대로 따른다.
+
+### 실기기 관측 — 오케스트레이터가 위임 직전 직접 수행
+
+아래 두 관측은 **manager-develop 위임 이전에 오케스트레이터가 직접 실행**했다. 재실행하지 않고 그대로 기록한다 — Android 대상으로 `doctor`를 재실행하면 IME 설치/활성화라는 실제 부작용이 있고(M1에서 이미 한 차례 발생), 반복할 이유가 없다.
+
+#### AC-READY-001 — PATH 밖 adb로 Android 명령이 동작한다
+
+```
+$ which adb
+adb not found
+
+$ node dist/cli/bin.js devices          # PATH 보정 없음
+  Android 항목: 1 → 2beb9d2309037ece(device)
+
+$ node dist/cli/bin.js doctor --device 00008130-001238880C13803A
+  adb: {"installed":true,"onPath":false,
+        "resolvedPath":"/Users/hatae/Library/Android/sdk/platform-tools/adb",
+        "version":"Android Debug Bridge version 1.0.41"}
+  adbKeyboard: {"skipped":true,"reason":"Cannot install/enable ADBKeyBoard: Device
+        '00008130-001238880C13803A' exists but is not connected
+        (connectionState: 'unavailable'). Reconnect or boot it, then retry."}
+```
+
+`doctor` 호출은 **iOS 대상**으로 실행됐다(`adbKeyboard.skipped: true`가 그 증거) — Android IME 부작용은 트리거되지 않았다. 그 skip 사유 문구 자체가 `connectionState: 'unavailable'`을 담고 있다 — 이 SPEC이 도입한 상태값이 하위 메시지까지 전파된다는 부수 증거다.
+
+AC-001의 전후 대조 의무가 요구하는 착수 전 관측은 이미 `spec.md` §C.1-①에 기록돼 있다(2026-08-04, `installed:false`이었으나 바이너리는 존재) — 착수 전에 만들어졌으므로 여기서 새로 만들 수 없고, 인용한다.
+
+**판정**: 두 조건(① Android 기기가 목록에 나타난다 ② `doctor`의 `adb.installed`가 `true`다) 모두 성립. **PASS**.
+
+#### AC-READY-019 — 실기기 iOS가 unavailable + 사유로 보고된다
+
+```
+CLI 보고:
+  iPad Pro (12.9-inch) (5th generation)  unavailable
+    reason: disconnected — 터널이 연결되지 않았다 — WDA·신뢰 설정을 확인한다
+  iPhone 15 Pro Max                      unavailable
+    reason: unavailable — 터널을 쓸 수 없다 — 기기 잠금 해제 후 WDA를 다시 띄운다
+
+같은 시점 원본 (xcrun devicectl list devices --json-output):
+  iPad Pro (12.9-inch) (5th generation)  tunnelState="disconnected"
+  iPhone 15 Pro Max                      tunnelState="unavailable"
+
+대조 (AC-019③):
+  iPad   원본="disconnected" 포함=예
+  iPhone 원본="unavailable"  포함=예
+```
+
+세 조건 모두 성립. ③이 핵심이다 — 두 기기가 **서로 다른** 원본값을 가지며 각 사유가 자기 기기의 값만 포함한다. 이것이 하드코딩된 상수나 엉뚱한 기기의 값이라는 두 실패 가능성을 모두 배제한다. 착수 전 관측은 `spec.md` §C.1-②에 기록돼 있다(두 기기 모두 2026-08-04 `offline` 보고).
+
+**판정**: 세 조건 모두 성립. **PASS**.
+
+### AC-READY-013 — 미관측 (PASS로 계상하지 않음, 원칙 ①)
+
+AC-013은 **같은 물리 Android 기기가 둘 이상의 전송으로 동시에 잡힌 상태**를 전제로 한다(`Given`). 지금 연결된 Android 전송은 USB 하나(`2beb9d2309037ece`)뿐이다 — 두 번째 전송(무선 디버깅 등)을 만들려면 사용자가 폰에서 무선 디버깅을 켜야 하고, 오케스트레이터가 대신 할 수 없는 조작이다. 따라서 이 AC는 **관측하지 않았다** — `acceptance.md` 원칙 ①("관측하지 않은 것을 PASS로 기록하지 않는다")에 따라 PASS·PASS-with-debt·부분 충족 어느 것으로도 표기하지 않는다.
+
+**전후 대조 의무도 이번 회차에서 더는 만족할 수 없다.** AC-013의 착수 전 관측(중복 전송 2개 항목을 먼저 관측)은 M3가 이미 그룹핑 코드를 반영한 뒤라서 지금 새로 만들면 "구현 후" 관측만 남는다 — "구현 전 실패 → 구현 후 성공"의 대조 구조 자체가 이 시점 이후로는 성립하지 않는다.
+
+**남는 요구사항 커버리지 공백**: AC-013은 REQ-READY-004(물리 기기 단위 식별)와 REQ-READY-006(부속 시리얼 대상 조회)의 **유일한 실환경 판정**이다(`acceptance.md` §D "원칙 ④ 충족 현황" 표). 두 요구사항 모두 unit 테스트로는 M3에서 이미 커버됐다 — REQ-004는 AC-010·011·012(unit), REQ-006은 AC-017·020(unit)이 각각 PASS다. 열려 있는 것은 **실제 환경에서의 최종 확인 하나**뿐이다: 실기기의 중복 전송이 실제로 1개 항목으로 합쳐지고, 대표·부속 시리얼 모두로 실제 조작 명령이 통과하는지. 원칙 ④가 "단위 테스트 582개가 전부 통과하는 상태에서 존재했던 결함"을 근거로 실환경 판정을 요구하는 이유가 정확히 이 지점이다 — 픽스처로는 절대 못 보는, 실제 `adb devices -l` 열거 동작·실제 그룹핑 결과의 최종 확인이 비어 있다.
+
+### §E 자체 검증 ($BASE=04fb196, $TOUCHED=src/schema/device-backend.ts)
+
+```
+$ pnpm test        → Test Files 28 passed (28) / Tests 611 passed (611)   (M3 기준선과 동일 — M4는 무수정)
+$ pnpm typecheck   → exit 0
+$ pnpm build       → exit 0
+
+$ grep -n "DeviceConnectionState =" src/schema/device-backend.ts
+42:export type DeviceConnectionState = "device" | "offline" | "unauthorized" | "unavailable";   (4값, M2 이후 무변경)
+
+$ git diff --name-only 04fb196..HEAD -- src/schema/device-backend.ts
+src/schema/device-backend.ts   (① 양성 대조 — 출력 있음, 통과)
+
+$ git diff --name-only 04fb196..HEAD -- src/backend/ime-session-store.ts src/backend/apk-downloader.ts
+(출력 없음, ② 본 검사 통과)
+
+$ git log --oneline 04fb196..HEAD -- src/schema/device-backend.ts
+978e83e feat(SPEC-READY-001): M3 물리 기기 단위 식별 — alternateSerials + 부속 시리얼 대상 조회
+457a5af feat(SPEC-READY-001): M2 iOS 가용성 상태 unavailable + unavailableReason 추가   (③-a 양성 대조 — 출력 있음, 통과)
+
+$ git log --oneline 04fb196..HEAD -- src/backend/ime-session-store.ts src/backend/apk-downloader.ts
+(출력 없음, ③-b 본 검사 통과)
+
+$ pnpm vitest run -t "connectionState"
+Test Files 3 passed | 25 skipped (28) / Tests 3 passed | 608 skipped (611), exit 0
+```
+
+M4는 코드를 수정하지 않았으므로 모든 값이 M3 종료 시점과 동일하다 — 회귀 없음을 재확인했다.
+
+### M4 AC PASS/FAIL 매트릭스
+
+| AC | 검증 방식 | 상태 | 근거 |
+|---|---|---|---|
+| AC-READY-001 | e2e·manual | **PASS** | 위 §실기기 관측 — Android 목록 검출 + `adb.installed:true` 양쪽 성립. 착수 전 실패 관측은 `spec.md` §C.1-①(2026-08-04) 인용 |
+| AC-READY-019 | e2e·manual | **PASS** | 위 §실기기 관측 — `unavailable` + 원본 `tunnelState` 포함 + 두 기기의 서로 다른 원본값과 각각 일치. 착수 전 `offline` 관측은 `spec.md` §C.1-②(2026-08-04) 인용 |
+| AC-READY-013 | e2e·manual | **미관측** (PASS 아님) | 중복 Android 전송을 만들 두 번째 연결(무선 디버깅 등)이 사용자 조작 필요 — 오케스트레이터가 만들 수 없음. REQ-READY-004·REQ-READY-006의 유일한 실환경 판정이 비어 있음(unit 판정은 M3에서 이미 PASS) |
+
+### Gaps (미검증)
+
+- **AC-READY-013 전체** — 실기기 중복 전송 시나리오, 미관측. REQ-READY-004·REQ-READY-006의 실환경 커버리지가 이 SPEC 전체에서 비어 있는 상태로 남는다.
+- M5 문서 동기화(`SKILL.md`의 4개 지점 대조·갱신)는 여전히 미착수.
+
+### Residual-risk (잔여 위험)
+
+- AC-013 미관측은 이 SPEC의 마감을 막지 않지만(원칙 ④의 실환경 판정 요구가 REQ-004·006에 대해 부분적으로만 충족됨을 의미), 나중에 실제 다중 전송 환경에서 그룹핑·대상 조회가 검증되지 않은 채로 배포된다는 뜻이다. 사용자가 향후 무선 디버깅을 활성화해 재현 가능해지면 이 AC를 다시 시도해야 한다.
+- §E.3 Run-phase Audit-Ready Signal은 아직 기록하지 않는다 — M5(문서 동기화)가 남아 있으므로 run-phase 완료 신호를 조기에 보내지 않는다. M5 완료 후 §E.3을 기록한다.
