@@ -663,14 +663,14 @@ M5는 `$TOUCHED` 파일을 수정하지 않으므로 ①(양성 대조)·③-a�
 
 ```
 run_complete_at: 2026-08-05
-run_commit_sha: pending-backfill-M5   (이 커밋 자신의 SHA는 커밋 전에 알 수 없다 — 후속 커밋에서 백필)
+run_commit_sha: 8573f62   (M5 커밋 — 백필 완료)
 run_status: complete-with-gap
 ac_pass_count: 19
 ac_fail_count: 0
 ac_unobserved_count: 1   (AC-READY-013)
 preserve_list_post_run_count: 2   (src/backend/ime-session-store.ts, src/backend/apk-downloader.ts — 전 마일스톤에 걸쳐 무수정 확인됨)
 l44_pre_commit_fetch: "git fetch origin master" → 갱신 있음, "git rev-list --count --left-right origin/master...HEAD" → 0 0 (동기화 상태, 발산 없음)
-l44_post_push_fetch: (이 커밋 push 이후 재확인 — 후속 커밋에서 백필)
+l44_post_push_fetch: "git push origin master" 성공(7b32b2a..8573f62) 후 "git fetch origin master" + "git rev-list --count --left-right origin/master...HEAD" → 0 0 (재동기화 확인, 발산 없음)
 new_warnings_or_lints_introduced: 0   (M5는 문서 파일만 수정 — lint/typecheck 대상 코드 무변경, pnpm typecheck exit 0)
 cross_platform_build.linux: 해당 없음 (이 SPEC은 GOOS 교차 빌드 대상이 아니다 — TypeScript/Node 프로젝트, `pnpm build`가 유일한 빌드 검증)
 cross_platform_build.macos: pnpm build exit 0 (이 호스트에서 실행)
