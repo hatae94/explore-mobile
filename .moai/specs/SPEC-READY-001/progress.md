@@ -1,7 +1,7 @@
 ---
 id: SPEC-READY-001
 title: "기기·환경 가용성 보고의 정확성 — 진행 기록"
-version: "0.5.2"
+version: "0.6.0"
 status: completed
 created: 2026-08-04
 updated: 2026-08-05
@@ -706,6 +706,8 @@ m1_to_mN_commit_strategy: per-milestone separate commits — M1(295ec89) · M2(4
 
 **집계: PASS 19 · 미관측 1(AC-READY-013) · FAIL 0.** 모든 PASS는 위 표가 가리키는 마일스톤 절의 실제 실행 출력에 귀속된다(`verification-claim-integrity.md` §2 baseline-attribution). AC-READY-013 하나는 REQ-READY-004·REQ-READY-006의 실환경 판정을 비운 채 남기지만, 두 요구사항 모두 unit 판정(AC-010·011·012·017·020)은 전부 PASS다 — 미관측은 "unit으로 커버되지 않은 부분"이 아니라 "unit이 이미 증명한 것의 실환경 재확인"이 비어 있다는 뜻이다.
 
+> **[2026-08-05 후속 추가]** 위 집계는 **run-phase 마감 시점(`8573f62`)의 값이며 그대로 보존한다.** AC-READY-013은 sync 마감(`596a798`) 이후 실기기에서 관측돼 **PASS**로 판정됐다 — **현재 전체 집계는 PASS 20 · 미관측 0 · FAIL 0**이다. 판정 근거와 관측 절차는 아래 **§J**를 보라. 이 절과 §E.3·§E.4의 미관측 서술은 각 시점의 사실이므로 고쳐 쓰지 않는다.
+
 ### run-phase 전체 변경 파일 (22개, `$BASE=04fb196` 대비, 실측)
 
 ```
@@ -787,3 +789,47 @@ frontmatter_status_transitions.progress_md: in-progress → completed
 ### Residual-risk (잔여 위험)
 
 - CHANGELOG의 breaking-change 서술은 JSON 소비자(다른 스크립트·CI·서드파티)가 `DeviceInfo`/`DeviceConnectionState`/`doctor.adb`/`--device`를 어떻게 소비하는지에 대한 이 저장소 밖의 정보가 없다 — 영향 범위 판단은 소비자 쪽 책임으로 남긴다.
+
+---
+
+## §J AC-READY-013 마감 후 실기기 관측 (2026-08-05)
+
+> **시점 구분.** 이 절은 sync 마감(`596a798` → 백필 `ab2f633`) **이후**의 관측이다. 위 §E.2 M4·§E.3·§E.4의 "미관측" 서술은 각각 그 시점의 사실이므로 **고쳐 쓰지 않고 보존**한다. 현재 판정은 이 절이 가진다.
+
+### Claim (주장)
+
+**AC-READY-013 — PASS.** 실기기의 중복 전송이 1개 항목으로 보고되고, 대표·부속 두 시리얼 모두로 대상이 지정된다(①②③④ 전부).
+
+### Evidence (증거)
+
+관측 전문(명령·출력 verbatim): `.moai/reports/android-verification/SPEC-READY-001-android-2026-08-05.md`. 요지:
+
+| 하위 판정 | 결과 | 근거 |
+|---|---|---|
+| ① `devices`에서 1개 항목 | PASS | `adb devices -l`은 `SM_G960N` **2행**(USB `usb:32-4` + 무선 `192.168.219.104:5555`), CLI `devices`의 안드로이드 항목은 **1개** |
+| ② `alternateSerials`에 나머지 전송 | PASS | 대표 `192.168.219.104:5555` / `alternateSerials: ["2beb9d2309037ece"]` |
+| ③ 두 시리얼 모두 같은 기기 대상 (경로 A) | PASS | `screenshot --device <각각>` 둘 다 `ok:true`, `DEVICE_NOT_FOUND` 없음, 응답 `serial`이 양쪽 모두 **대표로 정규화**, `byteLength` 1,149,613 동일 |
+| ④ `devices --device <부속시리얼>` | PASS | 부속(USB) 시리얼로도 합쳐진 항목 1개 반환 — `devices.ts:26`의 `matchesRequestedSerial`(경로 B, 자체 필터) |
+
+음성 대조: 합쳐진 상태에서 `--device NOPE-NOT-A-REAL-SERIAL`이 경로 A·B **양쪽 모두** `DEVICE_NOT_FOUND`로 거부 — 검사가 죽어서 통과한 것이 아니다.
+
+② 의 대표가 무선으로 잡힌 것은 설계대로다: `src/backend/device-grouping.ts:23-29`가 그룹 내 **사전순 첫 전송 시리얼**을 대표로 삼고(`"192..."` < `"2beb..."`), 같은 주석이 "재연결 간 안정성 주장이 아니다"라고 명시한다.
+
+### Baseline-attribution (baseline 귀속)
+
+`ab2f633` 기준, 코드 무변경 상태에서 관측했다. 같은 실행에서 `pnpm test` 28 files / 611 passed · `pnpm typecheck` exit 0 · `pnpm build` exit 0 · `git rev-list --count --left-right origin/master...HEAD` → `0 0`.
+
+Given 조성은 USB 연결 위의 `adb tcpip 5555` + `adb connect`였고, 관측 후 `adb disconnect` + `adb usb`로 복구해 `adb devices -l` 1행 · `alternateSerials: []` · 포트 5555 `Connection refused`를 확인했다. 폰 화면·앱·데이터 무변경.
+
+### Gaps (미검증)
+
+- **전후 대조는 성립하지 않는다.** M3가 이미 그룹핑을 반영한 뒤이므로 이 관측은 **after 단독**이다. 대신 같은 시점의 대조(원본 `adb`는 2행 / CLI는 1항목)로 대신했다 — §E.2 M4가 예고한 그대로다.
+- 이 시리얼 조합은 **재현되지 않는다.** 무선 시리얼은 연결마다 바뀌고 포트는 닫혔다. 재관측하려면 조성 절차부터 다시 밟아야 한다.
+- 전송 조합은 **USB + 무선 IP** 하나만 관측했다. mDNS 조합은 미관측이다(AC의 Given은 조합을 묻지 않으므로 판정에는 영향 없음).
+- `osVersion`이 빈 문자열로 나온 부수 관측(아래)은 **결함 여부를 확인하지 않았다** — 코드의 빈 값 처리 지점을 읽지 않았다.
+
+### Residual-risk (잔여 위험)
+
+- **미관측 사유로 적었던 전제가 틀렸다.** §E.2 M4는 "두 번째 전송을 만들려면 사용자가 폰에서 무선 디버깅을 켜야 하고, 오케스트레이터가 대신 할 수 없다"고 적었다. 이 폰은 Android 10(SDK 29)이라 **개발자 옵션에 무선 디버깅 토글이 없고**(`settings get global adb_wifi_enabled` → `null`, 이 키는 Android 11부터), 실제 경로는 `adb tcpip`이었다 — 사용자 조작이 필요 없었다. 차단 사유로 적힌 "사용자가 무엇을 해야 한다"는 문장은 그 자체가 검증 대상이다.
+- **부수 관측(판정 보류)**: `adb usb` 직후 **첫** `devices` 호출에서 `osVersion`이 `""`로 나왔다. 2초 간격 3회 재확인은 모두 `"10"`, `adb shell getprop ro.build.version.release`도 `10`. adbd 재시작 창에서 `getprop`이 빈 값을 줄 때 CLI가 표식 없이 그대로 싣는 것으로 보이나 **1회 관측**이며, 결함으로 확정하지 않는다(원칙 ①의 대칭 — 확인하지 않은 결함을 결함으로 적지 않는다).
+- 이 절은 SPEC 본문(`spec.md`·`plan.md`·`acceptance.md`)의 요구사항·설계·기준을 **바꾸지 않는다.** 판정 기록만 이어받는다.
