@@ -87,6 +87,7 @@ Branch on `error.code`. Codes you will actually meet:
 | `NO_DEVICE` | nothing connected |
 | `DEVICE_NOT_FOUND` | that serial is not in the list at all |
 | `DEVICE_NOT_CONNECTED` | in the list, but not in a usable state |
+| `BACKEND_COMMAND_FAILED` | generic backend command failure — an unclassified subprocess/device error, or a `--device` serial that matches more than one merged device entry |
 | `INVALID_ARGS` | unknown flag, or a removed one (`--id`/`--text`/`--web`) |
 | `INVALID_COORDINATES` | coordinate off-screen or malformed |
 | `INVALID_DIRECTION` / `INVALID_AMOUNT` / `INVALID_DURATION` | bad `scroll`/`swipe` argument |
@@ -106,11 +107,13 @@ exactly one device is **connected** — it is auto-selected. Otherwise you get
 `AMBIGUOUS_DEVICE` listing the candidates; run `devices` first.
 
 A device counts as **connected** only when `connectionState` is `"device"`.
-`offline` entries still appear in the `devices` list but are excluded from
-counting and auto-select. A device can also be `"unavailable"` — physically
-connected but not currently operable (e.g. an iOS device whose tunnel/DDI/WDA
-preconditions are not met) — with `unavailableReason` explaining why and what
-to do about it; `unavailableReason` is `null` for every other state.
+The other three states are all excluded from counting and auto-select, but
+mean different things: `"offline"` — no connection information at all;
+`"unauthorized"` — Android-only, `adb` sees the device but the host's RSA key
+has not (yet) been accepted on it; `"unavailable"` — physically connected but
+not currently operable (e.g. an iOS device whose tunnel/DDI/WDA preconditions
+are not met), with `unavailableReason` explaining why and what to do about
+it. `unavailableReason` is `null` for every state other than `"unavailable"`.
 
 A single Android device reachable over more than one `adb` transport at once
 (USB + wireless IP, wireless IP + mDNS, ...) is reported as **one** `devices`
@@ -128,12 +131,21 @@ node dist/cli/bin.js devices
 ```json
 {"ok":true,"command":"devices","data":[
   {"serial":"192.168.219.106:36807","model":"SM_S938N","osVersion":"16",
-   "connectionState":"device","unavailableReason":null,"alternateSerials":[],
+   "connectionState":"device","unavailableReason":null,
+   "alternateSerials":["adb-R3CY106LKVX-xtn5zd._adb-tls-connect._tcp"],
    "isEmulator":false,"platform":"android"},
   {"serial":"00008130-001238880C13803A","model":"iPhone 15 Pro Max","osVersion":"26.5.2",
-   "connectionState":"device","unavailableReason":null,"alternateSerials":[],
+   "connectionState":"unavailable",
+   "unavailableReason":"unavailable — 터널을 쓸 수 없다 — 기기 잠금 해제 후 WDA를 다시 띄운다",
+   "alternateSerials":[],
    "isEmulator":false,"platform":"ios"}]}
 ```
+
+The first entry shows a physical Android device reachable over two `adb`
+transports merged into one item (`alternateSerials` non-empty). The second
+shows an iOS device that is physically connected but not currently operable
+(`unavailableReason` carries the observed `tunnelState` plus what to do about
+it).
 
 `platform` tells you which backend owns the device. You never choose a
 backend — passing `--device <serial>` routes automatically.
@@ -151,7 +163,7 @@ backend — passing `--device <serial>` routes automatically.
 | `scroll <up\|down\|left\|right> [--amount <ratio>]` | Scroll without knowing the screen size. `--amount` is a fraction above 0 and at most 1 |
 | `key <alias>` | Send a key event (aliases below) |
 | `text "<string>"` | Type into the focused field. `--keep-keyboard` skips the default post-send keyboard dismissal |
-| `doctor [--yes\|--install] [--clean]` | Diagnose the environment. `--yes`/`--install` consents to auto-installing `adb` via Homebrew (macOS only). `--clean` does the same restore as `reset` |
+| `doctor [--yes\|--install] [--clean]` | Diagnose the environment — reports whether `adb` was found (`installed`), whether it was found on `PATH` (`onPath`) or via an SDK-relative fallback, and the resolved absolute path (`resolvedPath`), plus daemon health and connected devices. `--yes`/`--install` consents to auto-installing `adb` via Homebrew (macOS only). `--clean` does the same restore as `reset` |
 | `reset` | Restore the device to its pre-`doctor` state (original keyboard back, ADBKeyBoard removed) |
 
 **Key aliases (14)**: `back` `home` `enter` `menu` `app_switch` `up` `down`
@@ -240,8 +252,12 @@ asked for.
   banner arriving in that gap will take the tap instead. If a result looks
   wrong, re-capture before concluding anything.
 - **`adb` is often not on `PATH`** even when Android Studio installed it
-  (commonly at `~/Library/Android/sdk/platform-tools/adb` on macOS). `doctor`
-  reports this accurately rather than failing silently.
+  (commonly at `~/Library/Android/sdk/platform-tools/adb` on macOS). Android
+  commands still work in that case — path resolution falls back through
+  `$ANDROID_HOME`, `$ANDROID_SDK_ROOT`, and the default macOS SDK location —
+  and `doctor` reports the resolution accurately: `adb.installed` is `true`,
+  `adb.onPath` is `false`, and `adb.resolvedPath` gives the absolute path it
+  found, instead of the old silent `installed:false`.
 
 ## Constraints
 

@@ -581,3 +581,158 @@ M4는 코드를 수정하지 않았으므로 모든 값이 M3 종료 시점과 �
 
 - AC-013 미관측은 이 SPEC의 마감을 막지 않지만(원칙 ④의 실환경 판정 요구가 REQ-004·006에 대해 부분적으로만 충족됨을 의미), 나중에 실제 다중 전송 환경에서 그룹핑·대상 조회가 검증되지 않은 채로 배포된다는 뜻이다. 사용자가 향후 무선 디버깅을 활성화해 재현 가능해지면 이 AC를 다시 시도해야 한다.
 - §E.3 Run-phase Audit-Ready Signal은 아직 기록하지 않는다 — M5(문서 동기화)가 남아 있으므로 run-phase 완료 신호를 조기에 보내지 않는다. M5 완료 후 §E.3을 기록한다.
+
+---
+
+## §E.2 Run-phase Evidence — M5
+
+M5는 **문서 동기화 전용 마일스톤**이다 — 생산 코드는 수정하지 않고 `.claude/skills/explore-mobile/SKILL.md`만 갱신한다(`plan.md` §F M5).
+
+### 착수 전 사전 점검 (2026-08-05)
+
+```
+$ git rev-parse HEAD → 7b32b2a54849ea2344dc335e5760da764b10ca1e (M4 재확인 커밋 HEAD, 이 마일스톤의 시작점)
+$ pnpm test → Test Files 28 passed (28) / Tests 611 passed (611)
+$ grep -n "doctor reports this accurately" .claude/skills/explore-mobile/SKILL.md → :244 매치("... doctor reports this accurately rather than failing silently.")
+$ grep -n "connectionState" .claude/skills/explore-mobile/SKILL.md → :108, :131, :134 (device 상태 서술 + JSON 예시)
+$ grep -c "BACKEND_COMMAND_FAILED" .claude/skills/explore-mobile/SKILL.md → 0
+```
+
+`plan.md` §E는 `$BASE=04fb196`을 계속 쓴다 — M5는 `$TOUCHED=src/schema/device-backend.ts`를 수정하지 않으므로(문서 파일만 변경) §E 자체 검증은 M2·M3 상태의 재확인이다.
+
+### AC-READY-014 — 네 지점을 코드와 나란히 놓고 대조한 결과
+
+**① § Known traps의 `doctor` 정확성 주장.** 대조 코드: `src/backend/doctor.ts:112-125`(`checkAdbInstalled()`), `src/backend/adb-executor.ts:113-130`(`resolveAdbPath()`). 갱신 전 문서는 *"`doctor` reports this accurately rather than failing silently"*라고만 적어, M1 이전에는 거짓이었던 주장을 아무 근거 없이 남기고 있었다(`spec.md` §C.1-①이 그 반증이다). M1 구현 후 이 주장은 **사실이 되었다** — `installed`/`onPath`/`resolvedPath` 세 필드가 실제로 어디서 찾았는지를 정확히 보고한다. 그 근거(세 필드가 각각 무엇을 뜻하는지)와, PATH 밖에서도 Android 명령이 정상 동작한다는 사실(REQ-READY-001, AC-READY-001 M4 PASS)을 함께 서술하도록 갱신했다. **판정: PASS** — 이전 주장은 참이 되었고, 문서가 그 근거를 드러내도록 고쳤다.
+
+**② § Device targeting의 `connectionState` 설명.** 대조 코드: `src/schema/device-backend.ts:42`(`DeviceConnectionState` — 4값 타입), `src/backend/wda-device-list.ts:66-69`(`mapConnectionState` 3분기), `src/backend/adb-backend.ts:48`(`CONNECTED_STATES`, `unauthorized` 산출 확인), `src/cli/device-targeting.ts:85-87`(`connectedOnly` — `"device"`만 연결로 센다). 갱신 전 문서는 `device`/`offline`/`unavailable` 세 값만 설명했고 **`unauthorized`는 어디에도 없었다** — 타입은 4값인데 서술은 3값이었다. `unauthorized`의 의미(Android 전용, adb는 기기를 보지만 호스트 RSA 키가 아직 승인되지 않음)를 추가하고, 네 값 전부를 "연결로 세지 않는다"는 공통 성질 아래 함께 서술하도록 갱신했다. `--device`가 부속 전송 시리얼도 대상으로 삼는다는 서술(REQ-READY-006, M3)은 갱신 전 문서에 이미 있었다 — 이 절은 그대로 두고, `connectionState` 부분만 고쳤다. **판정: PASS** — 갱신 전 3/4값 서술의 불완전 상태를 4/4값으로 닫았다.
+
+**③ § Command reference의 `doctor` 행.** 대조 코드: `src/backend/doctor.ts:34-42`(`AdbInstalledCheck` — `installed`/`onPath`/`resolvedPath`/`version` 4필드). 갱신 전 행은 `--yes`/`--install`/`--clean` 플래그만 설명하고 무엇을 진단하는지는 "Diagnose the environment"로 뭉뚱그렸다. §B.2가 추가한 `onPath`·`resolvedPath` 두 필드를 행에 명시했다. **판정: PASS**.
+
+**④ `:115-121`의 `devices` JSON 예시** (현재 라인은 이동했으나 대조 대상은 동일). 대조 코드: `src/schema/device-backend.ts:127-162`(`DeviceInfo` 8필드 — M2·M3가 이미 반영). 갱신 전 예시는 **키 개수는 8개로 맞았으나**(M2·M3가 이미 처리) 두 항목 모두 `connectionState:"device"`·`alternateSerials:[]`여서, 이 SPEC이 실제로 추가한 값(`"unavailable"` 상태, 실제로 채워진 `alternateSerials`)이 예시 어디에도 나타나지 않았다 — Skill이 실제로 마주칠 형태를 예시가 한 번도 보여주지 못하는 상태였다. Android 항목에는 `spec.md` §C.1-③ 실측 그대로의 `alternateSerials`를(대표/부속 시리얼 실측값), iOS 항목에는 `unavailable` + `unavailableReason`을(`plan.md` §B.3.1 매핑표의 `"unavailable"` 행 그대로 — M4에서 실기기로 관측된 문구와 일치) 반영했다. 키 개수는 8개로 무변경. **판정: PASS** — 갱신 전 새 값 미반영 → 갱신 후 이 SPEC이 추가한 두 값 모두 예시에 반영됨.
+
+**종합 판정: PASS.** 네 지점 모두 코드와 대조해 실제로 갱신했거나(①③④), 이미 있던 부분은 유지하고 빠진 부분만 보강했다(②).
+
+### AC-READY-015 — 계약 테스트 재확인 (M5는 무수정)
+
+```
+$ grep -n "keyof DeviceInfo" src/schema/device-backend.test.ts → :32 매치, toHaveLength(8) — M3에서 이미 갱신 완료, M5는 무수정
+$ pnpm test → Test Files 28 passed (28) / Tests 611 passed (611), exit 0
+```
+**판정: PASS**(M3에서 마감된 것을 M5가 재확인).
+
+### `BACKEND_COMMAND_FAILED` 결정
+
+`plan.md` §B.6.2가 3차 감사에서 확인한 사실 — 이 코드는 `SKILL.md`에 전혀 등장하지 않았다(§C.1-① grep 0건). 코드를 읽어 확인한 결과 `BACKEND_COMMAND_FAILED`는 `src/cli/commands/types.ts:69`(`backendFailure()`)의 **일반 백엔드 실패 기본값**이다 — WDA 4종 특정 오류(`WDA_UNREACHABLE` 등)로 분류되지 않는 모든 백엔드 예외가 이 코드로 떨어지고, 이 SPEC이 추가한 부속 시리얼 충돌 분기(`device-targeting.ts:176-183`의 경로 A, `devices.ts:33-42`의 경로 B — AC-READY-020)도 이 코드를 쓴다. `SKILL.md`의 오류 코드 표는 스스로 "Codes you will actually meet"를 표방하는데, 이 코드는 정확히 그 정의(호출자가 실제로 마주칠 코드)에 해당한다 — **표에 추가하기로 결정**했다. 문구는 충돌 사건 하나로 좁히지 않고 "일반 백엔드 실패, 그중 하나로 시리얼 충돌"이라고 적어, 실제 코드가 이 값을 반환하는 모든 경로(집합 하나가 아니라 여럿)를 정직하게 반영했다.
+
+### Toolchain 실행 결과
+
+```
+$ pnpm test        → Test Files 28 passed (28) / Tests 611 passed (611)   (M4와 동일 — M5는 문서만 수정)
+$ pnpm typecheck   → exit 0
+$ pnpm build       → exit 0
+```
+
+### 변경 파일
+
+```
+$ git status --short
+ M .claude/skills/explore-mobile/SKILL.md
+```
+그 외 작업 트리의 미추적 파일들은 이 SPEC과 무관한 하네스/설정 경로다(§B4 — 무수정, 스테이징 대상 아님).
+
+### §E 자체 검증 ($BASE=04fb196, $TOUCHED=src/schema/device-backend.ts)
+
+```
+$ grep -n "DeviceConnectionState =" src/schema/device-backend.ts
+42:export type DeviceConnectionState = "device" | "offline" | "unauthorized" | "unavailable";   (4값, M2 이후 무변경 — M5는 이 타입을 건드리지 않는다)
+```
+M5는 `$TOUCHED` 파일을 수정하지 않으므로 ①(양성 대조)·③-a는 M2·M3 커밋을 그대로 가리키는 M4 절의 재확인이며, M5 자신의 신규 변경은 문서 파일(`$TOUCHED` 범위 밖)이다.
+
+### Gaps (미검증)
+
+- **AC-READY-013**(e2e·manual, REQ-READY-004·REQ-READY-006의 유일한 실환경 판정)은 M4에서 이미 미관측으로 마감됐다 — M5는 이를 재시도하지 않는다(원칙 ①). unit 판정(REQ-004: AC-010·011·012, REQ-006: AC-017·020)은 M3에서 전부 PASS다.
+
+### Residual-risk (잔여 위험)
+
+- `UNAVAILABLE_REASON_GUIDANCE` 매핑표(§B.3.1)는 알려진 `tunnelState` 값 3개만 다룬다 — 새 값이 나타나면 `SKILL.md` JSON 예시의 정확한 문구와 그 시점의 실제 관측값이 달라질 수 있다. 규칙 2(원문만 싣는다)가 코드 쪽은 안전하게 흡수하므로 계약이 깨지지는 않지만, 문서 예시의 문구 자체는 시점에 종속적이다.
+- `collidingSerialMessage()`의 정확한 메시지 문자열(§B.5가 자유도로 남긴 부분)은 `SKILL.md`에 축자로 옮기지 않았다 — 오류 코드와 그 코드가 발생하는 사건의 종류만 명시했다. 문구까지 문서화하면 메시지가 바뀔 때마다 `SKILL.md`도 함께 고쳐야 하는 결합이 생기므로, 코드가 확정한 계약(오류 코드)만 문서화하고 열려 있는 자유도(정확한 문구)는 문서화하지 않았다.
+
+---
+
+## §E.3 Run-phase Audit-Ready Signal
+
+```
+run_complete_at: 2026-08-05
+run_commit_sha: pending-backfill-M5   (이 커밋 자신의 SHA는 커밋 전에 알 수 없다 — 후속 커밋에서 백필)
+run_status: complete-with-gap
+ac_pass_count: 19
+ac_fail_count: 0
+ac_unobserved_count: 1   (AC-READY-013)
+preserve_list_post_run_count: 2   (src/backend/ime-session-store.ts, src/backend/apk-downloader.ts — 전 마일스톤에 걸쳐 무수정 확인됨)
+l44_pre_commit_fetch: "git fetch origin master" → 갱신 있음, "git rev-list --count --left-right origin/master...HEAD" → 0 0 (동기화 상태, 발산 없음)
+l44_post_push_fetch: (이 커밋 push 이후 재확인 — 후속 커밋에서 백필)
+new_warnings_or_lints_introduced: 0   (M5는 문서 파일만 수정 — lint/typecheck 대상 코드 무변경, pnpm typecheck exit 0)
+cross_platform_build.linux: 해당 없음 (이 SPEC은 GOOS 교차 빌드 대상이 아니다 — TypeScript/Node 프로젝트, `pnpm build`가 유일한 빌드 검증)
+cross_platform_build.macos: pnpm build exit 0 (이 호스트에서 실행)
+cross_platform_build.windows: 미검증 (호스트 미보유 — Windows 전용 분기 없음, `path.join`/`os.homedir()` 등 Node 표준 API만 사용)
+total_run_phase_files: 22   (`git diff --name-only 04fb196..HEAD | wc -l` 실측값 — 이 progress.md 자신을 포함한다. 아래 절 참조)
+m1_to_mN_commit_strategy: per-milestone separate commits — M1(295ec89) · M2(457a5af) · M3(978e83e) · M4(7b32b2a, 관측 전용·코드 무변경) · M5(이 커밋, 문서 전용). 마일스톤 경계마다 커밋 + push, 사용자가 마일스톤 단위 확인을 선택했다(§F Phase 4 Mode Selection 기록).
+```
+
+### 최종 20-AC 롤업 (전체 SPEC)
+
+| AC ID | REQ | 검증 방식 | 최종 상태 | 마감 마일스톤 | 근거 |
+|---|---|---|---|---|---|
+| AC-READY-001 | REQ-001 | e2e·manual | **PASS** | M4 | 실기기 Android 목록 검출 + `adb.installed:true` (§E.2 M4) |
+| AC-READY-002 | REQ-001 | unit(mock) | **PASS** | M1 | `adb-executor.test.ts` "AC-READY-002" |
+| AC-READY-003 | REQ-001 | unit(mock) | **PASS** | M1 | `adb-executor.test.ts` "AC-READY-003" (5테스트) |
+| AC-READY-004 | REQ-002 | unit(mock) | **PASS** | M1 | `doctor.test.ts` "installed=true..." |
+| AC-READY-005 | REQ-002 | unit(mock) | **PASS** | M1 | `doctor.test.ts` "installed=false..." |
+| AC-READY-006 | REQ-003 | unit | **PASS** | M2 | `wda-device-list.test.ts` "unavailable 상태 + 사유" |
+| AC-READY-007 | REQ-003 | unit | **PASS** | M2 | 같은 describe, 항목 부재 → offline |
+| AC-READY-008 | REQ-003 | unit | **PASS** | M2 | 같은 describe, connected → device |
+| AC-READY-009 | REQ-003 | unit | **PASS** | M2→M3 | M2가 3상태, M3가 `unauthorized` 교차 비교로 마감 |
+| AC-READY-010 | REQ-004 | unit | **PASS** | M3 | `device-grouping.test.ts` + `adb-backend.test.ts` |
+| AC-READY-011 | REQ-004 | unit | **PASS** | M3 | `device-grouping.test.ts` "AC-READY-011" |
+| AC-READY-012 | REQ-004 | unit | **PASS** | M3 | `device-grouping.test.ts` + `adb-backend.test.ts` |
+| AC-READY-013 | REQ-004, REQ-006 | e2e·manual | **미관측** | M4 | 두 번째 Android 전송 확보 불가(사용자 조작 필요) — PASS로 계상 안 함 |
+| AC-READY-014 | REQ-005 | doc-review | **PASS** | M5 | 위 §AC-READY-014 상세 |
+| AC-READY-015 | REQ-005 | unit | **PASS** | M2→M3 | `device-backend.test.ts:32-43`, 6→7→8 |
+| AC-READY-016 | REQ-003 | unit | **PASS** | M2 | 상수표 정확 일치 |
+| AC-READY-017 | REQ-006 | unit | **PASS** | M3 | 경로 A·B 양쪽 |
+| AC-READY-018 | REQ-002 | unit(실FS) | **PASS** | M1 | `doctor.test.ts` "real filesystem + real env vars" |
+| AC-READY-019 | REQ-003 | e2e·manual | **PASS** | M4 | 실기기 iOS 2대, 원본 대조 §실기기 관측 |
+| AC-READY-020 | REQ-006 | unit | **PASS** | M3 | 경로 A·B 양쪽, `BACKEND_COMMAND_FAILED` |
+
+**집계: PASS 19 · 미관측 1(AC-READY-013) · FAIL 0.** 모든 PASS는 위 표가 가리키는 마일스톤 절의 실제 실행 출력에 귀속된다(`verification-claim-integrity.md` §2 baseline-attribution). AC-READY-013 하나는 REQ-READY-004·REQ-READY-006의 실환경 판정을 비운 채 남기지만, 두 요구사항 모두 unit 판정(AC-010·011·012·017·020)은 전부 PASS다 — 미관측은 "unit으로 커버되지 않은 부분"이 아니라 "unit이 이미 증명한 것의 실환경 재확인"이 비어 있다는 뜻이다.
+
+### run-phase 전체 변경 파일 (22개, `$BASE=04fb196` 대비, 실측)
+
+```
+$ git diff --name-only 04fb196..HEAD | wc -l
+22
+$ git diff --name-only 04fb196..HEAD
+.claude/skills/explore-mobile/SKILL.md
+.moai/specs/SPEC-READY-001/progress.md
+src/backend/adb-backend.test.ts
+src/backend/adb-backend.ts
+src/backend/adb-executor.test.ts
+src/backend/adb-executor.ts
+src/backend/device-grouping.test.ts
+src/backend/device-grouping.ts
+src/backend/doctor.test.ts
+src/backend/doctor.ts
+src/backend/registry.test.ts
+src/backend/wda-device-list.test.ts
+src/backend/wda-device-list.ts
+src/cli/commands/devices.ts
+src/cli/commands/scroll.test.ts
+src/cli/commands/swipe.test.ts
+src/cli/device-targeting.test.ts
+src/cli/device-targeting.ts
+src/cli/enumeration.test.ts
+src/cli/router.test.ts
+src/schema/device-backend.test.ts
+src/schema/device-backend.ts
+```
+생산 코드 8개(`device-grouping.ts` 신설 포함) + 테스트 파일 12개(`device-grouping.test.ts` 신설 포함, 나머지는 M2·M3의 "고정 지점 처리 결과"가 개별 마일스톤 절에서 근거를 남긴 팩토리/리터럴 갱신) + 문서 1개(`SKILL.md`) + 이 `progress.md` 자신으로 구성된다.
