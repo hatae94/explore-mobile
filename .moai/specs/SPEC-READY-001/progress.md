@@ -736,3 +736,24 @@ src/schema/device-backend.test.ts
 src/schema/device-backend.ts
 ```
 생산 코드 8개(`device-grouping.ts` 신설 포함) + 테스트 파일 12개(`device-grouping.test.ts` 신설 포함, 나머지는 M2·M3의 "고정 지점 처리 결과"가 개별 마일스톤 절에서 근거를 남긴 팩토리/리터럴 갱신) + 문서 1개(`SKILL.md`) + 이 `progress.md` 자신으로 구성된다.
+
+---
+
+## §G 상태 전이 백필 기록
+
+**무엇이 빠졌었는가.** `spec.md`·`plan.md`·`acceptance.md` 세 문서의 frontmatter `status`가 M1 커밋(`295ec89`) 이후로도 `draft`로 남아 있었다. `.claude/rules/moai/development/spec-frontmatter-schema.md` § Status Transition Ownership Matrix에 따르면 `draft → in-progress` 전이는 **manager-develop이 M1 커밋 시점에** 수행하는 것이 정규 지점이다 — run-phase가 이미 M1~M5 다섯 마일스톤을 전부 완료하고 `master`에 푸시까지 마친 뒤(이 문서 §E.3 참조, `run_status: complete-with-gap`, PASS 19 · FAIL 0) 세 문서만 `draft`인 채로 남아 있는 것은 그 정규 지점에서 프론트매터 갱신이 누락된 결과다.
+
+**왜 지금 바로잡는가.** sync-phase는 `in-progress → implemented → completed` 전이를 전제로 하며, `draft`에서 곧바로 그 전이를 시작하면 상태 이력이 실제 커밋 이력과 어긋난다. 또한 상태·git 이력 일관성 검사(`OwnershipTransitionRule` 계열)가 이 어긋남을 결함으로 표시할 수 있다. 이 기록은 그 왜곡을 남기지 않기 위해, 전이가 **정규 지점(M1 커밋, `295ec89`, 2026-08-05)이 아니라 사후에** 이루어졌음을 명시적으로 적는다.
+
+**무엇을 했는가.** `spec.md`·`plan.md`·`acceptance.md` 세 문서의 frontmatter만 `status: draft` → `status: in-progress`로 갱신했다(`updated:`는 이미 오늘 날짜 `2026-08-05`였으므로 추가 변경 없음). 본문(§A~§H 등 body content)은 전혀 손대지 않았다 — 이는 이 SPEC Artifact Ownership 경계가 여전히 유효함을 확인한다. `implemented`·`completed`로의 전이는 여기서 하지 않는다 — 그 전이는 sync-phase에서 manager-docs가 단일 sync 커밋으로 수행한다(같은 매트릭스, `in-progress → implemented → completed` 행).
+
+**정규 소유자·전이 요약.**
+
+| 항목 | 값 |
+|---|---|
+| 전이 | `draft → in-progress` |
+| 정규 소유자 | manager-develop (M1 커밋 시점) |
+| 정규 지점(놓친 지점) | `295ec89` — `feat(SPEC-READY-001): M1 adb 경로 해석 + 구별 보고` |
+| 백필 수행일 | 2026-08-05 |
+| 대상 파일 | `spec.md`, `plan.md`, `acceptance.md` (frontmatter만) |
+| 근거 | `.claude/rules/moai/development/spec-frontmatter-schema.md` § Status Transition Ownership Matrix |

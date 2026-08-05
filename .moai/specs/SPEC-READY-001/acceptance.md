@@ -2,7 +2,7 @@
 id: SPEC-READY-001
 title: "기기·환경 가용성 보고의 정확성 — 인수 기준"
 version: "0.5.2"
-status: draft
+status: in-progress
 created: 2026-08-04
 updated: 2026-08-05
 author: hatae
