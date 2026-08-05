@@ -412,7 +412,17 @@ $ git diff --name-only 04fb196..HEAD -- src/backend/ime-session-store.ts src/bac
 
 $ pnpm vitest run -t "connectionState"
 ```
-(③-a/③-b는 커밋 후 재확인 — 아래 커밋 절 참조)
+
+**커밋 후 재확인**(커밋 `978e83e`, `git push origin master` 완료 — `06a4270..978e83e`, `git rev-list --count --left-right origin/master...HEAD` → `0 0`):
+
+```
+$ git log --oneline 04fb196..HEAD -- src/schema/device-backend.ts
+978e83e feat(SPEC-READY-001): M3 물리 기기 단위 식별 — alternateSerials + 부속 시리얼 대상 조회
+457a5af feat(SPEC-READY-001): M2 iOS 가용성 상태 unavailable + unavailableReason 추가   (③-a 양성 대조 — 출력 있음, 통과)
+
+$ git log --oneline 04fb196..HEAD -- src/backend/ime-session-store.ts src/backend/apk-downloader.ts
+(출력 없음, ③-b 본 검사 통과)
+```
 
 ### 확정 열거 도구 재확인 (probe ①·④)
 
