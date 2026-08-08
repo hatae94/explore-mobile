@@ -124,6 +124,23 @@ export class WdaBuildConfigMissingError extends Error {
 }
 
 /**
+ * `xcodebuild`가 러너 빌드에 실패했을 때 (SPEC-IOS-002 REQ-IOS2-002, AC-IOS2-006).
+ *
+ * @MX:WARN — `xcodebuild`의 출력을 요약하거나 일반 문구로 갈아끼우지 않는다.
+ * @MX:REASON — 빌드 실패의 원인은 서명·프로비저닝·SDK 등 제각각이고, 그 원인
+ * 줄이 사용자가 다음에 무엇을 할지 정하는 유일한 재료다. "빌드에 실패했습니다"로
+ * 뭉개면 사용자는 Xcode를 직접 열어 같은 빌드를 다시 돌려야 한다.
+ */
+export class WdaBuildFailedError extends Error {
+  public readonly code = "WDA_BUILD_FAILED";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "WdaBuildFailedError";
+  }
+}
+
+/**
  * iOS에 대응 동작이 없는 키 별칭 — 조용한 no-op이 아니라 명시적 거부다.
  * `code`는 `UNSUPPORTED_KEY_ON_IOS`이며, 이 값은 SPEC-IOS-001이 정한 계약을
  * 그대로 승계한다(호출자와 테스트가 이 문자열에 의존한다).

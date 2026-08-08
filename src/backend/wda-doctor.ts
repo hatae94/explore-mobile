@@ -20,6 +20,8 @@ import type { ProcessExecutor } from "./process-executor.js";
 import { spawnProcess } from "./process-executor.js";
 import { WdaClient } from "./wda-client.js";
 import { WDA_DEFAULT_PORT, wdaRecoveryHint } from "./wda-errors.js";
+import { stopWdaRunner } from "./wda-launcher.js";
+import { WdaRunnerState } from "./wda-runner-state.js";
 
 export interface DevicectlCheck {
   available: boolean;
@@ -73,8 +75,17 @@ export interface IosInstallGuidance {
   steps?: string[];
 }
 
+/**
+ * iOS `reset`의 결과. **더 이상 no-op이 아니다** (design.md §G.1).
+ *
+ * 이전 계약("iOS에는 정리할 IME/APK 상태가 없다")은 **CLI가 아무것도 띄우지
+ * 않던 시점의 사실**이었다. 이 SPEC이 포트 포워딩과 러너를 띄우기 시작하면서
+ * 그 전제가 무너졌다 — 되돌릴 것을 만들어 놓고 `reset`을 no-op으로 두면
+ * 사용자는 정리 경로 없이 유령 프로세스를 쌓게 된다.
+ */
 export interface IosResetResult {
-  noOp: true;
+  /** 정리할 것이 없었는가. CLI가 띄운 러너가 없으면 true. */
+  noOp: boolean;
   message: string;
 }
 
@@ -88,6 +99,9 @@ export class WdaDoctor {
     private readonly platform: NodeJS.Platform = process.platform,
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly makeClient: (serial: string) => WdaClient = (serial) => new WdaClient(serial),
+    /** CLI가 띄운 러너의 기록 — 종료 자격의 판정 근거(design.md §B.1). */
+    private readonly runnerState: WdaRunnerState = new WdaRunnerState(),
+    private readonly killProcess: (pid: number) => void = (pid) => process.kill(pid),
   ) {}
 
   /**
@@ -170,14 +184,16 @@ export class WdaDoctor {
   }
 
   /**
-   * iOS `reset`은 사실상 no-op이다 — 되돌릴 IME 세션도, 설치한 APK도 없다
-   * (SPEC-IOS-001이 정한 계약 그대로. WDA 입력은 상태를 남기지 않는다).
+   * CLI가 띄운 포트 포워딩과 러너를 정리한다 (REQ-IOS2-009, AC-IOS2-026 · 027).
+   *
+   * @MX:ANCHOR — 사용자가 손으로 띄운 러너는 끄지 않는다.
+   * @MX:REASON — 손으로 띄우는 경로는 이 SPEC 이전부터 정당했고 지금도 정당하다
+   * (design.md §B.2 · §G.3). 포트를 쓰는 프로세스를 모두 죽이면 그 사용자의
+   * 러너가 사라진다 — 판정 근거는 포트가 아니라 **우리가 적어 둔 기록**이다.
    */
-  async resetDevice(_serial: string): Promise<IosResetResult> {
-    return {
-      noOp: true,
-      message: "iOS에는 정리할 IME/APK 상태가 없습니다(WDA 문자 입력은 무상태) — 되돌릴 것이 없습니다.",
-    };
+  async resetDevice(serial: string): Promise<IosResetResult> {
+    const result = await stopWdaRunner(serial, { state: this.runnerState, kill: this.killProcess });
+    return { noOp: !result.stopped, message: result.reason };
   }
 }
 

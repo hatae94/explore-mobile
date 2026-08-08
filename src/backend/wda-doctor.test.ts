@@ -1,8 +1,31 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ProcessExecutor } from "./process-executor.js";
 import { WdaClient, type WdaHttpClient } from "./wda-client.js";
 import { WdaDoctor } from "./wda-doctor.js";
+import { WdaRunnerState } from "./wda-runner-state.js";
+
+/**
+ * `resetDevice`는 이제 실제로 프로세스를 끈다. 검사가 기본 생성자를 쓰면
+ * **사용자의 진짜 `~/.explore-mobile/`을 읽고 진짜 PID에 `process.kill`을
+ * 날린다.** 그래서 모든 검사가 임시 디렉터리와 가짜 kill을 주입한다.
+ */
+let stateHome: string;
+let runnerState: WdaRunnerState;
+let killSpy: ReturnType<typeof vi.fn<(pid: number) => void>>;
+
+beforeEach(async () => {
+  stateHome = await mkdtemp(join(tmpdir(), "wda-doctor-"));
+  runnerState = new WdaRunnerState(stateHome);
+  killSpy = vi.fn<(pid: number) => void>();
+});
+
+afterEach(async () => {
+  await rm(stateHome, { recursive: true, force: true });
+});
 
 /**
  * AC-VISION-020(`doctor`가 WDA를 점검한다)은 실기기 JSON 출력으로
@@ -35,6 +58,8 @@ function doctorWith(http: WdaHttpClient, env: NodeJS.ProcessEnv = {}, exec: Proc
     "darwin",
     env,
     (serial) => new WdaClient(serial, http, env, async () => undefined),
+    runnerState,
+    killSpy,
   );
 }
 
@@ -282,9 +307,36 @@ describe("AC-IOS2-029 — 생존과 조작 가능성이 별개 필드로 실린�
 });
 
 describe("WdaDoctor.resetDevice / installGuidance", () => {
-  it("reset은 no-op이다 — iOS에는 되돌릴 IME/APK 상태가 없다", async () => {
+  /**
+   * `reset`의 계약이 바뀌었다 (design.md §G.1). 이전 계약("iOS에는 정리할
+   * IME/APK 상태가 없다 — 되돌릴 것이 없다")은 CLI가 아무것도 띄우지 않던
+   * 시점의 사실이었고, 이 SPEC이 프로세스를 띄우기 시작하면서 무너졌다.
+   */
+  it("AC-IOS2-027 — CLI가 띄우지 않았으면 아무것도 끄지 않는다", async () => {
     const doctor = doctorWith(async () => ({ status: 200, body: "{}" }));
-    await expect(doctor.resetDevice("UDID-A")).resolves.toMatchObject({ noOp: true });
+
+    const result = await doctor.resetDevice("UDID-A");
+
+    expect(result.noOp).toBe(true);
+    expect(result.message).toContain("CLI가 띄우지 않");
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it("AC-IOS2-026 — CLI가 띄운 것은 끄고 기록을 지운다", async () => {
+    await runnerState.remember({
+      udid: "UDID-A",
+      port: 8100,
+      iproxyPid: 7001,
+      runnerPid: 7002,
+      startedAt: "2026-08-08T00:00:00.000Z",
+    });
+    const doctor = doctorWith(async () => ({ status: 200, body: "{}" }));
+
+    const result = await doctor.resetDevice("UDID-A");
+
+    expect(result.noOp).toBe(false);
+    expect(killSpy.mock.calls.map((call) => call[0]).sort()).toEqual([7001, 7002]);
+    expect(await runnerState.owns("UDID-A")).toBe(false);
   });
 
   it("설치를 대신 수행하지 않고 안내만 한다", async () => {
