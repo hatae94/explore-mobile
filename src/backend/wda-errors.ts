@@ -106,6 +106,24 @@ export class WdaPortUnmappedError extends Error {
 }
 
 /**
+ * 빌드에 필요한 사용자별 설정이 선언돼 있지 않을 때 (SPEC-IOS-002 REQ-IOS2-001,
+ * AC-IOS2-001 · 002).
+ *
+ * @MX:WARN — 이 실패를 `WdaUnreachableError`로 대체하면 AC-IOS2-002가 깨진다.
+ * @MX:REASON — 두 실패의 복구 절차가 정반대다. 설정 부재는 "환경 변수를
+ * 선언하라"이고 도달 불가는 "러너를 띄우라"다. 코드를 재사용하면 사용자가
+ * 이미 떠 있는 러너를 다시 띄우며 원인을 못 찾는다(design.md §C.4).
+ */
+export class WdaBuildConfigMissingError extends Error {
+  public readonly code = "WDA_BUILD_CONFIG_MISSING";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "WdaBuildConfigMissingError";
+  }
+}
+
+/**
  * iOS에 대응 동작이 없는 키 별칭 — 조용한 no-op이 아니라 명시적 거부다.
  * `code`는 `UNSUPPORTED_KEY_ON_IOS`이며, 이 값은 SPEC-IOS-001이 정한 계약을
  * 그대로 승계한다(호출자와 테스트가 이 문자열에 의존한다).

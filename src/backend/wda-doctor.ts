@@ -26,9 +26,33 @@ export interface DevicectlCheck {
   message?: string;
 }
 
+/**
+ * 러너를 **조작할 수 있는가** — 생존과는 다른 축이다 (SPEC-IOS-002 REQ-IOS2-004).
+ *
+ *   - `"ok"`      권한을 요구하는 읽기 호출이 성공했다
+ *   - `"failed"`  러너는 응답하는데 그 호출이 실패했다
+ *   - `"unknown"` 러너가 응답하지 않아 **물을 수단이 없다**
+ *
+ * `"failed"`의 원인은 지금 가르지 않는다. 권한 상실로 인한 500과 그 밖의
+ * 원인으로 인한 500을 가를 판별자가 없고, 그 판별자는 조사 대상도 아니다
+ * (design.md §A.5 · §B.1.1). 판별자가 확인되면 그때 값을 나눈다.
+ */
+export type WdaControllable = "ok" | "failed" | "unknown";
+
 export interface WdaCheck {
-  /** WDA가 이 포트에서 응답하는가. */
+  /**
+   * **러너 생존** — WDA가 이 포트에서 응답하는가(`GET /status`). 2값이다.
+   *
+   * @MX:ANCHOR — 이 값과 `controllable`을 하나로 합치지 않는다.
+   * @MX:REASON — 2026-08-03 관측에서 러너가 **살아 있으면서 조작만 안 되는**
+   * 상태가 실재했다(`/status` 200 · `/screenshot` 500). 합치면 그 상태가
+   * "없는 것"으로 판정돼 중복 기동을 부르고(AC-IOS2-009 회귀), 반대로 "정상"
+   * 으로 판정되면 사용자가 다음 명령에서 실패한다. 두 축을 따로 싣는 것이
+   * AC-IOS2-029가 요구하는 전부다.
+   */
   reachable: boolean;
+  /** **조작 가능성** — 권한을 요구하는 호출의 결과. 3값(위 타입 주석 참조). */
+  controllable: WdaControllable;
   port: number;
   /** WDA 빌드/OS 요약 (도달했을 때만). */
   build?: string;
@@ -85,8 +109,10 @@ export class WdaDoctor {
   }
 
   /**
-   * WDA가 이 기기의 포트에서 응답하는가 (AC-VISION-020). 절대 던지지 않는다 —
-   * `doctor`의 일은 진단하고 보고하는 것이지 실패하는 것이 아니다.
+   * WDA가 이 기기의 포트에서 **살아 있는가**, 그리고 **조작할 수 있는가**
+   * (AC-VISION-020 · SPEC-IOS-002 AC-IOS2-010 · 029). 두 질문을 따로 답한다.
+   * 절대 던지지 않는다 — `doctor`의 일은 진단하고 보고하는 것이지 실패하는
+   * 것이 아니다.
    */
   async checkWda(serial: string): Promise<WdaCheck> {
     const portMapDeclared = (this.env.EXPLORE_MOBILE_WDA_PORTS ?? "").trim().length > 0;
@@ -96,16 +122,30 @@ export class WdaDoctor {
       client = this.makeClient(serial);
     } catch (err) {
       // 매핑이 선언됐는데 이 기기가 빠져 있는 경우 (WdaPortUnmappedError)
-      return { reachable: false, port: WDA_DEFAULT_PORT, message: errorMessage(err), portMapDeclared };
+      return {
+        reachable: false,
+        controllable: "unknown",
+        port: WDA_DEFAULT_PORT,
+        message: errorMessage(err),
+        portMapDeclared,
+      };
     }
 
     const port = Number.parseInt(new URL(client.baseUrl).port, 10);
     try {
       const status = await client.request("GET", "/status", undefined, { idempotent: true });
       const build = summarizeStatus(status);
-      return { reachable: true, port, portMapDeclared, ...(build === undefined ? {} : { build }) };
+      const controllable = await probeControllable(client);
+      return { reachable: true, controllable, port, portMapDeclared, ...(build === undefined ? {} : { build }) };
     } catch (err) {
-      return { reachable: false, port, message: `${wdaRecoveryHint(serial, port)}\n원인: ${errorMessage(err)}`, portMapDeclared };
+      // `/status`가 응답하지 않으면 권한을 물을 수단 자체가 없다 (design.md §B.1.1 3번).
+      return {
+        reachable: false,
+        controllable: "unknown",
+        port,
+        message: `${wdaRecoveryHint(serial, port)}\n원인: ${errorMessage(err)}`,
+        portMapDeclared,
+      };
     }
   }
 
@@ -138,6 +178,35 @@ export class WdaDoctor {
       noOp: true,
       message: "iOS에는 정리할 IME/APK 상태가 없습니다(WDA 문자 입력은 무상태) — 되돌릴 것이 없습니다.",
     };
+  }
+}
+
+/**
+ * 조작 가능성을 묻는다 — **권한을 요구하는 읽기 호출**의 성공 여부로 판정한다
+ * (design.md §A.1, REQ-IOS2-004).
+ *
+ * `GET /screenshot`을 쓰는 이유는 2026-08-03 관측이 후보를 갈랐기 때문이다.
+ * 권한 상실 상태에서 `/status`는 200, `/wda/locked`도 정상 응답이었고
+ * `/screenshot`만 500이었다 — 응답 여부가 아니라 **권한을 요구하는가**가
+ * 갈랐다(design.md §A.2).
+ *
+ * @MX:WARN — 조작 계열(탭·스와이프·키 입력)이나 세션 생성으로 바꾸지 않는다.
+ * @MX:REASON — 판정이 기기 상태를 바꾸면 그것은 관측이 아니다. 이 호출은
+ * 세션을 만들지 않는 읽기 전용 GET이며, `wda-doctor.test.ts`의 AC-IOS2-011
+ * 절이 호출된 경로 전부를 읽어 그 사실을 판정한다.
+ *
+ * @MX:NOTE — 비용은 기기에 따라 크게 다르다. 2026-08-08 iPad Pro 12.9" 실측은
+ * 680ms / 10.2MiB로, design.md §A.4가 적은 "111ms · 약 1MB"(아이폰 기준으로
+ * 보인다)의 6~10배다. `doctor`는 자주 부르는 명령이 아니므로 수용하되,
+ * 자동 복구 경로에서는 이 판정을 생략한다(design.md §A.4 후단).
+ */
+async function probeControllable(client: WdaClient): Promise<WdaControllable> {
+  try {
+    await client.request("GET", "/screenshot", undefined, { idempotent: true });
+    return "ok";
+  } catch {
+    // 원인은 가르지 않는다 — 판별자가 없다(design.md §A.5 · §B.1.1).
+    return "failed";
   }
 }
 

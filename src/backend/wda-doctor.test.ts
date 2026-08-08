@@ -72,12 +72,52 @@ describe("WdaDoctor.checkDevicectl", () => {
   });
 });
 
+/** 2026-08-08 아이패드 실측 그대로의 `/screenshot` 성공 응답(본문은 줄임). */
+const REAL_SCREENSHOT_BODY = JSON.stringify({ value: "iVBORw0KGgoAAAANSUhEUgAACqw", sessionId: null });
+
+/** 권한을 잃은 러너의 `/screenshot` 응답 — `/status`는 200인데 이쪽만 500. */
+const PERMISSION_DENIED_BODY = JSON.stringify({
+  value: { error: "unknown error", message: "Error Domain=com.apple.dt.XCTest" },
+});
+
+/**
+ * 경로별로 다른 응답을 내면서 **무엇을 어떤 메서드로 불렀는지 기록**하는 대역.
+ * AC-IOS2-010(판정 근거)과 AC-IOS2-011(읽기 전용)은 둘 다 "무엇을 불렀는가"를
+ * 물으므로, 호출 기록 없이는 판정할 수 없다.
+ */
+function recordingHttp(responder: (url: string) => { status: number; body: string } | Error) {
+  const calls: { url: string; method: string }[] = [];
+  const http: WdaHttpClient = async (url, init) => {
+    calls.push({ url, method: init.method ?? "GET" });
+    const result = responder(url);
+    if (result instanceof Error) throw result;
+    return result;
+  };
+  return { http, calls };
+}
+
+/** 정상 러너 — `/status`도 `/screenshot`도 200. (design.md §B.1.1 1번) */
+function healthyResponder(url: string) {
+  return url.includes("/screenshot")
+    ? { status: 200, body: REAL_SCREENSHOT_BODY }
+    : { status: 200, body: REAL_STATUS_BODY };
+}
+
+/** 권한 상실 러너 — `/status` 200, `/screenshot` 500. (design.md §B.1.1 2번) */
+function permissionLostResponder(url: string) {
+  return url.includes("/screenshot")
+    ? { status: 500, body: PERMISSION_DENIED_BODY }
+    : { status: 200, body: REAL_STATUS_BODY };
+}
+
 describe("WdaDoctor.checkWda", () => {
   it("WDA가 응답하면 reachable + 빌드 요약을 보고한다", async () => {
-    const doctor = doctorWith(async () => ({ status: 200, body: REAL_STATUS_BODY }));
+    const { http } = recordingHttp(healthyResponder);
+    const doctor = doctorWith(http);
 
     await expect(doctor.checkWda("UDID-A")).resolves.toEqual({
       reachable: true,
+      controllable: "ok",
       port: 8100,
       portMapDeclared: false,
       build: "WDA 16.1.1 / iOS 26.5.2 / iphone",
@@ -127,6 +167,117 @@ describe("WdaDoctor.checkWda", () => {
   it("매핑 미선언 상태를 portMapDeclared:false로 드러낸다", async () => {
     const doctor = doctorWith(async () => ({ status: 200, body: REAL_STATUS_BODY }));
     await expect(doctor.checkWda("UDID-A")).resolves.toMatchObject({ portMapDeclared: false });
+  });
+});
+
+describe("AC-IOS2-010 — 가용성 판정이 /status 단독이 아니다 (REQ-IOS2-004)", () => {
+  /**
+   * 근거: 2026-08-03 권한 상실 관측 — `/status`는 **200 정상**, `/wda/locked`도
+   * 정상 응답, `/screenshot`만 500이었다(design.md §A.2). 응답 여부가 아니라
+   * **권한을 요구하는 호출인가**가 갈랐다.
+   */
+  it("판정 경로가 권한 요구 호출(/screenshot)을 실제로 부른다", async () => {
+    const { http, calls } = recordingHttp(healthyResponder);
+    await doctorWith(http).checkWda("UDID-A");
+
+    expect(calls.some((call) => call.url.includes("/screenshot"))).toBe(true);
+  });
+
+  it("/status가 200이어도 권한 호출이 실패하면 조작 가능으로 보고하지 않는다", async () => {
+    const { http } = recordingHttp(permissionLostResponder);
+    const result = await doctorWith(http).checkWda("UDID-A");
+
+    // 이 상태가 REQ-IOS2-004의 존재 이유다 — 이전 코드는 여기서 "정상"을 답했다.
+    expect(result.reachable).toBe(true);
+    expect(result.controllable).not.toBe("ok");
+  });
+});
+
+describe("AC-IOS2-011 — 판정 호출이 화면을 바꾸지 않는다 (주 판정: 코드 확인)", () => {
+  /** 판정 경로가 불러도 되는 읽기 전용 엔드포인트. */
+  const READ_ONLY_PATHS = ["/status", "/screenshot"];
+
+  it("판정 경로의 모든 호출이 GET이다", async () => {
+    const { http, calls } = recordingHttp(healthyResponder);
+    await doctorWith(http).checkWda("UDID-A");
+
+    expect(calls.length).toBeGreaterThan(0); // 0건 통과 방지
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("판정 경로가 읽기 전용 엔드포인트만 부른다 — 세션 생성도 조작 계열도 없다", async () => {
+    const { http, calls } = recordingHttp(healthyResponder);
+    await doctorWith(http).checkWda("UDID-A");
+
+    const paths = calls.map((call) => new URL(call.url).pathname);
+    expect(paths.length).toBeGreaterThan(0); // 0건 통과 방지
+    for (const path of paths) {
+      expect(READ_ONLY_PATHS).toContain(path);
+    }
+    // 조작 계열(탭·스와이프·키 입력)과 세션 생성이 섞여 들어오지 않았다.
+    expect(paths.some((path) => path.includes("/actions"))).toBe(false);
+    expect(paths.some((path) => path.includes("/session"))).toBe(false);
+  });
+
+  it("권한 호출이 실패하는 상태에서도 조작 계열로 되묻지 않는다", async () => {
+    const { http, calls } = recordingHttp(permissionLostResponder);
+    await doctorWith(http).checkWda("UDID-A");
+
+    const paths = calls.map((call) => new URL(call.url).pathname);
+    for (const path of paths) {
+      expect(READ_ONLY_PATHS).toContain(path);
+    }
+  });
+});
+
+describe("AC-IOS2-029 — 생존과 조작 가능성이 별개 필드로 실린다 (REQ-IOS2-004)", () => {
+  /**
+   * design.md §B.1.1의 세 상태가 **서로 다른 필드 조합**으로 나타나야 한다.
+   * 특히 2번(생존=응답 / 권한=실패)이 3번(생존=무응답 / 권한=물을 수 없음)과
+   * 구별돼야 한다 — 합치면 §B.1이 고친 자기모순이 조용히 되돌아온다.
+   */
+  it("§B.1.1 1번 — 생존=응답 / 권한=성공", async () => {
+    const { http } = recordingHttp(healthyResponder);
+    await expect(doctorWith(http).checkWda("UDID-A")).resolves.toMatchObject({
+      reachable: true,
+      controllable: "ok",
+    });
+  });
+
+  it("§B.1.1 2번 — 생존=응답 / 권한=실패 (§A.2가 실제로 관측한 상태)", async () => {
+    const { http } = recordingHttp(permissionLostResponder);
+    await expect(doctorWith(http).checkWda("UDID-A")).resolves.toMatchObject({
+      reachable: true,
+      controllable: "failed",
+    });
+  });
+
+  it("§B.1.1 3번 — 생존=무응답 / 권한=물을 수 없음", async () => {
+    const { http } = recordingHttp(() => new Error("ECONNREFUSED"));
+    await expect(doctorWith(http).checkWda("UDID-A")).resolves.toMatchObject({
+      reachable: false,
+      controllable: "unknown",
+    });
+  });
+
+  it("세 상태가 서로 다른 조합이다 — 두 값이 하나로 합쳐지지 않았다", async () => {
+    const results = await Promise.all([
+      doctorWith(recordingHttp(healthyResponder).http).checkWda("UDID-A"),
+      doctorWith(recordingHttp(permissionLostResponder).http).checkWda("UDID-A"),
+      doctorWith(recordingHttp(() => new Error("ECONNREFUSED")).http).checkWda("UDID-A"),
+    ]);
+
+    const combos = results.map((result) => `${result.reachable}/${result.controllable}`);
+    expect(new Set(combos).size).toBe(3);
+  });
+
+  it("생존이 2값·권한이 3값으로 서로 다른 축이다 — 권한은 불리언이 아니다", async () => {
+    const { http } = recordingHttp(permissionLostResponder);
+    const result = await doctorWith(http).checkWda("UDID-A");
+
+    expect(typeof result.reachable).toBe("boolean");
+    expect(typeof result.controllable).toBe("string");
+    expect(["ok", "failed", "unknown"]).toContain(result.controllable);
   });
 });
 

@@ -1214,7 +1214,7 @@ describe("runCli", () => {
       const checkDevicectlSpy = vi.spyOn(wdaDoctor, "checkDevicectl").mockResolvedValue({ available: true });
       const checkWdaSpy = vi
         .spyOn(wdaDoctor, "checkWda")
-        .mockResolvedValue({ reachable: true, port: 8100, portMapDeclared: false });
+        .mockResolvedValue({ reachable: true, controllable: "ok", port: 8100, portMapDeclared: false });
 
       const result = await runCli(
         ["doctor", "--device", iosDeviceInfo.serial],

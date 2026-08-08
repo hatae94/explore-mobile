@@ -2,9 +2,9 @@
 id: SPEC-IOS-002
 title: "iOS 제어 준비의 자동화 — 진행 기록"
 version: "0.3.0"
-status: draft
+status: in-progress
 created: 2026-08-06
-updated: 2026-08-07
+updated: 2026-08-08
 author: hatae
 ---
 
@@ -126,9 +126,194 @@ $ pnpm build       → exit 0
 
 ---
 
+## §E.2 Run-phase Evidence
+
+### 착수 조건 — 감사 미통과 상태로 진입했다는 선언
+
+2026-08-08 run-phase 진입. **계획 감사를 통과하지 못한 상태에서 진입했다.**
+
+| 항목 | 값 |
+|---|---|
+| 최근 감사 판정 | 2회차 종합 **0.78** / 기준선 **0.85** — **미달** |
+| 진입 근거 | 사용자 결정 — "부채로 명시하고 진입" |
+| 부채로 남는 것 | 1회차 이월 10건(F9~F12 · F14 · F16 · F17 · F19~F21) + 2회차 미반영 경미 지적 |
+
+**감사 보고서 파일 부재 (착수 시 확인)**
+
+```
+$ find .moai/reports -iname "*IOS-002*"
+(출력 없음)
+```
+
+`§E.1` 감사 이력 표는 보고서 위치를 `.moai/reports/plan-audit/`로 적지만 **그 디렉터리에 SPEC-IOS-002 파일이 0건**이다.
+
+**git 부재가 아니라 디스크 부재다** — `.gitignore:209`가 `.moai/reports/plan-audit/*.md`를 무시하므로(로컬 산출물 방침) 감사 보고서는 애초에 커밋되지 않는다. 따라서 "git에 없다"는 신호가 아니다. 그러나 위 `find`는 **파일 시스템**을 훑은 것이고, 같은 디렉터리에 다른 SPEC의 보고서 9건(SPEC-READY-001 5건 · PROJECT 3건 · SPEC-IMESTATE-001 1건)은 실재한다. 즉 이 SPEC의 것만 없다.
+
+따라서 `0.78`과 이월 10건은 **`progress.md` 자신의 기록 외에 대조할 원본이 없다.** 이 사실을 착수 시점에 남긴다 — 나중에 "감사 결과대로 했다"고 말할 때 그 근거가 자기 참조임을 알 수 있도록.
+
+`§E.1`이 적은 "2회차 잔여 9건"의 **9라는 숫자는 이 문서 어디에서도 뒷받침되지 않는다** — 원문은 개수 없이 "2회차 경미 지적"이라고만 적는다.
+
+### 착수 시점 기준선 재측정 (2026-08-08)
+
+```
+$ git log -1 --format='%h %s'
+e2eec6a docs(SPEC-IOS-002): 0.3.0 — iOS 준비 자동화 계획 문서 6종 + 계획 감사 2회 반영
+
+$ git rev-list --count --left-right origin/master...HEAD
+0	1                          # 로컬이 1커밋 앞섬 — e2eec6a 미푸시. plan.md §A.1의 "0 0" 기대와 다름
+
+$ pnpm test        → 28 files / 611 passed, exit 0
+$ pnpm typecheck   → exit 0
+$ pnpm build       → exit 0
+```
+
+### M1 — 조사 (아이패드)
+
+산출물: `.moai/reports/ios-verification/SPEC-IOS-002-m1-2026-08-08.md`
+
+대상 기기가 **아이폰에서 아이패드로 바뀌었다**(사용자 지시 + 관측 뒷받침). `idevice_id -l`이 아이패드 하나만 반환한다 — 아이폰은 USB(usbmuxd) 경유로 잡히지 않는다. `devicectl`은 둘 다 `available (paired)`로 보고하므로, **`devicectl`의 `State`는 `iproxy` 사용 가능성의 신호가 아니다.**
+
+M1 요건 6개 대비: 1 완료 · 2 부분(1/3) · 3 불가(아이폰 USB 미연결) · 4 미착수 · 5 부분 · 6 미착수.
+
+**M1이 낸 주요 자료**
+
+1. **관문 1개의 감지 신호** — UI 자동화 승인 미충족 시 `xcodebuild`가 exit 65 + `Timed out while enabling automation mode.` (`XCTFuture Code=1000`). 미충족/충족 한 쌍을 다른 변수 고정 상태에서 관측. 다만 exit 65는 일반 실패 코드라 판별자로 쓸 수 없고, `Code=1000`의 배타성이 미확인이라 **규칙을 확정하지 않았다**(`design.md` §E.2 — 모르는 상태에서 규칙을 쓰지 않는다).
+2. **`design.md` §A.4 수치 반증** — `/screenshot`을 "111ms, 약 1MB"로 적었으나 실측은 **680ms / 10.2MiB**(3회 일치). 기기 종속으로 보인다(아이폰 기준 → iPad Pro 12.9"). §A.4의 "수용한다" 결론은 살아남지만 **전제가 달라졌으므로 본문 정정이 필요하다.**
+3. **AC-IOS2-023 관측** — 러너 미기동 상태에서 아이패드가 `devices`에 남고 `connectionState: "unavailable"` + 사유를 실었다. 실기기 AC 1건 확보.
+4. **범위 판단이 필요한 발견** — 기기가 `unavailable`이면 `doctor`가 `wdaEnvironment`를 내지 못한다(`src/cli/commands/doctor.ts:59-62`에서 iOS 갈래 진입 실패). AC-IOS2-018의 도달 가능성에 영향.
+5. **`unavailableReason` 문구가 로컬 터널 상태와 무관** — `iproxy`가 8100에서 LISTEN 중인데도 "터널이 연결되지 않았다"가 그대로였다. 이 문구는 이미 시점 종속성 때문에 감지 신호 후보에서 제외돼 있는데(`§E.1.1`), 이번 관측은 **로컬 상태와도 무관하다**는 다른 이유를 추가한다.
+
+### 실기기 AC 판정 현황 (2026-08-08 아이패드 기동 시점)
+
+| AC | 상태 | 근거 |
+|---|---|---|
+| AC-IOS2-023 | **PASS(관측)** | M1 기록 §2.1 · §3.2 |
+| AC-IOS2-012 | **미관측** | 권한 상실 상태를 만들 수 없다(`acceptance.md` §E) |
+| AC-IOS2-011 보조 | 미관측 | 오염 통제(방해금지) 하에 재관측 필요 |
+
+### M2 — 설정 자리와 판정 근거 교체 (REQ-IOS2-001 · REQ-IOS2-004)
+
+**바뀐 파일**
+
+| 파일 | 무엇을 |
+|---|---|
+| `src/backend/wda-build-config.ts` | 신규 — 환경 변수 3개에서 빌드 설정 읽기 |
+| `src/backend/wda-build-config.test.ts` | 신규 — AC-001 · 002 · 004 (양성 대조 포함) |
+| `src/backend/wda-errors.ts` | `WdaBuildConfigMissingError` 추가. **기존 4종 무변경** |
+| `src/backend/wda-doctor.ts` | `WdaCheck.controllable` 추가 + `probeControllable` 신설 |
+| `src/backend/wda-doctor.test.ts` | AC-010 · 011 · 029 추가 |
+| `src/cli/router.test.ts` | 대역 1곳에 새 필드 반영 (타입 검사가 잡음) |
+
+**설정 자리 — 이름을 여기서 확정한다** (`design.md` §C.4가 "이름은 계획 단계에서 정한다"고 남겨둔 것)
+
+| 항목 | 환경 변수 |
+|---|---|
+| Apple 개발팀 식별자 | `EXPLORE_MOBILE_IOS_TEAM_ID` |
+| 러너 번들 식별자 | `EXPLORE_MOBILE_IOS_BUNDLE_ID` |
+| WDA 소스 트리 경로 | `EXPLORE_MOBILE_WDA_SOURCE` |
+| 부재 시 오류 코드 | `WDA_BUILD_CONFIG_MISSING` |
+
+접두사 `EXPLORE_MOBILE_`은 기존 `EXPLORE_MOBILE_WDA_PORTS`의 관례를 따랐다.
+
+**판정 근거 교체** — `WdaCheck`에 필드 **하나만** 더했다. 기존 `reachable`(=생존, `/status`)은 의미를 그대로 두고, `controllable`(3값: `ok` / `failed` / `unknown`)을 신설했다. 기존 필드를 재해석하지 않았으므로 기존 소비자의 의미가 바뀌지 않는다.
+
+#### AC 판정 (M2 범위)
+
+| AC | 판정 | 근거 | 종류 |
+|---|---|---|---|
+| AC-IOS2-001 | **PASS** | `wda-build-config.test.ts` — 코드 · 메시지 · 빠진 것만 지목 · 공백 취급 | unit |
+| AC-IOS2-002 | **PASS** | 같은 파일 — `code !== "WDA_UNREACHABLE"` + 메시지에 `iproxy` 부재 | unit |
+| AC-IOS2-004 | **PASS** | 같은 파일 — 검사 파일 소유 양성 대조 ①(표본이 4패턴 전부에 걸림) + ②(제품 소스 0매치) + 패턴 목록 비어있지 않음 | unit + 코드 확인 |
+| AC-IOS2-010 | **PASS** | `wda-doctor.test.ts` — 판정 경로가 `/screenshot`을 실제 호출 + `/status` 200인데 권한 실패 시 `ok`가 아님 | unit + 코드 확인 |
+| AC-IOS2-011 (주) | **PASS** | 같은 파일 — 호출 경로 전부가 GET이고 `{/status, /screenshot}` 안에 있음, `/session`·`/actions` 부재. `WdaClient.request`가 세션을 만들지 않음을 코드로 확인(`wda-client.ts:187-193`) | 코드 확인 |
+| AC-IOS2-011 (보조) | **미관측** | 실기기 화면 전후 비교를 오염 통제(방해금지) 하에 뜨지 않았다 | e2e·manual |
+| AC-IOS2-012 | **미관측** | 권한 상실 상태를 만들 수 없다 (`acceptance.md` §E에서 선언됨). **REQ-004는 실환경 판정 0건으로 마감될 수 있다** | e2e·manual |
+| AC-IOS2-029 | **PASS** | 같은 파일 — §B.1.1 세 상태가 서로 다른 조합(집합 크기 3) + 생존은 boolean · 권한은 3값 문자열. 실기기 `doctor` 출력에서도 두 필드 분리 확인 | unit + 코드 확인 + 실기기 |
+| AC-IOS2-028 | **부분 PASS** | 아래 참조 | e2e(호스트) |
+| AC-IOS2-003 | **M4로 이월** | 아래 참조 | — |
+
+#### AC-IOS2-028 — 부분 PASS인 이유
+
+실제 프로세스에서 실제 환경 변수를 세우고 지운 두 상태를 판정했다. `process.env` mock이 아니다.
+
+```
+$ EXPLORE_MOBILE_IOS_TEAM_ID=ABCDE12345 EXPLORE_MOBILE_IOS_BUNDLE_ID=com.example.wda \
+  EXPLORE_MOBILE_WDA_SOURCE=/Users/hatae/WebDriverAgent \
+  node -e 'import("./dist/backend/wda-build-config.js").then(m=>console.log(JSON.stringify(m.readWdaBuildConfig())))'
+{"teamId":"ABCDE12345","bundleId":"com.example.wda","wdaSourcePath":"/Users/hatae/WebDriverAgent"}
+
+$ env -u EXPLORE_MOBILE_IOS_TEAM_ID -u EXPLORE_MOBILE_IOS_BUNDLE_ID -u EXPLORE_MOBILE_WDA_SOURCE \
+  node -e '... try{readWdaBuildConfig()}catch(e){...}'
+code=WDA_BUILD_CONFIG_MISSING
+iOS 빌드 설정이 선언돼 있지 않습니다 (3개). 다음을 **환경 변수**로 선언하세요:
+  export EXPLORE_MOBILE_IOS_TEAM_ID="<Apple 개발팀 식별자>"
+  export EXPLORE_MOBILE_IOS_BUNDLE_ID="<러너 번들 식별자>"
+  export EXPLORE_MOBILE_WDA_SOURCE="<WebDriverAgent 소스 트리 경로>"
+```
+
+**남은 간극**: `acceptance.md` AC-028은 *"CLI를 **실행해** 판정한다"*고 적는다. 위 실행 주체는 CLI가 아니라 `dist`를 부르는 `node` 프로세스다. **빌드 설정을 소비하는 CLI 명령이 아직 없기 때문**이며(그것은 M4 REQ-002의 산출물), M4에서 CLI 표면이 생기면 같은 판정을 CLI로 다시 떠야 완전히 닫힌다.
+
+실환경변수라는 **판정의 성격**(원칙 ④가 이름까지 대어 지목한 것)은 충족했고, **실행 주체**만 미달이다. 그래서 PASS가 아니라 부분 PASS로 적는다.
+
+#### AC-IOS2-003 — M4로 이월한 이유
+
+AC-003은 *"설정 값이 빌드 인자로 그대로 전달된다"*(argv 구성)를 판정한다. `plan.md` §C는 이것을 M2 목록(AC-001~004)에 넣었으나, **M2에는 빌드 명령 구성이 없다** — 빌드는 M4(REQ-002)의 산출물이다. M2에서 argv 함수를 미리 만들면 M4가 쓰지도 않을 형태를 추측하게 되므로, **판정 대상이 생기는 M4로 옮긴다.**
+
+#### 회귀 확인
+
+```
+$ pnpm test        → 29 files / 635 passed, exit 0    (착수 시 28 files / 611 → +1 파일 / +24건)
+$ pnpm typecheck   → exit 0
+$ pnpm build       → exit 0
+
+$ grep -nE "security find-|showBuildSettings|DEVELOPMENT_TEAM|Library/MobileDevice" src/backend/wda-build-config.ts
+매치 없음 (AC-004 본 판정)
+
+$ grep -n 'public readonly code = ' src/backend/wda-errors.ts
+50:  WDA_UNREACHABLE      ← 기존 4종 무변경
+72:  WDA_RESPONSE_LOST
+82:  WDA_COMMAND_FAILED
+100: WDA_PORT_UNMAPPED
+118: WDA_BUILD_CONFIG_MISSING   ← 신규
+132: UNSUPPORTED_KEY_ON_IOS
+```
+
+타입 검사가 소비자 하나(`router.test.ts:1217`)를 잡았다 — 새 필드를 안 채운 대역이었다. 테스트는 통과하는데 타입만 깨진 상태였으므로, **테스트만 돌렸으면 놓쳤을 경계**다.
+
+증거 로그: `.moai/state/verify/d48410e1/{4-test-after,5-typecheck-after,6-build-after}.log`
+
+#### 미검증으로 남는 것
+
+- AC-011 보조 증거 · AC-012 — 실기기 관측 미실시 (위 표)
+- `probeControllable`이 `"failed"`를 낼 때 그 원인이 권한 상실인지 다른 것인지 **가르지 않는다.** 판별자가 없고 조사 대상도 아니다(`design.md` §A.5 · §B.1.1). 거짓 음성(쓸 수 있는데 못 쓴다고 말함)이 가능하다.
+- `/screenshot` 비용이 기기에 따라 10배 이상 차이난다(§M1 기록). `doctor` 호출마다 10MiB를 받아 JSON으로 파싱한다.
+
+---
+
 ## §F Phase 4 Mode Selection
 
-(run-phase 진입 시 오케스트레이터가 기록한다)
+**Decision: sub-agent**
+
+| 입력 | 값 |
+|---|---|
+| tier | L |
+| scope (파일 수) | M2 범위 7파일 — 임계 10 미만 |
+| domain 수 | 2 (backend TypeScript · SPEC 문서) — 임계 3 미만 |
+| 파일 언어 구성 | TypeScript 중심 + markdown |
+| 병렬 이득 | **낮음** — 코딩 중심 작업 |
+
+| 모드 | 선택 | 사유 |
+|---|---|---|
+| trivial | 미선택 | 의미 변경이 있는 다파일 작업 |
+| background | 미선택 | 읽기 전용이 아니다 |
+| agent-team | 미선택 | 은퇴한 모드 |
+| parallel | 미선택 | 코딩 중심 — 병렬 이득이 낮다 |
+| **sub-agent** | **선택** | 기본 대체값. 도메인 2 · 파일 7로 두 임계 모두 미달 |
+| workflow | 미선택 | 기계적 대량 변환(약 30파일)이 아니다 |
+
+**정당화**: M2는 판정 로직 교체와 새 설정 읽기 경로로, 파일 간 의존이 있는 코딩 작업이다. 도메인 수(2)와 파일 수(7) 모두 병렬 전환 임계에 미달하며, 코딩 작업은 조사 작업보다 실제로 병렬화 가능한 조각이 적다. 순차 진행이 맞다.
+
+**경계 사례 없음** — 두 임계 모두 여유 있게 미달.
 
 ---
 

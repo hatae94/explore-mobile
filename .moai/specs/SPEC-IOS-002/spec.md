@@ -2,9 +2,9 @@
 id: SPEC-IOS-002
 title: "iOS 제어 준비의 자동화 — 사람이 해야 할 것만 사람에게 남긴다"
 version: "0.3.0"
-status: draft
+status: in-progress
 created: 2026-08-06
-updated: 2026-08-07
+updated: 2026-08-08
 author: hatae
 priority: P1
 phase: "v0.6.0 target"
