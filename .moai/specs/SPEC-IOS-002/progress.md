@@ -342,10 +342,42 @@ Tue Aug 11 16:19:34 KST 2026        # 발급 Aug 04 → 정확히 7일
 
 부수 관측: `~/Library/MobileDevice/Provisioning Profiles/`는 **비어 있다**(0개). 최신 Xcode가 위치를 옮겼으므로 만료 판정은 그 디렉터리가 아니라 산출물 안의 `embedded.mobileprovision`을 봐야 한다.
 
+### CLI 표면 연결 — `doctor --yes`
+
+`WdaDoctor.bringUpWda(serial, consent)`를 `doctor`의 iOS 갈래에 붙였다. Android의 `installMissingAdb(args.yes)`와 같은 자리·같은 동의 규칙(`design.md` §H)이며, `--yes`가 없으면 부르지 않으므로 이전 동작·이전 비용 그대로다. 결과는 `wdaEnvironment.bringUp`에 실린다.
+
+**준비 자동화가 자기 전제를 요구하던 고리를 끊었다.** 기기가 `unavailable`이면 `resolveTargetDevice`가 실패해 iOS 갈래에 도달하지 못했고(§M1 §2.2에서 보고 누락으로 관측한 것), 그 결과 **기기를 올리는 `--yes` 경로가 기기가 올라와 있어야만 닿을 수 있었다.** 이름이 지목된 기기가 목록에 있고 iOS면 연결 상태와 무관하게 진입하도록 고쳤다. **AC-IOS2-018의 도달 가능성도 함께 열렸다** — M6이 관문 감지를 구현하면 준비 미완 상태에서도 결과를 실을 그릇이 생긴다.
+
+#### 실기기 종단 확인 (2026-08-09)
+
+```
+$ doctor --device <iPad> --yes            # 산출물 있음
+bringUp: {"attempted":true,"built":false,"launched":true,"ok":true}
+wda:     {"reachable":true,"controllable":"ok","build":"WDA 16.1.1 / iOS 26.5.2 / ipad"}
+
+$ reset --device <iPad>
+{"noOp":false,"message":"CLI가 띄운 러너를 정리했습니다 (포트 8100)."}   # 8100 → 000
+
+$ env -u <설정 3종> doctor --device <iPad> --yes    # 산출물 치운 상태
+bringUp: {"attempted":true,"built":false,"ok":false,"code":"WDA_BUILD_CONFIG_MISSING", ...}
+
+$ <설정 3종 선언> doctor --device <iPad> --yes      # 산출물 치운 상태
+bringUp: {"attempted":true,"built":true,"launched":true,"ok":true}
+```
+
+#### AC 판정 갱신
+
+| AC | 이전 | 지금 | 근거 |
+|---|---|---|---|
+| AC-IOS2-028 | 부분 PASS | **PASS (실기기·CLI)** | 세운 상태 → CLI가 읽어 `built:true` / 지운 상태 → CLI가 `WDA_BUILD_CONFIG_MISSING`. **실행 주체가 CLI 프로세스**이므로 `dist` 직접 호출 우회가 사라졌다 |
+| AC-IOS2-002 | PASS (unit) | PASS (unit + **CLI**) | CLI 경로에서도 코드가 `WDA_UNREACHABLE`이 아님을 확인 |
+| AC-IOS2-005 | PASS (실기기) | PASS (실기기 **via CLI**) | `doctor --yes`가 빌드까지 수행 |
+| AC-IOS2-026 | PASS (실기기) | PASS (실기기, 2회) | `reset` CLI 명령으로 재확인 |
+
 #### 남은 것
 
-- CLI 표면 미연결 — `buildWdaRunner` / `launchWdaRunner`를 부르는 명령이 없다. `reset`만 연결됐다
-- AC-011 보조 증거 · AC-012 — 여전히 미관측
+- AC-011 보조 증거 · AC-012 — 여전히 미관측 (`acceptance.md` §E)
+- M5 · M6 · M7 미착수
 
 ---
 
