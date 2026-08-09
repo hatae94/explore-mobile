@@ -12,6 +12,8 @@
  * 손으로 띄운 러너를 못 보고 중복 기동한다(AC-IOS2-009 위반).
  */
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { WdaControllable } from "./wda-doctor.js";
 import { WdaRunnerState } from "./wda-runner-state.js";
 
@@ -21,8 +23,14 @@ export interface WdaProbe {
   controllable(port: number): Promise<WdaControllable>;
 }
 
-/** 백그라운드로 띄우고 프로세스 식별자를 돌려준다. */
-export type BackgroundSpawner = (command: string, args: string[]) => Promise<number>;
+/**
+ * 백그라운드로 띄우고 프로세스 식별자를 돌려준다.
+ *
+ * `logPath`가 주어지면 출력을 그 파일로 흘린다. 선택 인자가 아니라 사실상
+ * 필수다 — 2026-08-08 실측에서 출력을 버린 채 러너를 띄웠다가 **죽은 이유를
+ * 알 수 없는 상태**가 됐다. 기동 실패는 흔한 정상 상태이므로 원인이 남아야 한다.
+ */
+export type BackgroundSpawner = (command: string, args: string[], logPath?: string) => Promise<number>;
 
 export interface WdaLaunchOptions {
   probe: WdaProbe;
@@ -31,6 +39,8 @@ export interface WdaLaunchOptions {
   port: number;
   pollIntervalMs?: number;
   maxPolls?: number;
+  /** 기동 로그가 쌓이는 곳. 기본은 `~/.explore-mobile/logs`. */
+  logDir?: string;
 }
 
 export interface WdaLaunchResult {
@@ -44,6 +54,8 @@ export interface WdaLaunchResult {
   launched: boolean;
   controllable: WdaControllable;
   message?: string;
+  /** 이번에 띄웠을 때 러너 출력이 쌓인 곳 — 실패 원인이 여기 있다. */
+  runnerLogPath?: string;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 2000;
@@ -82,14 +94,16 @@ export async function launchWdaRunner(
     };
   }
 
-  const iproxyPid = await spawn("iproxy", [`${port}:8100`, "-u", udid]);
-  const runnerPid = await spawn("xcodebuild", [
-    "test-without-building",
-    "-xctestrun",
-    xctestrunPath,
-    "-destination",
-    `id=${udid}`,
-  ]);
+  const logDir = options.logDir ?? defaultLogDir();
+  const iproxyLog = join(logDir, `iproxy-${udid}.log`);
+  const runnerLog = join(logDir, `runner-${udid}.log`);
+
+  const iproxyPid = await spawn("iproxy", [`${port}:8100`, "-u", udid], iproxyLog);
+  const runnerPid = await spawn(
+    "xcodebuild",
+    ["test-without-building", "-xctestrun", xctestrunPath, "-destination", `id=${udid}`],
+    runnerLog,
+  );
 
   const alive = await waitUntilAlive(probe, port, pollIntervalMs, maxPolls);
   if (!alive) {
@@ -100,7 +114,21 @@ export async function launchWdaRunner(
       alreadyRunning: false,
       launched: true,
       controllable: "unknown",
-      message: `러너가 ${port} 포트에서 응답하지 않습니다. 기기의 UI 자동화 승인을 확인하세요.`,
+      // @MX:WARN — 이 문구는 원인을 **단정하지 않는다**.
+      // @MX:REASON — 2026-08-09 실측에서 `Timed out while enabling automation
+      // mode.`가 서로 다른 조건 넷(미승인 / 재설치 후 / 재승인 후 / 기존 산출물)
+      // 에서 모두 같은 문구로 나왔다. 즉 이 문구는 여러 원인이 합류하는 지점이며,
+      // 어느 하나로 좁혀 안내하면 사용자를 엉뚱한 곳으로 보낸다. 후보를 나열하되
+      // 무엇이 원인인지는 말하지 않는다.
+      message: [
+        `러너가 ${port} 포트에서 응답하지 않습니다.`,
+        "기기 쪽에서 확인할 것 (어느 것이 원인인지는 이 신호로 구별되지 않습니다):",
+        "  - 기기가 잠금 해제된 채 깨어 있는가 — 기동에는 1~3분이 걸리고 그동안 내내 필요합니다",
+        "  - UI 자동화가 켜져 있는가 (설정 > 개발자)",
+        "  - 개발자 인증서를 신뢰했는가 (설정 > 일반 > VPN 및 기기 관리)",
+        `원본 출력: ${runnerLog}`,
+      ].join("\n"),
+      runnerLogPath: runnerLog,
     };
   }
 
@@ -177,4 +205,9 @@ function sleep(ms: number): Promise<void> {
 /** `new Date()` 대신 한 자리에 모아 둔다 — 검사에서 시각을 고정하기 쉽다. */
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+/** 산출물·상태와 같은 뿌리 아래 둔다 (design.md §D.2와 같은 이유). */
+function defaultLogDir(): string {
+  return join(homedir(), ".explore-mobile", "logs");
 }
