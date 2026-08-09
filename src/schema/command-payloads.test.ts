@@ -119,9 +119,15 @@ describe("command payload contracts (SPEC-CONTRACT-001)", () => {
    * (`webInspectorProxy`)가 조용히 사라졌고 아무 테스트도 깨지지 않았다.
    * 이제 이 리터럴을 함께 고치지 않으면 그 일이 불가능하다.
    */
-  it("doctor.wdaEnvironment — { devicectl, wda, bringUp }", () => {
+  it("doctor.wdaEnvironment — { devicectl, wda, bringUp, signing }", () => {
     // `bringUp`은 SPEC-IOS-002에서 추가됐다 — `--yes`가 있을 때만 실린다.
-    const keys: Record<keyof WdaEnvironmentReport, true> = { devicectl: true, wda: true, bringUp: true };
-    expect(Object.keys(keys)).toHaveLength(3);
+    // `signing`은 같은 SPEC의 M5에서 추가됐다 — iOS 갈래에서 항상 실린다.
+    const keys: Record<keyof WdaEnvironmentReport, true> = {
+      devicectl: true,
+      wda: true,
+      bringUp: true,
+      signing: true,
+    };
+    expect(Object.keys(keys)).toHaveLength(4);
   });
 });

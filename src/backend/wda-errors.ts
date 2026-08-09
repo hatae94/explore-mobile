@@ -81,9 +81,21 @@ export class WdaResponseLostError extends Error {
 export class WdaCommandFailedError extends Error {
   public readonly code = "WDA_COMMAND_FAILED";
 
-  constructor(message: string) {
+  /**
+   * WDA가 돌려준 HTTP 상태. 응답 본문을 JSON으로 읽지 못한 경우는 `undefined`다.
+   *
+   * @MX:ANCHOR — 자동 복구(REQ-IOS2-005)의 트리거 판정은 이 **필드**로 한다.
+   * @MX:REASON — 상태 숫자는 지금까지 메시지 문구 안에만 있었고, 문구에서
+   * 되읽으면 판정이 문구 형식에 종속된다. 이 저장소에는 오류 문구에서 정책을
+   * 역추론했다가 반증당한 이력이 있다(`wda-client.ts`의 @MX:REASON). 문구는
+   * 사람이 읽는 것이고, 분기는 필드가 정한다.
+   */
+  public readonly status: number | undefined;
+
+  constructor(message: string, status?: number) {
     super(message);
     this.name = "WdaCommandFailedError";
+    this.status = status;
   }
 }
 

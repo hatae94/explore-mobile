@@ -88,12 +88,18 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
     const bringUp = args.yes ? await envServices.ios.bringUpWda(resolvedDevice.serial, true) : undefined;
 
     const wda = await envServices.ios.checkWda(resolvedDevice.serial);
+
+    // SPEC-IOS-002 REQ-IOS2-007: 만료를 **실패 전에** 알린다. 무료 개인팀
+    // 서명은 7일마다 끊기고, 끊긴 뒤에 알려 주는 것과 끊기기 전에 알려 주는
+    // 것의 차이가 크다. 산출물 안의 프로파일을 읽는 것뿐이라 기기를 건드리지 않는다.
+    const signing = await envServices.ios.checkSigning();
+
     return success<DoctorPayload>("doctor", {
       adb,
       daemon,
       devices,
       adbKeyboard: { skipped: true, reason: "Target device is iOS; see wdaEnvironment instead." },
-      wdaEnvironment: { devicectl, wda, ...(bringUp === undefined ? {} : { bringUp }) },
+      wdaEnvironment: { devicectl, wda, signing, ...(bringUp === undefined ? {} : { bringUp }) },
     });
   }
 

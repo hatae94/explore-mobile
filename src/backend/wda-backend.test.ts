@@ -223,3 +223,115 @@ describe("WdaBackend.launchApp / sendKeyEvent", () => {
     expect(requests.find((r) => r.url.endsWith("/wda/pressButton"))?.body).toEqual({ name: "home" });
   });
 });
+
+describe("자동 복구 배선 (SPEC-IOS-002 REQ-IOS2-005 — AC-IOS2-016)", () => {
+  /**
+   * 첫 `/actions` 요청만 500으로 답하고 그 뒤로는 정상인 WDA.
+   * 권한을 잃었다가 재기동으로 돌아온 러너를 흉내낸다.
+   */
+  function createFlakyWda(): { http: WdaHttpClient; actionCalls: () => number } {
+    const counters = { actions: 0 };
+    const http: WdaHttpClient = async (url, init) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/status")) {
+        return { status: 200, body: JSON.stringify({ value: { ready: true }, sessionId: "SESSION-1" }) };
+      }
+      if (path.endsWith("/window/size")) {
+        return { status: 200, body: JSON.stringify({ value: { width: 430, height: 932 } }) };
+      }
+      if (path.endsWith("/screenshot")) {
+        return { status: 200, body: JSON.stringify({ value: pngWithSize(1290, 2796).toString("base64") }) };
+      }
+      if (path.endsWith("/actions")) {
+        counters.actions += 1;
+        if (counters.actions === 1) {
+          return { status: 500, body: JSON.stringify({ value: { error: "unknown error" } }) };
+        }
+        return { status: 200, body: JSON.stringify({ value: null }) };
+      }
+      return { status: 200, body: JSON.stringify({ value: null }) };
+    };
+    return { http, actionCalls: () => counters.actions };
+  }
+
+  function createRecoveringBackend(owned = true) {
+    const fake = createFlakyWda();
+    const calls = { relaunch: 0 };
+    const backend = new WdaBackend(
+      (serial) => new WdaClient(serial, fake.http, {}, noSleep),
+      async () => ({ stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 }),
+      async () => [],
+      {
+        isOwnedByCli: async () => owned,
+        relaunch: async () => {
+          calls.relaunch += 1;
+          return true;
+        },
+      },
+    );
+    return { backend, calls, actionCalls: fake.actionCalls };
+  }
+
+  it("권한 오류로 실패한 탭이 재기동 뒤 재시도돼 성공한다", async () => {
+    const { backend, calls, actionCalls } = createRecoveringBackend();
+
+    await backend.tap("UDID-A", 645, 2640);
+
+    expect(calls.relaunch).toBe(1);
+    expect(actionCalls()).toBe(2); // 최초 1회 + 재시도 1회
+  });
+
+  it("복구했다는 사실이 알림으로 남는다 — 조용히 성공하지 않는다", async () => {
+    const { backend } = createRecoveringBackend();
+
+    await backend.tap("UDID-A", 645, 2640);
+    const notices = backend.takeRecoveryNotices();
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("UDID-A");
+    expect(notices[0]).toContain("재기동");
+  });
+
+  it("알림은 한 번 꺼내면 비워진다 — 다음 명령에 새어 나가지 않는다", async () => {
+    const { backend } = createRecoveringBackend();
+
+    await backend.tap("UDID-A", 645, 2640);
+    expect(backend.takeRecoveryNotices()).toHaveLength(1);
+    expect(backend.takeRecoveryNotices()).toHaveLength(0);
+  });
+
+  it("복구 경로를 주지 않으면 이 SPEC 이전과 똑같이 실패한다 (양성 대조)", async () => {
+    // 위 검사들이 "복구가 일어났다"를 주장하므로, 복구 없이도 같은 결과가
+    // 나오는 것은 아님을 함께 낸다. 이것이 없으면 배선이 죽어 있어도
+    // 알아채지 못한다(원칙 ②·③).
+    const fake = createFlakyWda();
+    const backend = new WdaBackend(
+      (serial) => new WdaClient(serial, fake.http, {}, noSleep),
+      async () => ({ stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 }),
+      async () => [],
+    );
+
+    await expect(backend.tap("UDID-A", 645, 2640)).rejects.toBeInstanceOf(WdaCommandFailedError);
+    expect(fake.actionCalls()).toBe(1);
+    expect(backend.takeRecoveryNotices()).toHaveLength(0);
+  });
+
+  it("CLI가 띄우지 않은 러너면 재기동하지 않고 원래 오류를 올린다", async () => {
+    const { backend, calls, actionCalls } = createRecoveringBackend(false);
+
+    await expect(backend.tap("UDID-A", 645, 2640)).rejects.toBeInstanceOf(WdaCommandFailedError);
+    expect(calls.relaunch).toBe(0);
+    expect(actionCalls()).toBe(1);
+    expect(backend.takeRecoveryNotices()).toHaveLength(0);
+  });
+
+  it("한 번의 탭에서 재기동은 한 번뿐이다 — 배율 도출의 스크린샷이 복구를 겹쳐 부르지 않는다", async () => {
+    const { backend, calls } = createRecoveringBackend();
+
+    await backend.tap("UDID-A", 645, 2640);
+
+    // `tap`은 내부에서 스크린샷을 찍어 배율을 구한다. 안쪽까지 감싸면
+    // 한 번의 탭에서 재기동이 두 번 일어난다(AC-IOS2-014 위반).
+    expect(calls.relaunch).toBe(1);
+  });
+});

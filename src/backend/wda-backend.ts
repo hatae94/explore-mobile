@@ -35,6 +35,7 @@ import { spawnProcess } from "./process-executor.js";
 import { WdaClient } from "./wda-client.js";
 import { WdaCommandFailedError, WdaResponseLostError, WdaUnsupportedKeyError } from "./wda-errors.js";
 import { listIosDevices } from "./wda-device-list.js";
+import { withRunnerRecovery, type WdaRecoveryPort } from "./wda-recovery.js";
 
 /**
  * iOS 최소 유효 스와이프 거리 — SPEC-GESTURE-001 M7이 시뮬레이터에서 **포인트**
@@ -93,11 +94,53 @@ export class WdaBackend implements DeviceBackend {
    */
   private readonly geometry = new Map<string, DeviceGeometry>();
 
+  /**
+   * 이번 프로세스에서 자동 복구가 일어났다는 사실 (AC-IOS2-016).
+   * 조용히 성공하면 사용자는 러너가 불안정하다는 것을 영원히 모른다(design.md §F.4).
+   */
+  private readonly recoveryNotices: string[] = [];
+
   constructor(
     private readonly makeClient: (serial: string) => WdaClient = (serial) => new WdaClient(serial),
     private readonly exec: ProcessExecutor = spawnProcess,
     private readonly listDevicesImpl: (exec: ProcessExecutor) => Promise<DeviceInfo[]> = listIosDevices,
+    /**
+     * 자동 복구 경로 (SPEC-IOS-002 REQ-IOS2-005). **기본은 없음**이다 —
+     * 주지 않으면 이 백엔드는 이 SPEC 이전과 똑같이 동작한다. 러너 생명주기는
+     * `WdaDoctor`가 소유하므로 백엔드가 직접 들지 않고 주입받는다.
+     */
+    private readonly recovery?: WdaRecoveryPort,
   ) {}
+
+  /**
+   * 이번 명령에서 남은 자동 복구 알림을 꺼낸다 — **꺼내면 비워진다**.
+   * 라우터가 명령 종료 시 한 번 불러 결과 봉투에 싣는다(AC-IOS2-016).
+   */
+  takeRecoveryNotices(): string[] {
+    return this.recoveryNotices.splice(0);
+  }
+
+  /**
+   * 조작을 자동 복구 경로에 태운다. 복구 포트가 없으면 그대로 실행한다 —
+   * 이 분기가 "기본은 이전과 동일"을 보장하는 자리다.
+   *
+   * @MX:ANCHOR — 여기서 감싸는 것은 **공개 메서드 하나**이며, 그 안에서 다시
+   * 감싸지 않는다.
+   * @MX:REASON — `tap`은 내부적으로 스크린샷을 찍어 배율을 구한다. 안쪽까지
+   * 감싸면 한 번의 탭에서 재기동이 두 번 일어나 AC-IOS2-014("정확히 1회")가
+   * 깨진다. 내부 경로는 감싸지 않은 `captureScreenshot`을 부른다.
+   */
+  private async withRecovery<T>(serial: string, operation: () => Promise<T>): Promise<T> {
+    if (this.recovery === undefined) return operation();
+
+    const outcome = await withRunnerRecovery(serial, operation, this.recovery);
+    if (outcome.recovered) {
+      this.recoveryNotices.push(
+        `${serial}: 러너가 조작에 실패해 1회 재기동한 뒤 명령을 재시도했습니다 — 러너가 불안정할 수 있습니다.`,
+      );
+    }
+    return outcome.value;
+  }
 
   /** `xcrun devicectl list devices` (design.md §B.1). 시뮬레이터는 제외한다. */
   async listDevices(): Promise<DeviceInfo[]> {
@@ -109,6 +152,11 @@ export class WdaBackend implements DeviceBackend {
    * 돌려주므로 바이트로 환원한다.
    */
   async screenshot(serial: string): Promise<Uint8Array> {
+    return this.withRecovery(serial, () => this.captureScreenshot(serial));
+  }
+
+  /** 복구로 감싸지 않은 캡처 — 이미 감싸인 경로(배율 도출) 안에서 쓴다. */
+  private async captureScreenshot(serial: string): Promise<Uint8Array> {
     const value = await this.makeClient(serial).request("GET", "/screenshot", undefined, { idempotent: true });
     if (typeof value !== "string" || value.length === 0) {
       throw new WdaCommandFailedError("WDA /screenshot 응답에 base64 이미지가 없습니다.");
@@ -121,6 +169,10 @@ export class WdaBackend implements DeviceBackend {
    * 입력 좌표는 스크린샷 픽셀이며 여기서 포인트로 환산한다.
    */
   async tap(serial: string, x: number, y: number): Promise<void> {
+    return this.withRecovery(serial, () => this.tapRaw(serial, x, y));
+  }
+
+  private async tapRaw(serial: string, x: number, y: number): Promise<void> {
     const client = this.makeClient(serial);
     const point = await this.toWdaPoint(client, serial, { x, y });
     await this.performActions(client, [
@@ -136,6 +188,10 @@ export class WdaBackend implements DeviceBackend {
    * 밀리초이며, W3C `pause`도 밀리초이므로 단위 환산이 필요 없다.
    */
   async swipe(serial: string, from: SwipePoint, to: SwipePoint, options?: SwipeOptions): Promise<void> {
+    return this.withRecovery(serial, () => this.swipeRaw(serial, from, to, options));
+  }
+
+  private async swipeRaw(serial: string, from: SwipePoint, to: SwipePoint, options?: SwipeOptions): Promise<void> {
     const client = this.makeClient(serial);
     const start = await this.toWdaPoint(client, serial, from);
     const end = await this.toWdaPoint(client, serial, to);
@@ -162,6 +218,10 @@ export class WdaBackend implements DeviceBackend {
    * (관측 가능한 no-op — 이전 백엔드와 같은 처리).
    */
   async inputText(serial: string, text: string, _options?: { hideKeyboardAfter?: boolean }): Promise<void> {
+    return this.withRecovery(serial, () => this.inputTextRaw(serial, text));
+  }
+
+  private async inputTextRaw(serial: string, text: string): Promise<void> {
     const client = this.makeClient(serial);
     const sessionId = await client.sessionId();
     await client.request("POST", `/session/${sessionId}/wda/keys`, { value: [text] });
@@ -175,10 +235,14 @@ export class WdaBackend implements DeviceBackend {
    * 판정하지 않았다. M6 비전 루프 검증에서 확인한다.
    */
   async sendKeyEvent(serial: string, keyName: string): Promise<void> {
+    // 별칭 거부는 기기에 닿기도 전의 판정이다 — 복구 경로에 태우지 않는다.
     if (!isKeyAlias(keyName)) {
       throw new Error(`Unsupported key alias '${keyName}'.`);
     }
-    const alias = keyName as KeyAlias;
+    return this.withRecovery(serial, () => this.sendKeyEventRaw(serial, keyName as KeyAlias));
+  }
+
+  private async sendKeyEventRaw(serial: string, alias: KeyAlias): Promise<void> {
     const client = this.makeClient(serial);
     const sessionId = await client.sessionId();
 
@@ -235,6 +299,10 @@ export class WdaBackend implements DeviceBackend {
    * 오류를 그대로 올린다(REQ-VISION-003).
    */
   async stopApp(serial: string, bundleId: string): Promise<void> {
+    return this.withRecovery(serial, () => this.stopAppRaw(serial, bundleId));
+  }
+
+  private async stopAppRaw(serial: string, bundleId: string): Promise<void> {
     const client = this.makeClient(serial);
     const sessionId = await client.sessionId();
 
@@ -325,7 +393,9 @@ export class WdaBackend implements DeviceBackend {
       throw new WdaCommandFailedError(`WDA /window/size 응답을 읽을 수 없습니다: ${JSON.stringify(windowValue)}`);
     }
 
-    const screen = readPngSize(await this.screenshot(serial));
+    // 감싸지 않은 캡처를 쓴다 — 이 함수는 이미 복구로 감싸인 명령 안에서 불린다
+    // (위 `withRecovery`의 @MX:ANCHOR: 중첩 감싸기 금지).
+    const screen = readPngSize(await this.captureScreenshot(serial));
     if (screen === undefined) {
       throw new WdaCommandFailedError("스크린샷 PNG 헤더에서 해상도를 읽지 못해 배율을 도출할 수 없습니다.");
     }

@@ -24,6 +24,7 @@ import { WdaClient } from "./wda-client.js";
 import { WDA_DEFAULT_PORT, wdaRecoveryHint } from "./wda-errors.js";
 import { launchWdaRunner, stopWdaRunner, type BackgroundSpawner } from "./wda-launcher.js";
 import { WdaRunnerState } from "./wda-runner-state.js";
+import { readSigningStatus, WDA_SIGNING_EXPIRED, type WdaSigningStatus } from "./wda-signing.js";
 
 export interface DevicectlCheck {
   available: boolean;
@@ -112,8 +113,21 @@ export interface IosResetResult {
   message: string;
 }
 
+/** 재기동 전 포트가 조용해지기를 기다리는 간격과 횟수. */
+const DEFAULT_QUIET_POLL_INTERVAL_MS = 500;
+const DEFAULT_QUIET_MAX_POLLS = 20;
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** 러너가 더 이상 응답하지 않을 때까지 기다린다. 끝내 응답하면 false. */
+async function waitUntilQuiet(client: WdaClient, intervalMs: number, maxPolls: number): Promise<boolean> {
+  for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+    if (!(await client.isResponsive())) return true;
+    if (intervalMs > 0) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
 }
 
 /** `exactOptionalPropertyTypes` 아래에서는 `code: undefined`를 넣을 수 없다. */
@@ -136,7 +150,20 @@ export class WdaDoctor {
     /** 빌드. 검사에서 실제 `xcodebuild`를 돌리지 않도록 주입한다. */
     private readonly buildRunner: (config: WdaBuildConfig, udid: string) => Promise<WdaBuildResult> = (config, udid) =>
       buildWdaRunner(config, udid),
+    /** 서명 만료 판정. 검사에서 실제 `security`를 부르지 않도록 주입한다. */
+    private readonly readSigning: () => Promise<WdaSigningStatus> = () => readSigningStatus(),
   ) {}
+
+  /**
+   * 서명이 지금 유효한가 (REQ-IOS2-007).
+   *
+   * 기동 실패를 기다리지 않는다 — 만료일은 산출물 안의 프로파일에서 **직접**
+   * 읽히므로(`wda-signing.ts` 상단), 실패하기 전에 답할 수 있다. `doctor`가
+   * 이 값을 늘 실어 주면 사용자는 만료가 닥치기 전에 안다.
+   */
+  async checkSigning(): Promise<WdaSigningStatus> {
+    return this.readSigning();
+  }
 
   /**
    * `xcrun devicectl`을 쓸 수 있는가 — iOS 백엔드 **가용성 게이트**다.
@@ -208,7 +235,15 @@ export class WdaDoctor {
    *
    * 던지지 않는다 — `doctor`의 일은 진단하고 보고하는 것이다.
    */
-  async bringUpWda(serial: string, consent: boolean): Promise<IosBringUpAttempt> {
+  async bringUpWda(
+    serial: string,
+    consent: boolean,
+    /**
+     * 기동 대기 조율. 기본값은 `launchWdaRunner`가 정한다 — 검사가 실패 경로를
+     * 80초 기다리지 않고 밟을 수 있도록 열어 둔 자리이며, 실사용 경로는 기본값을 쓴다.
+     */
+    options: { pollIntervalMs?: number; maxPolls?: number } = {},
+  ): Promise<IosBringUpAttempt> {
     if (!consent) {
       return { attempted: false, reason: "동의가 필요합니다 — 기기에 러너를 설치하므로 `--yes`로 실행하세요." };
     }
@@ -255,16 +290,99 @@ export class WdaDoctor {
       spawn: this.spawnBg,
       state: this.runnerState,
       port,
+      ...(options.pollIntervalMs === undefined ? {} : { pollIntervalMs: options.pollIntervalMs }),
+      ...(options.maxPolls === undefined ? {} : { maxPolls: options.maxPolls }),
     });
+
+    // 기동이 실패했을 때만 서명을 읽는다 (REQ-IOS2-007). 성공한 기동에서는
+    // 물을 이유가 없고, `doctor`의 실패 전 경고는 `checkSigning`이 따로 싣는다.
+    //
+    // @MX:NOTE — 만료를 확인해도 그것이 **유일한** 원인이라고 말하지 않는다.
+    // 기동 실패 메시지(후보 나열)를 지우지 않고 앞에 덧붙이는 이유가 그것이다.
+    // 2026-08-09 실측에서 같은 실패 문구가 서로 다른 조건 넷에서 나왔다.
+    const signing = launch.ok ? undefined : await this.readSigning().catch(() => undefined);
+    const expired = signing?.verdict === "expired";
+    const message = expired
+      ? [signing.message, launch.message].filter((part) => part !== undefined && part.length > 0).join("\n\n")
+      : launch.message;
 
     return {
       attempted: true,
       built,
       launched: launch.launched,
       ok: launch.ok,
-      ...(launch.message === undefined ? {} : { message: launch.message }),
+      ...(message === undefined ? {} : { message }),
+      ...(expired ? { code: WDA_SIGNING_EXPIRED } : {}),
       ...(launch.runnerLogPath === undefined ? {} : { runnerLogPath: launch.runnerLogPath }),
     };
+  }
+
+  /**
+   * CLI가 띄운 러너인가 — 자동 복구의 **재기동 자격** 판정 (REQ-IOS2-005).
+   *
+   * 생존 판정이 아니다. 생존은 포트가 답하고(design.md §B.1), 이 질문은
+   * 기록이 답한다. 두 축을 섞으면 손으로 띄운 러너를 우리가 끄게 된다.
+   */
+  async isRunnerOwnedByCli(serial: string): Promise<boolean> {
+    return (await this.runnerState.get(serial)) !== undefined;
+  }
+
+  /**
+   * CLI가 띄운 러너를 끄고 다시 띄운다 — 자동 복구의 재기동 1회(REQ-IOS2-005).
+   *
+   * 성공 여부는 **러너가 다시 응답하는가**로만 답한다. 조작 권한이 실제로
+   * 돌아왔는지는 묻지 않는다 — 자동 복구 경로에서는 판정 호출(`/screenshot`,
+   * 기기에 따라 10MiB)을 생략하며(design.md §A.4 후단), 진짜 판정은 곧 이어질
+   * 원래 명령의 재시도가 대신한다.
+   *
+   * @MX:ANCHOR — 기록에 없는 기기에서는 아무것도 하지 않고 false를 돌려준다.
+   * @MX:REASON — 재기동은 "끄고 다시 띄우기"이므로 남의 러너에 적용하면
+   * 그 사용자의 러너를 죽인다. 소유권 규칙(design.md §B.2 · §G.3)은 `reset`
+   * 뿐 아니라 이 경로에도 그대로 걸린다(AC-IOS2-027).
+   *
+   * @MX:NOTE — 산출물이 없으면 재기동하지 않고 false를 돌려준다. 빌드는
+   * 사용자 폰에 앱을 설치하는 동작이라 명시적 동의를 요구하며(design.md §H),
+   * 복구가 그 동의를 대신 삼킬 수는 없다.
+   */
+  async relaunchOwnedRunner(
+    serial: string,
+    options: { pollIntervalMs?: number; maxPolls?: number } = {},
+  ): Promise<boolean> {
+    const record = await this.runnerState.get(serial);
+    if (record === undefined) return false;
+
+    let client: WdaClient;
+    try {
+      client = this.makeClient(serial);
+    } catch {
+      return false;
+    }
+
+    const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_QUIET_POLL_INTERVAL_MS;
+    const maxPolls = options.maxPolls ?? DEFAULT_QUIET_MAX_POLLS;
+
+    await stopWdaRunner(serial, { state: this.runnerState, kill: this.killProcess });
+
+    // 방금 끈 러너가 아직 응답하는 동안 다시 띄우면 `launchWdaRunner`가
+    // "이미 떠 있다"로 보고 아무것도 하지 않는다 — 포트가 조용해질 때까지 기다린다.
+    if (!(await waitUntilQuiet(client, pollIntervalMs, maxPolls))) return false;
+
+    const xctestrunPath = await findXctestrun(wdaArtifactRoot());
+    if (xctestrunPath === undefined) return false;
+
+    await launchWdaRunner(serial, xctestrunPath, {
+      probe: {
+        alive: () => client.isResponsive(),
+        controllable: async () => "unknown",
+      },
+      spawn: this.spawnBg,
+      state: this.runnerState,
+      port: record.port,
+      ...(options.pollIntervalMs === undefined ? {} : { pollIntervalMs: options.pollIntervalMs }),
+      ...(options.maxPolls === undefined ? {} : { maxPolls: options.maxPolls }),
+    });
+
+    return client.isResponsive();
   }
 
   /** 안내만 한다 — 설치를 대신 수행하지 않는다(iOS 도구 체인 공통 방침). */

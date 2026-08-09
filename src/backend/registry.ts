@@ -27,6 +27,15 @@
 
 import type { DeviceBackend, DeviceInfo, DevicePlatform } from "../schema/device-backend.js";
 
+/**
+ * 자동 복구 알림을 남기는 능력이 있으면 꺼내고, 없으면 빈 배열을 돌려준다
+ * (SPEC-IOS-002 AC-IOS2-016). 능력이 없는 백엔드(Android)는 그대로 통과한다.
+ */
+export function takeNoticesFrom(source: unknown): string[] {
+  const take = (source as { takeRecoveryNotices?: () => string[] }).takeRecoveryNotices;
+  return typeof take === "function" ? take.call(source) : [];
+}
+
 /** One backend registered with the registry, plus its availability check. */
 export interface RegisteredBackend {
   platform: DevicePlatform;
@@ -37,6 +46,17 @@ export interface RegisteredBackend {
 
 export class BackendRegistry {
   constructor(private readonly backends: RegisteredBackend[]) {}
+
+  /**
+   * 등록된 백엔드들이 이번 명령에서 남긴 자동 복구 알림을 모은다
+   * (SPEC-IOS-002 AC-IOS2-016). 알림을 남기는 백엔드가 없으면 빈 배열이다.
+   *
+   * 능력을 **구조적으로** 확인한다 — `WdaBackend`를 import하면 registry가
+   * 특정 백엔드를 알게 되고, 이 클래스가 지키려는 백엔드 무관성이 깨진다.
+   */
+  takeRecoveryNotices(): string[] {
+    return this.backends.flatMap((registered) => takeNoticesFrom(registered.backend));
+  }
 
   /**
    * Lists devices from every AVAILABLE backend, merged into one array.

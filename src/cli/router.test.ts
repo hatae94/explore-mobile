@@ -930,7 +930,9 @@ describe("runCli", () => {
           expect(Object.keys(data).sort()).toEqual(
             ["adb", "adbKeyboard", "daemon", "devices", "wdaEnvironment"].sort(),
           );
-          expect(Object.keys(data.wdaEnvironment).sort()).toEqual(["devicectl", "wda"].sort());
+          // `signing`은 SPEC-IOS-002 M5에서 추가됐다 — `--yes` 없이도 늘 실린다.
+          // 만료는 기동이 깨진 뒤가 아니라 깨지기 전에 알려야 값이 있다(REQ-IOS2-007).
+          expect(Object.keys(data.wdaEnvironment).sort()).toEqual(["devicectl", "signing", "wda"].sort());
         }
       });
 
@@ -1409,5 +1411,60 @@ describe("runCli", () => {
         expect(result.error.message).toBe("not an Error instance");
       }
     });
+  });
+});
+
+describe("자동 복구 알림이 결과 봉투에 실린다 (SPEC-IOS-002 AC-IOS2-016)", () => {
+  /** 알림을 남기는 능력이 있는 iOS 백엔드 흉내. */
+  function iosBackendWithNotices(notices: string[]): DeviceBackend {
+    const backend = createMockIosBackend();
+    return Object.assign(backend, {
+      listDevices: vi.fn().mockResolvedValue([iosDevice]),
+      takeRecoveryNotices: () => notices.splice(0),
+    });
+  }
+
+  const iosDevice = device({ serial: "IOS-UDID-1", platform: "ios", model: "iPad Pro" });
+
+  function registryWith(backend: DeviceBackend): BackendRegistry {
+    return new BackendRegistry([{ platform: "ios", backend, isAvailable: async () => true }]);
+  }
+
+  it("복구가 일어난 명령의 성공 봉투에 notices가 실린다", async () => {
+    const registry = registryWith(iosBackendWithNotices(["IOS-UDID-1: 러너를 1회 재기동했습니다."]));
+
+    const result = await runCli(["tap", "10", "20", "--device", "IOS-UDID-1"], registry);
+
+    expect(result.ok).toBe(true);
+    expect(result.notices).toEqual(["IOS-UDID-1: 러너를 1회 재기동했습니다."]);
+  });
+
+  it("알림이 없으면 notices 필드 자체가 붙지 않는다 — 기존 JSON 계약 무회귀", async () => {
+    const registry = registryWith(iosBackendWithNotices([]));
+
+    const result = await runCli(["tap", "10", "20", "--device", "IOS-UDID-1"], registry);
+
+    expect(result.ok).toBe(true);
+    expect("notices" in result).toBe(false);
+  });
+
+  it("알림을 남기는 능력이 없는 백엔드도 그대로 통과한다", async () => {
+    const backend = createMockIosBackend();
+    (backend as { listDevices: unknown }).listDevices = vi.fn().mockResolvedValue([iosDevice]);
+
+    const result = await runCli(["tap", "10", "20", "--device", "IOS-UDID-1"], registryWith(backend));
+
+    expect(result.ok).toBe(true);
+    expect("notices" in result).toBe(false);
+  });
+
+  it("실패한 명령에도 알림이 실린다 — 재기동하고도 실패한 경우가 가장 알려야 할 상황이다", async () => {
+    const backend = iosBackendWithNotices(["IOS-UDID-1: 러너를 1회 재기동했습니다."]);
+    (backend as { tap: unknown }).tap = vi.fn().mockRejectedValue(new WdaUnsupportedKeyError("조작 실패"));
+
+    const result = await runCli(["tap", "10", "20", "--device", "IOS-UDID-1"], registryWith(backend));
+
+    expect(result.ok).toBe(false);
+    expect(result.notices).toEqual(["IOS-UDID-1: 러너를 1회 재기동했습니다."]);
   });
 });

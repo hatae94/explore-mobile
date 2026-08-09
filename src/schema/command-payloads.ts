@@ -38,6 +38,7 @@ import type {
   ResetResult,
 } from "../backend/doctor.js";
 import type { DevicectlCheck, IosBringUpAttempt, IosResetResult, WdaCheck } from "../backend/wda-doctor.js";
+import type { WdaSigningStatus } from "../backend/wda-signing.js";
 import type { DeviceInfo, SwipePoint } from "./device-backend.js";
 
 /**
@@ -137,6 +138,14 @@ export interface WdaEnvironmentReport {
    * 시도하지 않으므로 이 키 자체가 없다. Android의 `installAttempt`와 같은 성격.
    */
   bringUp?: IosBringUpAttempt;
+  /**
+   * 서명 만료 판정 (SPEC-IOS-002 REQ-IOS2-007). iOS 갈래에서 **항상** 실린다.
+   *
+   * 기동 실패를 기다리지 않는 이유: 만료일은 산출물 안의 프로파일에서 직접
+   * 읽히므로 실패 전에 답할 수 있다. 무료 개인팀 서명은 7일마다 끊기므로,
+   * 끊긴 뒤에 알려 주는 것과 끊기기 전에 알려 주는 것의 차이가 크다.
+   */
+  signing?: WdaSigningStatus;
 }
 
 /** `doctor`의 ADBKeyBoard 항목 — 건너뛴 경우와 실제 수행한 경우. */

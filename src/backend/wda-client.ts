@@ -259,8 +259,11 @@ export class WdaClient {
     const envelope = parseEnvelope(response.body);
 
     if (response.status < 200 || response.status >= 300) {
+      // 상태 숫자를 필드로도 싣는다 — 자동 복구가 문구가 아니라 필드로 분기한다
+      // (SPEC-IOS-002 REQ-IOS2-005, `wda-errors.ts`의 @MX:ANCHOR).
       throw new WdaCommandFailedError(
         `WDA ${path} 실패 (HTTP ${response.status}): ${JSON.stringify(envelope?.value ?? response.body).slice(0, 400)}`,
+        response.status,
       );
     }
     if (envelope === undefined) {

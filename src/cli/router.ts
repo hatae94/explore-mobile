@@ -10,6 +10,7 @@
  */
 
 import { AdbDoctor } from "../backend/doctor.js";
+import { takeNoticesFrom } from "../backend/registry.js";
 import { WdaDoctor } from "../backend/wda-doctor.js";
 import type { DeviceBackend } from "../schema/device-backend.js";
 import { toDeviceSource, type DeviceSource } from "./device-targeting.js";
@@ -88,10 +89,26 @@ export async function runCli(
   try {
     // M5(REQ-VISION-005): 맨 `DeviceBackend`든 `BackendRegistry`든 핸들러는
     // 하나의 `DeviceSource`만 본다 — 열거 지점이 한 곳으로 모인다.
-    return await handler(args, toDeviceSource(backend), envServices);
+    const result = await handler(args, toDeviceSource(backend), envServices);
+    return withRecoveryNotices(result, backend);
   } catch (err) {
     // Defense in depth: a handler bug still degrades to graceful JSON,
     // never an uncaught exception / non-JSON stack trace.
-    return failure(commandName, "INTERNAL_ERROR", errorMessage(err));
+    return withRecoveryNotices(failure(commandName, "INTERNAL_ERROR", errorMessage(err)), backend);
   }
+}
+
+/**
+ * 명령이 끝난 뒤, 시스템이 스스로 한 조치를 결과 봉투에 싣는다
+ * (SPEC-IOS-002 AC-IOS2-016 — 자동 복구가 첫 소비자다).
+ *
+ * 실패 봉투에도 붙인다 — 재기동까지 하고도 실패한 경우가 사용자에게 가장
+ * 필요한 정보이며, 그 경우를 빼면 "복구가 성공했을 때만 보이는" 절름발이가 된다.
+ *
+ * @MX:NOTE — 알림이 없으면 봉투를 **건드리지 않는다**. 새 필드가 조건 없이
+ * 붙으면 모든 명령의 JSON이 바뀌어 REQ-IOS2-008(기존 계약 무회귀)에 걸린다.
+ */
+function withRecoveryNotices(result: CommandResult, source: DeviceBackend | DeviceSource): CommandResult {
+  const notices = takeNoticesFrom(source);
+  return notices.length === 0 ? result : { ...result, notices };
 }

@@ -8,6 +8,7 @@ import { WdaClient, type WdaHttpClient } from "./wda-client.js";
 import { WdaDoctor } from "./wda-doctor.js";
 import type { BackgroundSpawner } from "./wda-launcher.js";
 import { WdaRunnerState } from "./wda-runner-state.js";
+import type { WdaSigningStatus } from "./wda-signing.js";
 
 /**
  * `resetDevice`는 이제 실제로 프로세스를 끈다. 검사가 기본 생성자를 쓰면
@@ -431,5 +432,78 @@ describe("WdaDoctor.resetDevice / installGuidance", () => {
     expect(guidance.platformSupported).toBe(true);
     expect(guidance.steps?.some((step) => step.includes("iproxy"))).toBe(true);
     expect(exec).not.toHaveBeenCalled(); // 어떤 설치 명령도 실행하지 않았다
+  });
+});
+
+describe("WdaDoctor.checkSigning · 기동 실패의 만료 식별 (REQ-IOS2-007 — AC-IOS2-021)", () => {
+  /** 기동이 끝내 안 되는 상황 — 러너가 응답하지 않는다. */
+  const deadHttp: WdaHttpClient = async () => {
+    throw new Error("ECONNREFUSED");
+  };
+
+  function doctorWithSigning(signing: WdaSigningStatus) {
+    return new WdaDoctor(
+      okExec,
+      "darwin",
+      {},
+      (serial) => new WdaClient(serial, deadHttp, {}, async () => undefined),
+      runnerState,
+      killSpy,
+      vi.fn<BackgroundSpawner>(async () => 9999),
+      vi.fn(async () => ({ xctestrunPath: "/tmp/없는/경로.xctestrun", derivedDataPath: "/tmp/없는" })),
+      async () => signing,
+    );
+  }
+
+  /** 기동 실패 경로를 즉시 밟는다 — 실사용 기본값(최대 80초)을 기다리지 않는다. */
+  const FAST = { pollIntervalMs: 0, maxPolls: 1 };
+
+  const expiredStatus: WdaSigningStatus = {
+    verdict: "expired",
+    expiresAt: "2026-08-11T07:19:34.000Z",
+    message: "서명이 2026-08-11T07:19:34.000Z에 만료됐습니다 — 이 상태로는 러너가 기동하지 않습니다.",
+  };
+
+  it("checkSigning이 판정을 그대로 돌려준다", async () => {
+    await expect(doctorWithSigning(expiredStatus).checkSigning()).resolves.toEqual(expiredStatus);
+  });
+
+  it("만료 상태에서 기동이 실패하면 전용 코드가 붙는다 — 일반 기동 실패와 구별된다", async () => {
+    const result = await doctorWithSigning(expiredStatus).bringUpWda("UDID-A", true, FAST);
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe("WDA_SIGNING_EXPIRED");
+    expect(result.message).toContain("만료");
+  });
+
+  it("만료가 아니면 코드가 붙지 않는다 (양성 대조)", async () => {
+    // 위 검사만 있으면 코드를 무조건 붙이는 구현도 통과한다. 같은 실패 경로에서
+    // 판정만 바꿔 코드가 사라지는 것을 함께 낸다(원칙 ②·③).
+    const result = await doctorWithSigning({
+      verdict: "valid",
+      expiresAt: "2026-08-11T07:19:34.000Z",
+      message: "서명이 2026-08-11T07:19:34.000Z까지 유효합니다.",
+    }).bringUpWda("UDID-A", true, FAST);
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBeUndefined();
+  });
+
+  it("구별 불가일 때도 코드가 붙지 않는다 — 모르는 것을 만료라 하지 않는다", async () => {
+    const result = await doctorWithSigning({
+      verdict: "unknown",
+      message: "프로파일을 찾지 못했습니다.",
+    }).bringUpWda("UDID-A", true, FAST);
+
+    expect(result.code).toBeUndefined();
+  });
+
+  it("만료를 확인해도 기존 기동 실패 안내를 지우지 않는다 — 만료가 유일한 원인이라 말하지 않는다", async () => {
+    const result = await doctorWithSigning(expiredStatus).bringUpWda("UDID-A", true, FAST);
+
+    // 2026-08-09 실측에서 같은 기동 실패가 서로 다른 조건 넷에서 나왔다.
+    // 만료를 앞에 덧붙이되 후보 나열은 남긴다.
+    expect(result.message).toContain("만료");
+    expect(result.message).toContain("UI 자동화");
   });
 });

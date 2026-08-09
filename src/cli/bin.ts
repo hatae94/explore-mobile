@@ -25,6 +25,14 @@ import { runCli } from "./router.js";
 const doctor = new AdbDoctor();
 const wdaDoctor = new WdaDoctor();
 
+// SPEC-IOS-002 REQ-IOS2-005: 자동 복구 경로. 러너 생명주기는 `WdaDoctor`가
+// 소유하므로 백엔드에는 두 가지 능력만 얇게 건넨다 — "우리 러너인가"와
+// "다시 띄우기". 이 배선이 없으면 백엔드는 이 SPEC 이전과 똑같이 동작한다.
+const wdaRecovery = {
+  isOwnedByCli: (serial: string) => wdaDoctor.isRunnerOwnedByCli(serial),
+  relaunch: (serial: string) => wdaDoctor.relaunchOwnedRunner(serial),
+};
+
 const registry = new BackendRegistry([
   {
     platform: "android",
@@ -36,7 +44,7 @@ const registry = new BackendRegistry([
     // 가용성 게이트는 devicectl이지 WDA가 아니다. WDA 미기동으로 게이트를
     // 닫으면 연결된 iOS 기기가 `devices` 목록에서 통째로 사라진다
     // (wda-doctor.ts 상단 @MX:WARN — SPEC-IOS-001에서 겪은 회귀).
-    backend: new WdaBackend(),
+    backend: new WdaBackend(undefined, undefined, undefined, wdaRecovery),
     isAvailable: async () => (await wdaDoctor.checkDevicectl()).available,
   },
 ]);
