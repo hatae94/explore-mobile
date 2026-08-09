@@ -288,6 +288,65 @@ $ grep -n 'public readonly code = ' src/backend/wda-errors.ts
 - `probeControllable`이 `"failed"`를 낼 때 그 원인이 권한 상실인지 다른 것인지 **가르지 않는다.** 판별자가 없고 조사 대상도 아니다(`design.md` §A.5 · §B.1.1). 거짓 음성(쓸 수 있는데 못 쓴다고 말함)이 가능하다.
 - `/screenshot` 비용이 기기에 따라 10배 이상 차이난다(§M1 기록). `doctor` 호출마다 10MiB를 받아 JSON으로 파싱한다.
 
+### M3+M4 — 빌드 · 기동 · 소유권 (REQ-IOS2-002 · 003 · 009)
+
+`plan.md`는 M3 → M4 순서였으나 **둘을 묶어 진행했다.** M3가 러너를 띄우려면 산출물 경로가 필요한데 그것을 만드는 것이 M4였고, 그 빈칸을 문서로 메우는 대신 빌드를 구현하는 쪽을 택했다. 부수 효과로 **AC-003의 M4 이월이 취소**됐다 — 빌드가 생기면서 argv 판정 대상이 함께 생겼다.
+
+**신규 모듈**: `wda-build.ts` · `wda-runner-state.ts` · `wda-launcher.ts` (+ 각 검사) · `process-executor.ts`의 `spawnBackground`
+
+**설계 결정 둘**
+
+1. **상태를 파일로.** `PerSerialState`는 프로세스 안에서만 사는 `Map`이고 CLI는 명령마다 새 프로세스라, `launch`가 적은 식별자를 `reset`이 볼 수 없다. `~/.explore-mobile/wda-runners.json`에 **임시 파일 + rename**으로 원자적으로 쓴다.
+2. **생존과 종료 자격의 축이 다르다.** 생존은 포트(`/status`)로, 종료 자격은 기록으로 판정한다. 포트로 종료를 판정하면 남의 러너를 죽이고(AC-027 위반), 기록으로 생존을 판정하면 손으로 띄운 러너를 못 보고 중복 기동한다(AC-009 위반).
+
+#### AC 판정
+
+| AC | 판정 | 근거 |
+|---|---|---|
+| AC-IOS2-003 | **PASS** | `wda-build.test.ts` — 설정 3값이 argv에 그대로. **argv 판정이며 동작 판정이 아니다**(원칙 ⑤) |
+| AC-IOS2-005 | **PASS (실기기)** | `readWdaBuildConfig` → `xcodebuildArgs` → `buildWdaRunner` 경로로 실제 빌드 성공 |
+| AC-IOS2-006 | **PASS** | 실패 시 `xcodebuild` 출력을 요약 없이 보존 + exit 코드 |
+| AC-IOS2-007 | **PASS (실기기)** | 산출물이 `~/.explore-mobile/wda/Build/Products/`에, `findXctestrun`이 발견. DerivedData 해시 경로 미사용 |
+| AC-IOS2-008 | **PASS (실기기)** | 39초 만에 `ok:true` · `controllable:"ok"` — 프로세스 기동이 아니라 조작 가능 확인까지 마친 뒤 성공 보고 |
+| AC-IOS2-009 | **PASS (실기기)** | 살아 있는 러너 앞에서 프로세스 0개 기동, 남의 러너를 우리 것으로 기록도 안 함 |
+| AC-IOS2-026 | **PASS (실기기)** | `reset` → iproxy 62689 · 러너 62696 종료, 포트 000, 상태 파일 `{}` |
+| AC-IOS2-027 | **PASS (실기기)** | 손으로 띄운 러너에 `reset` → 생존, `noOp:true`, 사유 명시 |
+
+실기기 판정 6건. AC-026과 027을 **같은 기기에서 양방향으로** 확인했으므로, "포트를 쓰는 프로세스를 모두 죽인다"는 구현으로는 통과할 수 없다.
+
+#### 실측이 잡은 결함 하나
+
+`spawnBackground`를 `stdio:"ignore"`로 만들어 **러너가 죽어도 원인을 알 수 없는 상태**를 만들었다. 빌드 실패에는 원인 보존 규칙(AC-006)을 적용해 놓고 기동 실패에는 적용하지 않은 비대칭이었다. `~/.explore-mobile/logs/`에 남기도록 고치고 회귀 검사 5건을 붙였다(실제 프로세스·실제 파일 판정).
+
+#### 관문 감지 — 원점으로 돌아감
+
+`Timed out while enabling automation mode.`를 8/08에 "UI 자동화 승인 관문의 신호"로 귀속했으나 **8/09에 반증**됐다(위 M1 절 참조). 조건 다섯 중 성공은 하나뿐이었고, 그 하나와 산출물·승인이 같은 상태에서도 실패했다.
+
+여섯 번째 관측이 갈랐다 — **기기를 깨워 둔 채 시도하니 39초에 성공**했다. 실패들은 181초를 기다려도 안 됐다. 따라서 이 문구는 관문 하나가 아니라 **여러 원인이 합류하는 지점**이며, 그중 하나가 기기 각성 상태다.
+
+**M6에 넘기는 것**: 이 문구를 관문 판별자로 쓰지 않는다. 세 관문 모두 현재 "구분 불가"(AC-IOS2-019)로 갈 근거가 오히려 강해졌다.
+
+#### 서명 만료 — 대기 없이 재료를 찾음
+
+`acceptance.md` §E는 AC-021을 "7일 대기 필요, 기회 의존"으로 미뤄뒀으나, 만료일이 **구조화된 필드**에서 직접 읽힌다:
+
+```
+$ security cms -D -i <app>/embedded.mobileprovision > /tmp/p.plist
+$ /usr/libexec/PlistBuddy -c "Print :ExpirationDate" /tmp/p.plist
+Tue Aug 11 16:19:34 KST 2026        # 발급 Aug 04 → 정확히 7일
+```
+
+`design.md` §I.3의 **2순위**(구조화된 출력의 필드)이며 3순위(자유 문구)의 도구 버전 종속을 피한다. 실패를 분류하는 것이 아니라 만료를 직접 읽으므로 실패 전에 경고할 수 있다.
+
+관측된 것과 아닌 것을 구분해 적는다 — 재빌드 후에도 만료일이 8/11로 **동일**했다. 다만 프로파일이 아직 유효해 갱신할 이유가 없었을 수 있으므로, **"재빌드는 만료를 못 고친다"로 단정하지 않는다.** 관측된 것은 "유효한 프로파일이 있으면 재사용한다"까지다.
+
+부수 관측: `~/Library/MobileDevice/Provisioning Profiles/`는 **비어 있다**(0개). 최신 Xcode가 위치를 옮겼으므로 만료 판정은 그 디렉터리가 아니라 산출물 안의 `embedded.mobileprovision`을 봐야 한다.
+
+#### 남은 것
+
+- CLI 표면 미연결 — `buildWdaRunner` / `launchWdaRunner`를 부르는 명령이 없다. `reset`만 연결됐다
+- AC-011 보조 증거 · AC-012 — 여전히 미관측
+
 ---
 
 ## §F Phase 4 Mode Selection
