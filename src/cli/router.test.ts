@@ -933,6 +933,55 @@ describe("runCli", () => {
           expect(Object.keys(data.wdaEnvironment).sort()).toEqual(["devicectl", "wda"].sort());
         }
       });
+
+      /**
+       * SPEC-IOS-002: 기기가 `unavailable`이면 `resolveTargetDevice`가 실패해
+       * iOS 갈래에 도달하지 못했다. **iOS 진단이 가장 필요한 상태에서 iOS
+       * 진단이 나오지 않았고**, `--yes` 준비 자동화도 함께 막혔다 — 기기를
+       * 올리는 명령인데 기기가 올라와 있어야만 닿을 수 있는 고리였다.
+       *
+       * 이 검사가 그 고리를 막는다.
+       */
+      it("iOS 갈래 — 기기가 unavailable이어도 wdaEnvironment가 실린다", async () => {
+        const androidBackend = createMockBackend([]);
+        const iosBackend = createMockIosBackend();
+        (iosBackend.listDevices as ReturnType<typeof vi.fn>).mockResolvedValue([
+          device({
+            serial: "00008130-IOS",
+            platform: "ios",
+            connectionState: "unavailable",
+            unavailableReason: "disconnected — 터널이 연결되지 않았다",
+          }),
+        ]);
+        const registry = new BackendRegistry([
+          { platform: "android", backend: androidBackend, isAvailable: async () => false },
+          { platform: "ios", backend: iosBackend, isAvailable: async () => true },
+        ]);
+        const adbExec = vi.fn<AdbExecutor>().mockRejectedValue(new Error("spawn adb ENOENT"));
+        const doctor = await makeDoctor({ adbExec, platform: "darwin" });
+
+        // 러너가 죽어 있는 상태 — 이것이 `unavailable`의 실제 모습이다.
+        const http: WdaHttpClient = async () => {
+          throw new Error("ECONNREFUSED");
+        };
+        const wdaDoctor = new WdaDoctor(
+          vi.fn<ProcessExecutor>().mockResolvedValue({ stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 }),
+          "darwin",
+          {},
+          (serial) => new WdaClient(serial, http, {}, async () => undefined),
+        );
+
+        const result = await runCli(["doctor", "--device", "00008130-IOS"], registry, envServices(doctor, wdaDoctor));
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          const data = result.data as { wdaEnvironment?: { wda: { reachable: boolean; controllable: string } } };
+          expect(data.wdaEnvironment).toBeDefined();
+          // design.md §B.1.1 3번 — 생존=무응답 / 권한=물을 수 없음
+          expect(data.wdaEnvironment?.wda.reachable).toBe(false);
+          expect(data.wdaEnvironment?.wda.controllable).toBe("unknown");
+        }
+      });
     });
   });
 

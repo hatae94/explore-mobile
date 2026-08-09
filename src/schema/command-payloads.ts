@@ -37,7 +37,7 @@ import type {
   InstallAttemptResult,
   ResetResult,
 } from "../backend/doctor.js";
-import type { DevicectlCheck, IosResetResult, WdaCheck } from "../backend/wda-doctor.js";
+import type { DevicectlCheck, IosBringUpAttempt, IosResetResult, WdaCheck } from "../backend/wda-doctor.js";
 import type { DeviceInfo, SwipePoint } from "./device-backend.js";
 
 /**
@@ -132,6 +132,11 @@ export type ResetPayload = { serial: string } & Partial<ResetResult> & Partial<I
 export interface WdaEnvironmentReport {
   devicectl: DevicectlCheck;
   wda: WdaCheck;
+  /**
+   * 준비 자동화 시도 (SPEC-IOS-002). `--yes`가 있을 때만 실린다 — 없으면
+   * 시도하지 않으므로 이 키 자체가 없다. Android의 `installAttempt`와 같은 성격.
+   */
+  bringUp?: IosBringUpAttempt;
 }
 
 /** `doctor`의 ADBKeyBoard 항목 — 건너뛴 경우와 실제 수행한 경우. */

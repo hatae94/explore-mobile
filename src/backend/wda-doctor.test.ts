@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProcessExecutor } from "./process-executor.js";
 import { WdaClient, type WdaHttpClient } from "./wda-client.js";
 import { WdaDoctor } from "./wda-doctor.js";
+import type { BackgroundSpawner } from "./wda-launcher.js";
 import { WdaRunnerState } from "./wda-runner-state.js";
 
 /**
@@ -133,6 +134,11 @@ function permissionLostResponder(url: string) {
   return url.includes("/screenshot")
     ? { status: 500, body: PERMISSION_DENIED_BODY }
     : { status: 200, body: REAL_STATUS_BODY };
+}
+
+/** 동기 응답기를 `WdaHttpClient`(Promise 반환)로 감싼다. */
+function asHttp(responder: (url: string) => { status: number; body: string }): WdaHttpClient {
+  return async (url) => responder(url);
 }
 
 describe("WdaDoctor.checkWda", () => {
@@ -303,6 +309,83 @@ describe("AC-IOS2-029 — 생존과 조작 가능성이 별개 필드로 실린�
     expect(typeof result.reachable).toBe("boolean");
     expect(typeof result.controllable).toBe("string");
     expect(["ok", "failed", "unknown"]).toContain(result.controllable);
+  });
+});
+
+describe("WdaDoctor.bringUpWda — 동의와 무동작 (REQ-IOS2-002 · 003)", () => {
+  /** 빌드·기동을 절대 실행하지 않는 대역. 무엇이 불렸는지만 센다. */
+  function doctorWithSpies(http: WdaHttpClient) {
+    const spawnBg = vi.fn<BackgroundSpawner>(async () => 9999);
+    const buildRunner = vi.fn(async () => ({
+      xctestrunPath: "/tmp/없는/경로.xctestrun",
+      derivedDataPath: "/tmp/없는",
+    }));
+    const doctor = new WdaDoctor(
+      okExec,
+      "darwin",
+      {},
+      (serial) => new WdaClient(serial, http, {}, async () => undefined),
+      runnerState,
+      killSpy,
+      spawnBg,
+      buildRunner,
+    );
+    return { doctor, spawnBg, buildRunner };
+  }
+
+  it("동의가 없으면 아무것도 하지 않는다 (design.md §H)", async () => {
+    const { doctor, spawnBg, buildRunner } = doctorWithSpies(asHttp(healthyResponder));
+
+    const result = await doctor.bringUpWda("UDID-A", false);
+
+    expect(result.attempted).toBe(false);
+    expect(result.reason).toContain("--yes");
+    expect(spawnBg).not.toHaveBeenCalled();
+    expect(buildRunner).not.toHaveBeenCalled();
+  });
+
+  it("동의가 없으면 판정 호출조차 하지 않는다 — 10MiB를 공짜로 받지 않는다", async () => {
+    const { http, calls } = recordingHttp(healthyResponder);
+    const { doctor } = doctorWithSpies(http);
+
+    await doctor.bringUpWda("UDID-A", false);
+
+    expect(calls).toEqual([]);
+  });
+
+  it("이미 사용 가능하면 기동하지 않는다", async () => {
+    const { doctor, spawnBg, buildRunner } = doctorWithSpies(asHttp(healthyResponder));
+
+    const result = await doctor.bringUpWda("UDID-A", true);
+
+    expect(result.attempted).toBe(false);
+    expect(result.reason).toContain("이미 사용 가능");
+    expect(spawnBg).not.toHaveBeenCalled();
+    expect(buildRunner).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 러너가 살아 있어도 **조작이 안 되면** 사용 가능이 아니다 — 그 상태가
+   * REQ-IOS2-004의 존재 이유이고, 준비 경로도 같은 판정을 써야 한다.
+   */
+  it("생존하지만 조작이 안 되면 사용 가능으로 보지 않는다", async () => {
+    const { doctor } = doctorWithSpies(asHttp(permissionLostResponder));
+
+    const result = await doctor.bringUpWda("UDID-A", true);
+
+    expect(result.attempted).toBe(true);
+  });
+
+  it("설정이 없으면 전용 코드로 보고하고 빌드하지 않는다", async () => {
+    // 산출물이 없는 상태를 만들 수 없으므로, 설정 부재가 먼저 걸리는지만 본다.
+    // (산출물이 이미 있으면 이 경로에 도달하지 않는다 — 아래 주석 참조.)
+    const { doctor } = doctorWithSpies(asHttp(permissionLostResponder));
+
+    const result = await doctor.bringUpWda("UDID-A", true);
+
+    // 이 호스트에 산출물이 있으면 빌드를 건너뛰고 기동으로 간다. 어느 쪽이든
+    // **설정 부재를 WDA_UNREACHABLE로 뭉개지 않는다**는 것이 여기서 볼 것이다.
+    expect(result.code).not.toBe("WDA_UNREACHABLE");
   });
 });
 

@@ -59,20 +59,41 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
   const target = resolveTargetDevice(devices, args.device, source);
   const resolvedDevice = target.ok ? devices.find((d) => d.serial === target.serial) : undefined;
 
-  if (resolvedDevice?.platform === "ios") {
+  // SPEC-IOS-002: 기기가 `unavailable`이면 `resolveTargetDevice`가 실패해
+  // iOS 갈래에 도달하지 못했다. 그 결과 **iOS 진단이 가장 필요한 상태에서
+  // iOS 진단이 나오지 않았고**, `--yes` 준비 자동화도 함께 막혔다 — 기기를
+  // 올리는 명령인데 기기가 올라와 있어야만 닿을 수 있었다.
+  //
+  // 이름이 지목된 기기가 목록에 있고 iOS라면, 연결 상태와 무관하게 이 갈래로
+  // 들어간다. 목록에 있다는 것은 `devicectl`이 그 기기를 본다는 뜻이므로
+  // 진단할 대상이 실재한다.
+  //
+  // @MX:ANCHOR — 이 갈래의 진입 조건에 `target.ok`를 다시 넣지 않는다.
+  // @MX:REASON — 넣으면 준비 자동화가 자기 전제를 요구하는 고리로 되돌아간다.
+  const namedDevice = args.device === undefined ? undefined : devices.find((d) => d.serial === args.device);
+  const iosDevice = resolvedDevice?.platform === "ios" ? resolvedDevice : namedDevice?.platform === "ios" ? namedDevice : undefined;
+
+  if (iosDevice !== undefined) {
+    const resolvedDevice = iosDevice;
     // SPEC-WEBVIEW-002: `webInspectorProxy` 검사가 사라졌다. `--web` 경로가
     // 제거되면서 보고할 전제조건 자체가 없어졌다 — 출력 계약 변경이므로
     // CHANGELOG에 breaking change로 기록돼 있다.
-    const [devicectl, wda] = await Promise.all([
-      envServices.ios.checkDevicectl(),
-      envServices.ios.checkWda(resolvedDevice.serial),
-    ]);
+    const devicectl = await envServices.ios.checkDevicectl();
+
+    // SPEC-IOS-002 REQ-IOS2-002 · 003: `--yes`가 있을 때만 준비를 시도한다.
+    // Android의 `installMissingAdb(args.yes)`와 같은 자리·같은 동의 규칙이다
+    // (design.md §H) — 이 경로는 사용자 폰에 러너를 설치하므로 더 약한 동의를
+    // 받을 이유가 없다. `--yes`가 없으면 부르지 않으므로 이전 동작·이전 비용
+    // 그대로다(판정 호출 `/screenshot`은 기기에 따라 10MiB를 받는다).
+    const bringUp = args.yes ? await envServices.ios.bringUpWda(resolvedDevice.serial, true) : undefined;
+
+    const wda = await envServices.ios.checkWda(resolvedDevice.serial);
     return success<DoctorPayload>("doctor", {
       adb,
       daemon,
       devices,
       adbKeyboard: { skipped: true, reason: "Target device is iOS; see wdaEnvironment instead." },
-      wdaEnvironment: { devicectl, wda },
+      wdaEnvironment: { devicectl, wda, ...(bringUp === undefined ? {} : { bringUp }) },
     });
   }
 

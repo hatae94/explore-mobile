@@ -17,10 +17,12 @@
  */
 
 import type { ProcessExecutor } from "./process-executor.js";
-import { spawnProcess } from "./process-executor.js";
+import { spawnBackground, spawnProcess } from "./process-executor.js";
+import { buildWdaRunner, findXctestrun, wdaArtifactRoot, type WdaBuildResult } from "./wda-build.js";
+import { readWdaBuildConfig, type WdaBuildConfig } from "./wda-build-config.js";
 import { WdaClient } from "./wda-client.js";
 import { WDA_DEFAULT_PORT, wdaRecoveryHint } from "./wda-errors.js";
-import { stopWdaRunner } from "./wda-launcher.js";
+import { launchWdaRunner, stopWdaRunner, type BackgroundSpawner } from "./wda-launcher.js";
 import { WdaRunnerState } from "./wda-runner-state.js";
 
 export interface DevicectlCheck {
@@ -69,6 +71,27 @@ export interface WdaCheck {
   portMapDeclared: boolean;
 }
 
+/**
+ * iOS 준비 자동화의 결과 (SPEC-IOS-002 REQ-IOS2-002 · 003).
+ *
+ * `doctor`는 던지지 않으므로 실패도 이 형태로 보고된다. Android의
+ * `installAttempt`와 같은 자리·같은 성격이다.
+ */
+export interface IosBringUpAttempt {
+  /** 실제로 무언가를 했는가. false면 `reason`이 왜 안 했는지 말한다. */
+  attempted: boolean;
+  reason?: string;
+  /** 산출물이 없어 빌드까지 했는가. */
+  built?: boolean;
+  launched?: boolean;
+  /** 조작 가능 확인까지 마쳤는가. */
+  ok?: boolean;
+  message?: string;
+  runnerLogPath?: string;
+  /** 실패 시 오류 코드 — 설정 부재와 빌드 실패를 호출자가 가를 수 있게. */
+  code?: string;
+}
+
 export interface IosInstallGuidance {
   platformSupported: boolean;
   message: string;
@@ -93,6 +116,12 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** `exactOptionalPropertyTypes` 아래에서는 `code: undefined`를 넣을 수 없다. */
+function errorCodeField(err: unknown): { code?: string } {
+  const code = (err as { code?: string }).code;
+  return code === undefined ? {} : { code };
+}
+
 export class WdaDoctor {
   constructor(
     private readonly processExec: ProcessExecutor = spawnProcess,
@@ -102,6 +131,11 @@ export class WdaDoctor {
     /** CLI가 띄운 러너의 기록 — 종료 자격의 판정 근거(design.md §B.1). */
     private readonly runnerState: WdaRunnerState = new WdaRunnerState(),
     private readonly killProcess: (pid: number) => void = (pid) => process.kill(pid),
+    /** 백그라운드 기동. 검사에서 실제 프로세스를 띄우지 않도록 주입한다. */
+    private readonly spawnBg: BackgroundSpawner = spawnBackground,
+    /** 빌드. 검사에서 실제 `xcodebuild`를 돌리지 않도록 주입한다. */
+    private readonly buildRunner: (config: WdaBuildConfig, udid: string) => Promise<WdaBuildResult> = (config, udid) =>
+      buildWdaRunner(config, udid),
   ) {}
 
   /**
@@ -161,6 +195,76 @@ export class WdaDoctor {
         portMapDeclared,
       };
     }
+  }
+
+  /**
+   * iOS를 쓸 수 있는 상태로 만든다 — 필요하면 빌드하고, 러너를 띄운다
+   * (REQ-IOS2-002 · 003).
+   *
+   * @MX:ANCHOR — `consent`가 참일 때만 빌드·설치한다.
+   * @MX:REASON — 이 경로는 사용자 폰에 앱을 설치한다. Android의 IME 자동 설치와
+   * 달리 되돌리기가 서명·프로비저닝과 얽히므로 더 약한 동의를 받을 이유가 없다
+   * (design.md §H.2). 동의 없이 부르면 아무것도 하지 않고 이유만 보고한다.
+   *
+   * 던지지 않는다 — `doctor`의 일은 진단하고 보고하는 것이다.
+   */
+  async bringUpWda(serial: string, consent: boolean): Promise<IosBringUpAttempt> {
+    if (!consent) {
+      return { attempted: false, reason: "동의가 필요합니다 — 기기에 러너를 설치하므로 `--yes`로 실행하세요." };
+    }
+
+    // 이미 쓸 수 있으면 건드리지 않는다. 판정은 checkWda가 이미 하는 그 판정이다.
+    const current = await this.checkWda(serial);
+    if (current.reachable && current.controllable === "ok") {
+      return { attempted: false, reason: "이미 사용 가능합니다 — 기동하지 않았습니다." };
+    }
+
+    let client: WdaClient;
+    try {
+      client = this.makeClient(serial);
+    } catch (err) {
+      return { attempted: false, reason: errorMessage(err), ...errorCodeField(err) };
+    }
+    const port = Number.parseInt(new URL(client.baseUrl).port, 10);
+
+    let xctestrunPath = await findXctestrun(wdaArtifactRoot());
+    let built = false;
+
+    if (xctestrunPath === undefined) {
+      let config;
+      try {
+        config = readWdaBuildConfig(this.env);
+      } catch (err) {
+        // 설정 부재와 빌드 실패는 복구 절차가 다르다 — 코드를 그대로 올려보낸다.
+        return { attempted: true, built: false, ok: false, message: errorMessage(err), ...errorCodeField(err) };
+      }
+      try {
+        const result = await this.buildRunner(config, serial);
+        xctestrunPath = result.xctestrunPath;
+        built = true;
+      } catch (err) {
+        return { attempted: true, built: false, ok: false, message: errorMessage(err), ...errorCodeField(err) };
+      }
+    }
+
+    const launch = await launchWdaRunner(serial, xctestrunPath, {
+      probe: {
+        alive: async () => (await this.checkWda(serial)).reachable,
+        controllable: async () => probeControllable(client),
+      },
+      spawn: this.spawnBg,
+      state: this.runnerState,
+      port,
+    });
+
+    return {
+      attempted: true,
+      built,
+      launched: launch.launched,
+      ok: launch.ok,
+      ...(launch.message === undefined ? {} : { message: launch.message }),
+      ...(launch.runnerLogPath === undefined ? {} : { runnerLogPath: launch.runnerLogPath }),
+    };
   }
 
   /** 안내만 한다 — 설치를 대신 수행하지 않는다(iOS 도구 체인 공통 방침). */
