@@ -22,6 +22,7 @@ import { buildWdaRunner, findXctestrun, wdaArtifactRoot, type WdaBuildResult } f
 import { readWdaBuildConfig, type WdaBuildConfig } from "./wda-build-config.js";
 import { WdaClient } from "./wda-client.js";
 import { WDA_DEFAULT_PORT, wdaRecoveryHint } from "./wda-errors.js";
+import { readGates, type WdaGatesReport } from "./wda-gates.js";
 import { launchWdaRunner, stopWdaRunner, type BackgroundSpawner } from "./wda-launcher.js";
 import { WdaRunnerState } from "./wda-runner-state.js";
 import { readSigningStatus, WDA_SIGNING_EXPIRED, type WdaSigningStatus } from "./wda-signing.js";
@@ -153,6 +154,16 @@ export class WdaDoctor {
     /** 서명 만료 판정. 검사에서 실제 `security`를 부르지 않도록 주입한다. */
     private readonly readSigning: () => Promise<WdaSigningStatus> = () => readSigningStatus(),
   ) {}
+
+  /**
+   * 관문 셋이 각각 어떤 상태인가 (REQ-IOS2-006).
+   *
+   * 지금은 셋 다 "구분 불가"다 — 판별 신호가 없기 때문이며, 그 사유는
+   * `wda-gates.ts` 상단에 있다. 주입 자리를 두지 않은 것은 입출력이 없어서다.
+   */
+  checkGates(): WdaGatesReport {
+    return readGates();
+  }
 
   /**
    * 서명이 지금 유효한가 (REQ-IOS2-007).

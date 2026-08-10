@@ -94,12 +94,17 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
     // 것의 차이가 크다. 산출물 안의 프로파일을 읽는 것뿐이라 기기를 건드리지 않는다.
     const signing = await envServices.ios.checkSigning();
 
+    // SPEC-IOS-002 REQ-IOS2-006: 관문 셋을 **각각** 싣는다. 지금은 셋 다
+    // "구분 불가"이며, 그것이 조사의 결과다(`wda-gates.ts` 상단). 기기를
+    // 건드리지 않으므로 실패한 상태에서도 늘 나온다.
+    const gates = envServices.ios.checkGates();
+
     return success<DoctorPayload>("doctor", {
       adb,
       daemon,
       devices,
       adbKeyboard: { skipped: true, reason: "Target device is iOS; see wdaEnvironment instead." },
-      wdaEnvironment: { devicectl, wda, signing, ...(bringUp === undefined ? {} : { bringUp }) },
+      wdaEnvironment: { devicectl, wda, signing, gates, ...(bringUp === undefined ? {} : { bringUp }) },
     });
   }
 

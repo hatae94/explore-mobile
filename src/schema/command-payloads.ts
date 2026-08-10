@@ -38,6 +38,7 @@ import type {
   ResetResult,
 } from "../backend/doctor.js";
 import type { DevicectlCheck, IosBringUpAttempt, IosResetResult, WdaCheck } from "../backend/wda-doctor.js";
+import type { WdaGatesReport } from "../backend/wda-gates.js";
 import type { WdaSigningStatus } from "../backend/wda-signing.js";
 import type { DeviceInfo, SwipePoint } from "./device-backend.js";
 
@@ -146,6 +147,14 @@ export interface WdaEnvironmentReport {
    * 끊긴 뒤에 알려 주는 것과 끊기기 전에 알려 주는 것의 차이가 크다.
    */
   signing?: WdaSigningStatus;
+  /**
+   * 관문 3개의 상태 (SPEC-IOS-002 REQ-IOS2-006). iOS 갈래에서 **항상** 실린다.
+   *
+   * 셋 다 "구분 불가"인 것이 현재의 정직한 답이다 — 판별 신호가 없다
+   * (`wda-gates.ts` 상단). 값이 늘 같더라도 필드를 싣는 이유는, 사용자가 무엇을
+   * 직접 확인해야 하는지를 관문별로 알려 주기 때문이다.
+   */
+  gates?: WdaGatesReport;
 }
 
 /** `doctor`의 ADBKeyBoard 항목 — 건너뛴 경우와 실제 수행한 경우. */

@@ -895,7 +895,7 @@ describe("runCli", () => {
        * 이 테스트가 이 SPEC의 계기다. iOS 갈래의 `wdaEnvironment` 안에 있던
        * 세 번째 필드가 사라졌을 때 아무것도 깨지지 않았다. 이제 깨진다.
        */
-      it("iOS 갈래 — wdaEnvironment가 실리고 그 안은 { devicectl, wda }다", async () => {
+      it("iOS 갈래 — wdaEnvironment가 실리고 그 안은 { devicectl, wda, signing, gates }다", async () => {
         const androidBackend = createMockBackend([]);
         const iosBackend = createMockIosBackend();
         (iosBackend.listDevices as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -932,7 +932,10 @@ describe("runCli", () => {
           );
           // `signing`은 SPEC-IOS-002 M5에서 추가됐다 — `--yes` 없이도 늘 실린다.
           // 만료는 기동이 깨진 뒤가 아니라 깨지기 전에 알려야 값이 있다(REQ-IOS2-007).
-          expect(Object.keys(data.wdaEnvironment).sort()).toEqual(["devicectl", "signing", "wda"].sort());
+          // `gates`는 같은 SPEC M6에서 추가됐다 — 관문 셋을 각각 싣는다(REQ-IOS2-006).
+          expect(Object.keys(data.wdaEnvironment).sort()).toEqual(
+            ["devicectl", "gates", "signing", "wda"].sort(),
+          );
         }
       });
 
