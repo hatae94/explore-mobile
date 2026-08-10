@@ -102,7 +102,7 @@ JSON 본문이 유일한 계약이다.
 | `swipe <x1> <y1> <x2> <y2> [--duration <ms>]` | 두 좌표 사이 원시 스와이프 |
 | `scroll <up\|down\|left\|right> [--amount <비율>]` | 화면 크기를 몰라도 되는 스크롤 |
 | `doctor [--yes\|--install] [--clean]` | 환경 진단 및 부트스트랩 |
-| `reset` | `doctor` 이전 상태로 기기 복원 |
+| `reset` | CLI가 만들어 둔 것만 되돌린다 (Android: 원래 키보드 / iOS: CLI가 띄운 러너·포트 포워딩) |
 
 ### 사용 예
 
@@ -130,9 +130,10 @@ $ npx explore-mobile scroll down
 
 환경을 진단하고, 필요하면 부트스트랩한다.
 
-- `--yes` 또는 `--install` — Homebrew로 adb 자동 설치를 허용한다. 동의 없이는
-  설치하지 않고 수동 명령만 알려준다.
-- `--clean` — `reset`과 같다. 원래 키보드를 복원한다.
+- `--yes` 또는 `--install` — 동의 표시다. Android에서는 Homebrew로 adb 자동
+  설치를 허용하고, **iOS 대상에서는 WDA 빌드·기동까지 허용한다**(아래 「iOS
+  사전 준비」). 동의 없이는 어느 쪽도 하지 않고 진단만 한다.
+- `--clean` — `reset`과 같다. CLI가 만들어 둔 것만 되돌린다.
 
 ```bash
 $ npx explore-mobile doctor
@@ -284,9 +285,30 @@ $ pnpm build       → exit 0
 
 **iOS 사전 준비**
 
-- WDA를 미리 기동하고 `iproxy 8100:8100 -u <UDID>`가 떠 있어야 한다. 접속 실패는
+- WDA가 기동돼 있고 `iproxy 8100:8100 -u <UDID>`가 떠 있어야 한다. 접속 실패는
   흔한 정상 상태이므로 `WDA_UNREACHABLE`로 반환되며 복구 절차가 메시지에
   들어간다. **조용히 다른 경로로 대체되지 않는다.**
+- **`doctor --yes`가 그 둘을 대신 세워 준다**(`SPEC-IOS-002`). 산출물이 없으면
+  빌드하고, 포트 포워딩과 러너를 띄운 뒤 **조작 가능 확인까지 마치고** 성공을
+  보고한다. 환경 변수 3종이 필요하며 **유추해 채우지 않는다** — 하나라도 없으면
+  `WDA_BUILD_CONFIG_MISSING`으로 빠진 것만 지목한다.
+
+  | 환경 변수 | 값 |
+  |---|---|
+  | `EXPLORE_MOBILE_IOS_TEAM_ID` | Apple 개발팀 식별자 |
+  | `EXPLORE_MOBILE_IOS_BUNDLE_ID` | 러너에 부여할 번들 식별자 |
+  | `EXPLORE_MOBILE_WDA_SOURCE` | WebDriverAgent 소스 트리 경로 |
+
+- **기기에서 손으로 해야 하는 것 3가지는 남는다** — 개발자 모드, 인증서 신뢰,
+  UI 자동화 승인. `doctor`가 `wdaEnvironment.gates`에 세 항목을 따로 싣지만
+  현재 셋 다 `indeterminate`다. 어느 관문이 막고 있는지 가려낼 신호를 찾지
+  못했기 때문이며, **추측해 지목하지 않고 모른다고 말한다.** 각 항목의
+  `manualCheck`가 기기 어디를 볼지 알려준다.
+- **무료 서명은 7일이면 만료된다.** `wdaEnvironment.signing`이 만료 시각을
+  미리 싣고, 만료된 상태의 기동 실패는 일반 실패와 구별해 보고한다. 재빌드로
+  끝나지 않는다 — 러너를 다시 설치하면 **UI 자동화 승인이 다시 요구된다.**
+- `reset`(또는 `doctor --clean`)은 **CLI가 띄운 러너와 포트 포워딩만** 정리한다.
+  손으로 띄운 러너는 건드리지 않는다.
 - iOS 기기를 2대 이상 붙일 때는 `EXPLORE_MOBILE_WDA_PORTS="<udid>=<port>,…"`로
   기기↔포트를 선언해야 한다. WDA `/status`는 기기 **종류**만 알려주므로 CLI가
   포트 너머 기기의 신원을 스스로 확인할 수 없다. 선언하면 미등록 serial은

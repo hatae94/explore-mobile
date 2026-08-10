@@ -1182,3 +1182,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     acceptance criteria (AC-READY-010/011/012/017/020) are PASS; only the
     real-device final confirmation is open. This is **not** rounded up to
     "all criteria met" per `acceptance.md` 원칙 ①.
+
+### Added
+
+- **iOS control preparation is now automatable (SPEC-IOS-002).** Until now,
+  making an iOS device usable was entirely manual: build WebDriverAgent in
+  Xcode, start `iproxy`, start the runner, and hope. `SPEC-READY-001` had
+  deliberately deferred this — its scope ended at *saying precisely why* an
+  iOS device is unusable. This SPEC picks up that deferred item and adds
+  the *making it usable* half, without weakening the reporting half.
+  - **`doctor --yes` now brings up iOS**, mirroring the consent rule that
+    already gated Homebrew `adb` installation on Android: without `--yes`
+    the iOS path only diagnoses and starts nothing (it does not even make
+    the authorization probe, so no 10 MiB screenshot is fetched for free).
+    With `--yes` it builds the runner when no artifact exists, starts the
+    port forward and the runner, and reports success **only after
+    confirming the runner is actually operable** — not merely alive.
+  - **Runner build settings are read from three environment variables and
+    never guessed**: `EXPLORE_MOBILE_IOS_TEAM_ID`,
+    `EXPLORE_MOBILE_IOS_BUNDLE_ID`, `EXPLORE_MOBILE_WDA_SOURCE`. A missing
+    value fails with the new `WDA_BUILD_CONFIG_MISSING` code naming only
+    what is absent. Guessing a development team identifier would attempt
+    signing under someone else's team and fail in a way whose cause is
+    invisible, so `wda-build-config.ts` contains no keychain lookup, no
+    Xcode build-setting query, and no provisioning-profile search — an
+    absence its own test asserts with a self-owned positive control.
+  - **Liveness and operability are reported as two separate fields.**
+    `wdaEnvironment.wda` carries `reachable` (does `GET /status` answer —
+    two values) and `controllable` (`"ok"` / `"failed"` / `"unknown"`,
+    where `"unknown"` means the runner did not answer so there was no way
+    to ask). A runner that is alive but has lost authorization is a real,
+    observed state; merging the two fields would report it as either
+    "absent" (causing a duplicate launch) or "fine" (failing on the next
+    command). Availability is no longer judged by `/status` alone.
+  - **`reset` on iOS is no longer a no-op — a breaking behavior change.**
+    Its prior contract ("iOS has no IME/APK state to clean") was a fact
+    about a CLI that started nothing. Now that the CLI starts a port
+    forward and a runner, `reset` (and `doctor --clean`) stops **those**,
+    and `data.noOp` is `true` when there was nothing of ours to stop.
+    Ownership is decided by port, with the recorded identifier used only
+    for termination: a runner the user started by hand is never stopped,
+    on the `reset` path or on the auto-recovery restart path.
+  - **One automatic recovery attempt on an authorization error**: restart
+    once, retry once, never more. Response-loss failures are deliberately
+    excluded — a lost response is not evidence the operation did not
+    apply, so retrying it would apply it twice. The trigger branches on
+    the HTTP status now carried as a field on `WdaCommandFailedError`,
+    not on the message text.
+  - **Signature expiry is read directly rather than inferred from a
+    failure.** `wdaEnvironment.signing` reports the expiry ahead of time,
+    so `doctor` answers it even without `--yes`, and an expired-state
+    launch failure is reported as expiry rather than as a generic failure.
+    The rebuild guidance also states that reinstalling the runner makes
+    the device ask for UI-automation approval again — rebuilding alone is
+    not the whole fix.
+  - **The three device-side gates are reported as three separate fields,
+    all currently "indeterminate".** Developer mode, certificate trust,
+    and UI-automation approval each get their own `reason` and
+    `manualCheck`. No signal distinguishing them was found — the leading
+    candidate for UI automation (a launch-timeout phrase) was refuted on
+    2026-08-09 when several unrelated causes were observed producing the
+    same phrase. Reporting "indeterminate" is the investigation's actual
+    result; inventing a guess would have been worse than saying nothing.
+  - New error codes: `WDA_BUILD_CONFIG_MISSING`, `WDA_BUILD_FAILED`. The
+    four pre-existing codes (`WDA_UNREACHABLE`, `WDA_RESPONSE_LOST`,
+    `WDA_COMMAND_FAILED`, `WDA_PORT_UNMAPPED`) keep their meanings
+    unchanged, asserted by a test that owns its own four-row contrast
+    table and asserts the row count before checking any row.
+  - Implementation: `src/backend/wda-build-config.ts`, `wda-build.ts`,
+    `wda-launcher.ts`, `wda-runner-state.ts`, `wda-recovery.ts`,
+    `wda-signing.ts`, `wda-gates.ts` (all new), plus `wda-doctor.ts`,
+    `wda-errors.ts`, `wda-backend.ts`, `src/cli/commands/doctor.ts`,
+    `src/cli/commands/reset.ts`, `src/cli/router.ts`,
+    `src/schema/command-payloads.ts`.
+  - Recorded as **27 PASS / 1 unobserved (AC-IOS2-021) / 1 unsatisfiable
+    (AC-IOS2-020) / 0 FAIL** across 29 acceptance criteria in
+    `.moai/specs/SPEC-IOS-002/progress.md` (§E.3 run-phase roll-up). The
+    two open criteria are open for **different** reasons, and neither is
+    rounded up to "all criteria met" per `acceptance.md` 원칙 ①:
+    AC-IOS2-021 (an expired signature distinguished from a generic launch
+    failure) is *unobserved* — the free signature expires 2026-08-11
+    16:19:34 KST and the state had not yet arrived; faking it by moving
+    the clock would be a different state and the resulting PASS would be
+    false. AC-IOS2-020 (the unmet gate is named) is *unsatisfiable* —
+    the implementation deliberately names no gate, so reverting a gate on
+    a device would still yield `indeterminate` and the observation would
+    teach nothing. It reopens if a distinguishing signal is ever found.
+  - One prediction recorded before starting was falsified in the SPEC's
+    favor: `acceptance.md` §E declared that REQ-IOS2-005 (automatic
+    recovery) might close with **zero** real-environment confirmations,
+    because losing runner authorization was believed impossible to
+    reproduce on purpose. On 2026-08-10 02:08 the state arrived on its
+    own, and four criteria were confirmed on the device instead.

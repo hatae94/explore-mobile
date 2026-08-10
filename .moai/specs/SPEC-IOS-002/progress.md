@@ -2,9 +2,9 @@
 id: SPEC-IOS-002
 title: "iOS 제어 준비의 자동화 — 진행 기록"
 version: "0.3.0"
-status: in-progress
+status: completed
 created: 2026-08-06
-updated: 2026-08-08
+updated: 2026-08-10
 author: hatae
 ---
 
@@ -617,6 +617,42 @@ build: exit 0
 - **AC-IOS2-021** — *미관측*. 만료는 2026-08-11 16:19:34 KST이고 마지막 재측정(2026-08-10 19:56)에서도 `verdict:"valid"`였다. 시계를 조작해 흉내내지 않는다.
 
 실환경 판정 현황도 착수 전 선언과 대조해 남긴다 — `acceptance.md` §E는 **REQ-005가 실환경 판정 0건으로 마감될 수 있다**고 미리 적어 두었으나, M5에서 권한 상실 상태가 저절로 관측돼 실기기 판정 4건이 나왔다. **0건으로 마감되지 않았다.** 반면 REQ-006의 실환경 AC(AC-020)는 충족 불가로 남고, REQ-007의 AC-021은 미관측으로 남는다.
+
+---
+
+## §E.4 Sync-phase Audit-Ready Signal
+
+```
+sync_complete_at: 2026-08-10
+sync_commit_sha: pending-backfill-sync   (백필 대기 — spec-frontmatter-schema.md SHA placeholder backfill exemption(D3))
+sync_status: complete-with-gap   (§E.3의 run_status를 이어받는다 — PASS 27 · FAIL 0 · 미관측 1(AC-021) · 충족 불가 1(AC-020))
+changelog_entry_position: CHANGELOG.md [Unreleased] 섹션 끝, "### Added" 새 항목(SPEC-IOS-002 전용)
+frontmatter_status_transitions.spec_md: in-progress → completed
+frontmatter_status_transitions.plan_md: in-progress → completed
+frontmatter_status_transitions.acceptance_md: in-progress → completed
+frontmatter_status_transitions.design_md: in-progress → completed
+frontmatter_status_transitions.research_md: in-progress → completed
+frontmatter_status_transitions.progress_md: in-progress → completed
+```
+
+### sync 산출물
+
+- `CHANGELOG.md` `[Unreleased]` 섹션 끝에 SPEC-IOS-002 전용 `### Added` 항목 추가. 사전에 `grep -c 'SPEC-IOS-002' CHANGELOG.md` → `0` 확인 후 추가(중복 없음). 항목이 지목하는 구현 파일 14개는 `ls`로 실재를 확인했다. AC 건수는 `acceptance.md`(SSOT) 기준 29건이며 `progress.md` 집계와 일치한다.
+- `README.md` 3지점 갱신 — ① 명령 표의 `reset` 설명이 Android만 서술했다(iOS 계약 변경 미반영), ② `doctor`의 `--yes` 설명이 adb 설치 동의로만 적혀 있었다, ③ 「알려진 제약」의 iOS 사전 준비 절이 손 절차만 서술하고 `doctor --yes` 경로·환경 변수 3종·관문 3개·서명 만료를 전부 빠뜨렸다.
+- `SKILL.md`는 M7(run-phase)이 이미 4지점을 갱신 완료(AC-IOS2-024) — sync-phase에서 추가 변경 없음.
+
+### Gaps (미검증)
+
+- `sync_commit_sha`는 이 커밋이 실제로 만들어진 뒤에만 알 수 있다 — placeholder이며 후속 백필 커밋이 채운다(D3 예외 패턴).
+- **AC-021 · AC-020은 sync-phase에서 재시도하지 않는다.** run-phase가 원칙 ①에 따라 마감한 판정이고, sync-phase의 소관은 문서 동기화이지 재검증이 아니다. AC-021은 만료 시각(2026-08-11 16:19:34 KST) 이후 별도 관측으로만 열린다.
+- **계획 감사는 끝내 통과하지 못했다**(2회차 0.78 / 기준 0.85). 부채로 명시하고 진입한 상태 그대로 마감한다 — sync-phase가 이 점수를 바꾸지 않았다.
+- `design.md` §A.4의 `/screenshot` 수치(111ms · 약 1MB)는 실측(680ms · 10.2MiB)과 다르다는 것이 M1에서 확인됐으나 **본문은 정정하지 않았다** — SPEC 본문 수정은 run/sync 단계의 소관이 아니다. 후속 SPEC 또는 개정으로 남는다.
+
+### Residual-risk (잔여 위험)
+
+- `doctor --yes`의 iOS 준비 경로는 이 호스트의 아이패드 1대에서만 종단 확인됐다. 다른 기기·다른 Xcode 버전에서 같은 경로가 성립하는지는 관측 범위 밖이다.
+- 관문 3개가 전부 `indeterminate`이므로, 사용자가 준비에 실패했을 때 **CLI는 어느 관문이 막는지 말해 주지 못한다.** 문서가 `manualCheck`로 확인 위치를 안내하는 것이 현재 할 수 있는 전부다.
+- CHANGELOG의 `reset` breaking-change 서술은 이 저장소 밖의 JSON 소비자가 `data.noOp`를 어떻게 소비하는지에 대한 정보 없이 쓰였다 — 영향 범위 판단은 소비자 쪽 책임으로 남긴다.
 
 ---
 

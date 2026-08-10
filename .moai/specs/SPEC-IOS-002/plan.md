@@ -2,9 +2,9 @@
 id: SPEC-IOS-002
 title: "iOS 제어 준비의 자동화 — 구현 계획"
 version: "0.3.0"
-status: in-progress
+status: completed
 created: 2026-08-06
-updated: 2026-08-08
+updated: 2026-08-10
 author: hatae
 ---
 
