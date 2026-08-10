@@ -527,6 +527,76 @@ router.test.ts       → 1 failed      # expected [devicectl, signing, wda] to e
 
 ---
 
+### M7 — 문서 동기화와 회귀 확인 (REQ-IOS2-008)
+
+**착수 전 재측정**: 이번에는 이월 메모의 수치와 실측이 일치했다(HEAD `7c0acf1`, 미푸시 11건, 테스트 735건, AC 24/29). 그래도 세는 명령을 다시 돌려 확인했다 — M5·M6 두 번 모두 이월 값이 낡아 있었으므로 일치를 가정하지 않는다.
+
+착수 시각 2026-08-10 18:03 KST 기준 만료(8/11 16:19:34)까지 약 22시간이 남아, AC-021 관측 기회는 이번에도 없었다.
+
+**변경**: `wda-errors.test.ts`(신규) · `wda-doctor.test.ts`(AC-022 절 추가) · `SKILL.md` iOS 서술 4지점 · `reset.ts` 주석 3곳.
+
+#### 부재 주장 둘을 각각 반증으로 확인했다
+
+AC-022와 AC-025는 둘 다 **"달라진 것이 없다"**는 부재 주장이다. 부재 주장은 검사가 통과해도 그것이 "정말 없다"인지 "검사가 못 잡는다"인지 알 수 없다. 그래서 두 검사 모두 **일부러 깨뜨려 보고** 잡히는지 확인했다.
+
+```
+AC-025 — wda-errors.ts에서 WDA_RESPONSE_LOST의 code를 WDA_UNREACHABLE로 바꿔 두 코드를 합침
+         → 2 failed | 4 passed
+         깨진 것: 발화 조건 판정(②) + "네 상황이 각각 다른 코드로 갈린다"
+         통과한 것: 항목 수 4 주장(①) — 대조표가 검사 파일 소유라 그대로다
+
+AC-022 — wda-doctor.ts의 checkDevicectl 앞에 checkWda 결과를 끼워 넣어 결합시킴
+         → 2 failed | 1 passed | 32 skipped
+         깨진 것: "제품 코드에서는 잡히지 않는다"(②) + 두 축 분리 확인
+         통과한 것: 탐지기의 양성 대조(①) — 대역은 제품 코드와 무관하다
+```
+
+두 경우 모두 **①은 통과하고 ②만 깨졌다.** acceptance.md가 "①이 막는 것은 제품 코드의 변경이 아니라 대조표 자체가 비는 경우"라고 적어 둔 그 구분이 실제로 그렇게 나뉜다. 반증 후 두 파일 모두 원상 복구했고 재실행으로 확인했다.
+
+#### AC-024 — SKILL.md 4지점
+
+문서를 코드가 아니라 **실기기 출력**과 나란히 놓고 맞췄다. 아래는 갱신에 쓴 실제 출력이다(`--yes` 없이 읽기 전용, 2026-08-10 19:56, 아이패드).
+
+```
+$ node dist/cli/bin.js doctor --device 00008103-000458360A63401E
+ok        = true
+keys      = devicectl, wda, signing, gates
+wda       = {"reachable":true,"controllable":"ok","port":8100}
+signing   = {"verdict":"valid","expiresAt":"2026-08-11T07:19:34.000Z", ...}
+gates     = developerMode:indeterminate | certificateTrust:indeterminate | uiAutomation:indeterminate
+```
+
+| 지점 | 무엇이 낡아 있었나 |
+|---|---|
+| 오류 코드 표 | `WDA_COMMAND_FAILED`가 아예 빠져 있었고, 이 SPEC이 더한 `WDA_BUILD_CONFIG_MISSING` · `WDA_BUILD_FAILED`도 없었다 |
+| `reset` 설명 | *"original keyboard back, ADBKeyBoard removed"* — Android만 적혀 있었다. **iOS의 계약 변경이 문서에 전혀 없었다** |
+| `doctor` 설명 | `--yes`가 Android의 adb 설치에만 동의하는 것으로 적혀 있었다. iOS 준비 자동화가 빠져 있었다 |
+| iOS 사전 준비 절 | 손으로 띄우라는 절차만 있었다. `doctor --yes` 경로, 환경 변수 3종, 관문 3개, 서명 만료가 전부 없었다 |
+
+`doctor` 출력 형태 서술(`wdaEnvironment`에 `devicectl`과 `wda`만 있다)도 함께 고쳤다 — 실제로는 `signing`·`gates`가 더 있고 `--yes`일 때 `bringUp`이 붙는다.
+
+**코드 주석도 같은 거짓을 갖고 있었다.** `reset.ts`가 iOS 갈래를 세 곳에서 *"near-no-op"*이라 부르고 있었다. AC-024는 `SKILL.md`만 지목하지만, 같은 문장이 코드 주석에 남아 있으면 다음 사람이 그것을 읽는다. 세 곳 모두 고쳤다.
+
+#### AC 판정
+
+| AC | 판정 | 근거 |
+|---|---|---|
+| AC-IOS2-022 | **PASS (unit + 코드 확인)** | 결합 탐지기가 검사 파일 소유 대역에서 결합을 잡아내고(①), 제품 코드에서는 잡지 않는다(②). 제품 코드를 일부러 결합시키자 ②가 깨졌다 |
+| AC-IOS2-024 | **PASS (doc-review)** | 네 지점 모두 실기기 출력과 대조해 갱신. `reset` 계약 변경이 문서에 처음 실렸다 |
+| AC-IOS2-025 | **PASS (unit)** | 검사 파일 소유 4항목 대조표 + 항목 수 4 주장. 두 코드를 합치자 ②만 깨지고 ①은 통과 — 설계대로다 |
+| AC-IOS2-021 | **미관측 (유지)** | 2026-08-10 19:56 재측정에서 `verdict:"valid"`, 만료는 2026-08-11T07:19:34Z(16:19:34 KST). Given이 아직 성립하지 않는다 |
+
+AC-023은 M3+M4에서 이미 PASS이며, 이번 `devices` 출력에서도 아이폰이 `unavailable` 상태로 목록에 남아 있는 것을 다시 확인했다(회귀 없음).
+
+#### 남는 것
+
+- **AC-021** — 2026-08-11 16:19:34 KST 이후 재관측. 시계를 조작해 흉내내지 않는다
+- **AC-020** — 충족 불가(M6에서 마감). 판별 신호가 조사되면 다시 열린다
+
+M7 마감 시점 계수 명령 출력: **총수 29 / PASS 27**, 남은 것 020(충족 불가) · 021(만료 미도래).
+
+---
+
 ## §F Phase 4 Mode Selection
 
 **Decision: sub-agent**
