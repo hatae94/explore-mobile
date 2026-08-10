@@ -98,7 +98,10 @@ Branch on `error.code`. Codes you will actually meet:
 | `UNSUPPORTED_KEY_ON_IOS` | that key alias has no iOS equivalent (retry is pointless) |
 | `WDA_UNREACHABLE` | iOS: WebDriverAgent is not up — message carries the recovery steps |
 | `WDA_RESPONSE_LOST` | iOS: request sent, response lost. The message says whether it was a read (safe to re-call) or a mutation (verify with a screenshot) |
+| `WDA_COMMAND_FAILED` | iOS: WebDriverAgent answered and the answer was a failure (non-2xx, or a body that is not JSON) |
 | `WDA_PORT_UNMAPPED` | iOS: multiple devices, serial missing from the port map |
+| `WDA_BUILD_CONFIG_MISSING` | iOS: the runner build settings are not declared — the message names the missing environment variables. **Not** `WDA_UNREACHABLE`: the fix is to declare a variable, not to start a runner |
+| `WDA_BUILD_FAILED` | iOS: `xcodebuild` failed — its own cause line is preserved in the message |
 
 ## Device targeting
 
@@ -163,8 +166,8 @@ backend — passing `--device <serial>` routes automatically.
 | `scroll <up\|down\|left\|right> [--amount <ratio>]` | Scroll without knowing the screen size. `--amount` is a fraction above 0 and at most 1 |
 | `key <alias>` | Send a key event (aliases below) |
 | `text "<string>"` | Type into the focused field. `--keep-keyboard` skips the default post-send keyboard dismissal |
-| `doctor [--yes\|--install] [--clean]` | Diagnose the environment — reports whether `adb` was found (`installed`), whether it was found on `PATH` (`onPath`) or via an SDK-relative fallback, and the resolved absolute path (`resolvedPath`), plus daemon health and connected devices. `--yes`/`--install` consents to auto-installing `adb` via Homebrew (macOS only). `--clean` does the same restore as `reset` |
-| `reset` | Restore the device to its pre-`doctor` state (original keyboard back, ADBKeyBoard removed) |
+| `doctor [--yes\|--install] [--clean]` | Diagnose the environment — reports whether `adb` was found (`installed`), whether it was found on `PATH` (`onPath`) or via an SDK-relative fallback, and the resolved absolute path (`resolvedPath`), plus daemon health and connected devices. `--yes`/`--install` consents to auto-installing `adb` via Homebrew (macOS only) **and, on an iOS target, to building/starting WebDriverAgent** (see iOS prerequisites). Without `--yes` the iOS path only diagnoses — it starts nothing. `--clean` does the same restore as `reset` |
+| `reset` | Undo what the CLI itself put in place. Android: original keyboard back, ADBKeyBoard removed. iOS: the port forward and WebDriverAgent runner **that this CLI started** are stopped (`data.noOp` is `true` when there was nothing of ours to stop). A runner you started by hand is never touched |
 
 **Key aliases (14)**: `back` `home` `enter` `menu` `app_switch` `up` `down`
 `left` `right` `del` `tab` `power` `volume_up` `volume_down`
@@ -192,8 +195,20 @@ Unicode IME and switches back afterward. On iOS there is no keyboard switch —
 text goes straight through. See the Unicode note below.
 
 **`doctor` output shape.** Android targets report `adb`, `daemon`, `devices`,
-`adbKeyboard`. iOS targets additionally report `wdaEnvironment` with
-`devicectl` and `wda` inside, and `adbKeyboard` comes back marked skipped.
+`adbKeyboard`. iOS targets additionally report `wdaEnvironment`, and
+`adbKeyboard` comes back marked skipped. `wdaEnvironment` carries four keys —
+`devicectl` (is the backend usable at all), `wda` (is the runner alive, and is
+it operable — two separate fields, see below), `signing` (when the runner's
+signature expires), `gates` (the three device-side gates) — plus `bringUp`
+only when `--yes` was passed.
+
+`wda` answers two questions separately and never merges them: `reachable`
+(does `GET /status` answer — two values) and `controllable` (did a call that
+needs authorization succeed — `"ok"` / `"failed"` / `"unknown"`, where
+`"unknown"` means the runner did not answer so there was no way to ask). A
+runner that is alive but has lost authorization is a real, observed state
+(`reachable: true` + `controllable: "failed"`); reading only one field would
+hide it.
 
 ## iOS prerequisites
 
@@ -206,6 +221,30 @@ Before any iOS command:
 If either is missing, commands fail with `WDA_UNREACHABLE`, and the error
 message carries the recovery steps. This is a normal, expected state — do not
 treat it as a crash, and do not fall back to some other path.
+
+**`doctor --yes` can put both in place for you.** It builds the runner if there
+is no build artifact yet, starts the port forward and the runner, and reports
+success only after confirming the runner is actually operable. It needs three
+environment variables, and it **never guesses them** — if any is missing it
+fails with `WDA_BUILD_CONFIG_MISSING` naming exactly what is absent:
+
+| Variable | What it is |
+|---|---|
+| `EXPLORE_MOBILE_IOS_TEAM_ID` | Apple development team identifier |
+| `EXPLORE_MOBILE_IOS_BUNDLE_ID` | bundle id to give the runner |
+| `EXPLORE_MOBILE_WDA_SOURCE` | path to the WebDriverAgent source tree |
+
+**Three things stay on the device and stay yours to do**: developer mode,
+trusting the certificate, and approving UI automation. `doctor` reports these
+under `wdaEnvironment.gates` as three separate fields, and today each one
+reads `"indeterminate"` — no signal was found that distinguishes them, so the
+CLI says so rather than guessing which one you are missing. Each field carries
+its own `manualCheck` telling you where on the device to look.
+
+**A free signature expires after 7 days.** `wdaEnvironment.signing` reports
+the expiry ahead of time. Once expired, a start attempt is reported as an
+expiry rather than a generic failure. Rebuilding is not the whole fix —
+reinstalling the runner makes the device ask for UI-automation approval again.
 
 **Two or more iOS devices**: declare the mapping in the environment,
 `EXPLORE_MOBILE_WDA_PORTS="<udid>=<port>,<udid>=<port>"`. Once declared, an

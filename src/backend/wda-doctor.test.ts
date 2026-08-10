@@ -507,3 +507,72 @@ describe("WdaDoctor.checkSigning · 기동 실패의 만료 식별 (REQ-IOS2-007
     expect(result.message).toContain("UI 자동화");
   });
 });
+
+/**
+ * `checkDevicectl`(백엔드 가용성 게이트)과 `checkWda`(제어 가능 여부)의 분리가
+ * 유지되는지 본다 (SPEC-IOS-002 REQ-IOS2-008 — AC-IOS2-022).
+ *
+ * ## "영향을 주지 않는다"는 부재 주장이다
+ *
+ * 부재 주장은 그냥 두면 공허하다 — 검사가 결합을 **못 잡는 것**인지 결합이
+ * 정말 **없는 것**인지 구별할 수단이 없기 때문이다. 그래서 이 절은 일부러
+ * 결합시킨 대역(`CoupledVariant`)을 **검사 파일 안에** 하나 세우고,
+ * 탐지기가 ① 그 대역에서 결합을 잡아내고 ② 제품 코드에서는 잡지 않음을
+ * 함께 낸다. ①이 실패하면 ②는 무의미하다.
+ *
+ * 대역은 이 파일이 소유한다. 대조를 만들려고 제품 코드를 임시로 고치지 않는다.
+ */
+describe("AC-IOS2-022 — checkDevicectl과 checkWda의 분리가 유지된다 (REQ-IOS2-008)", () => {
+  const wdaUp: WdaHttpClient = async () => ({ status: 200, body: REAL_STATUS_BODY });
+  const wdaDown: WdaHttpClient = async () => {
+    throw new Error("connect ECONNREFUSED 127.0.0.1:8100");
+  };
+
+  /** `checkDevicectl`만 갖춘 최소 계약 — 탐지기가 보는 표면이다. */
+  interface DevicectlChecker {
+    checkDevicectl(): Promise<{ available: boolean; message?: string }>;
+  }
+
+  /**
+   * WDA의 생사가 `checkDevicectl` 결과를 바꾸는가. 바꾸면 두 검사가 결합돼
+   * 있다는 뜻이고, 그 결합이 곧 "WDA 미기동 시 iOS 기기가 목록에서 통째로
+   * 사라지는" 회귀다(`wda-doctor.ts` 상단 @MX:WARN · AC-IOS2-023).
+   */
+  async function couplingDetected(make: (http: WdaHttpClient) => DevicectlChecker): Promise<boolean> {
+    const up = await make(wdaUp).checkDevicectl();
+    const down = await make(wdaDown).checkDevicectl();
+    return JSON.stringify(up) !== JSON.stringify(down);
+  }
+
+  /**
+   * **일부러 결합시킨 대역.** 이 파일 안에만 존재하며 제품 코드가 아니다.
+   * `checkWda`의 실패가 `checkDevicectl`의 결과로 흘러들어간다 — 과거에
+   * 실제로 있었던 오판의 형태 그대로다.
+   */
+  class CoupledVariant implements DevicectlChecker {
+    constructor(private readonly doctor: WdaDoctor, private readonly serial: string) {}
+
+    async checkDevicectl(): Promise<{ available: boolean; message?: string }> {
+      const base = await this.doctor.checkDevicectl();
+      const wda = await this.doctor.checkWda(this.serial);
+      return wda.reachable ? base : { available: false, message: "WDA에 도달할 수 없어 백엔드를 비가용으로 봅니다." };
+    }
+  }
+
+  it("① 탐지기가 결합된 대역을 실제로 잡아낸다 (양성 대조)", async () => {
+    const caught = await couplingDetected((http) => new CoupledVariant(doctorWith(http), "UDID-A"));
+    expect(caught).toBe(true);
+  });
+
+  it("② 제품 코드에서는 잡히지 않는다 — WDA 생사가 devicectl 판정을 바꾸지 않는다", async () => {
+    const caught = await couplingDetected((http) => doctorWith(http));
+    expect(caught).toBe(false);
+  });
+
+  it("두 검사가 서로 다른 축을 본다 — WDA가 죽어도 devicectl은 available이다", async () => {
+    const doctor = doctorWith(wdaDown);
+
+    await expect(doctor.checkDevicectl()).resolves.toMatchObject({ available: true });
+    await expect(doctor.checkWda("UDID-A")).resolves.toMatchObject({ reachable: false });
+  });
+});

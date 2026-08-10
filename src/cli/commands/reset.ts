@@ -3,7 +3,9 @@
  * (REQ-DOCTOR-004, REQ-IOS-DOCTOR-003/004): restores the target device to
  * its pre-`doctor` state, dispatching by the resolved target's platform —
  * `envServices.android.resetDevice()` (Android, IME restore) or
- * `envServices.ios.resetDevice()` (iOS, near-no-op). Exported as a
+ * `envServices.ios.resetDevice()` (iOS — stops the port forward and the
+ * WebDriverAgent runner **this CLI started**; SPEC-IOS-002 REQ-IOS2-009
+ * replaced the former near-no-op contract). Exported as a
  * reusable function (not just the `CommandHandler`) so `doctor.ts` can
  * invoke the identical logic under its own command name when `--clean`
  * is passed, rather than duplicating the device-targeting + response
@@ -25,8 +27,9 @@
  * target device is resolved FIRST (unchanged position — `resolveTargetDevice`
  * already ran here before SPEC-IOS-001), then `resolvedDevice.platform`
  * decides which of `envServices.{android,ios}` handles the reset. The
- * Android branch is byte-for-byte the pre-existing logic; only the iOS
- * branch (near-no-op) is new.
+ * Android branch is byte-for-byte the pre-existing logic; the iOS branch
+ * dispatches to `WdaDoctor.resetDevice`, whose contract SPEC-IOS-002
+ * REQ-IOS2-009 changed from near-no-op to actual process cleanup.
  */
 
 import type { ResetPayload } from "../../schema/command-payloads.js";
@@ -58,9 +61,12 @@ export async function performReset(
   const target = resolveTargetDevice(devices, args.device, source);
   if (!target.ok) return failure(commandName, target.code, target.message, target.details);
 
-  // REQ-IOS-DOCTOR-003/004 (SPEC-IOS-001): iOS has no IME/APK state to
-  // clean, so its reset is a near-no-op reported by WdaDoctor — the
-  // Android-only IME-restore machinery below never runs for this branch.
+  // REQ-IOS-DOCTOR-003/004 (SPEC-IOS-001) + SPEC-IOS-002 REQ-IOS2-009: iOS
+  // has no IME/APK state, so the Android-only IME-restore machinery below
+  // never runs for this branch. What it does have — since this CLI began
+  // starting the port forward and the runner — is processes of our own to
+  // stop, and `WdaDoctor.resetDevice` stops exactly those (a runner the user
+  // started by hand is left alone; `noOp: true` means we had nothing).
   if (target.device.platform === "ios") {
     const result = await envServices.ios.resetDevice(target.serial);
     return success<ResetPayload>(commandName, { serial: target.serial, ...result });
