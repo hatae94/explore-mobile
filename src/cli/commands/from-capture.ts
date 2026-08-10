@@ -12,6 +12,14 @@
  * 걸러야 한다 — 되돌릴 수 없는 제스처를 보낸 뒤에 "사실 배율을 몰랐다"고
  * 말할 수는 없다(AC-IMAGE-025/026/027이 「백엔드 조작 호출 0회」를 함께
  * 판정하는 이유).
+ *
+ * @MX:ANCHOR — `resolveCoordinateMapper`는 `tap`/`swipe`/`scroll` 세 명령이
+ * 공유하는 유일한 `--from` 해석 지점이며, 거부를 백엔드 호출보다 먼저 끝낸다.
+ * @MX:REASON — 이 함수를 우회해 명령별로 `--from`을 직접 해석하면 두 가지가
+ * 갈라진다: 변환 산술과 **거부 시점**이다. 산술 불일치는 탭이 빗나가야 드러나고,
+ * 거부 시점이 뒤로 밀리면 배율을 모르는 채 제스처를 이미 보낸 뒤가 된다 —
+ * 되돌릴 수 없다(AC-IMAGE-025/026/027).
+ * @MX:SPEC: SPEC-IMAGE-001 REQ-IMAGE-004
  */
 
 import { CAPTURE_STALE_MS } from "../../image/constants.js";

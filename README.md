@@ -95,12 +95,12 @@ JSON 본문이 유일한 계약이다.
 | `devices` | 연결된 기기 목록 |
 | `launch <package>` | 패키지 이름으로 앱 실행 |
 | `stop <package>` | 패키지 이름으로 앱 강제 종료 |
-| `screenshot [--out <path>]` | PNG 캡처 |
-| `tap <x> <y>` | 기기 픽셀 좌표를 탭 |
+| `screenshot [--out <path>] [--full]` | 화면 캡처. **기본은 긴 변 1024px JPEG로 축소** |
+| `tap <x> <y> [--from <capture>]` | 좌표를 탭. `--from`이면 그 캡처의 이미지 좌표로 해석 |
 | `key <alias>` | 키 이벤트 전송 |
 | `text "<문자열>"` | 텍스트 입력 (ASCII / 유니코드 자동 분기) |
-| `swipe <x1> <y1> <x2> <y2> [--duration <ms>]` | 두 좌표 사이 원시 스와이프 |
-| `scroll <up\|down\|left\|right> [--amount <비율>]` | 화면 크기를 몰라도 되는 스크롤 |
+| `swipe <x1> <y1> <x2> <y2> [--duration <ms>] [--from <capture>]` | 두 좌표 사이 원시 스와이프 |
+| `scroll <up\|down\|left\|right> [--amount <비율>] [--from <capture>]` | 화면 크기를 몰라도 되는 스크롤 |
 | `doctor [--yes\|--install] [--clean]` | 환경 진단 및 부트스트랩 |
 | `reset` | CLI가 만들어 둔 것만 되돌린다 (Android: 원래 키보드 / iOS: CLI가 띄운 러너·포트 포워딩) |
 
@@ -115,8 +115,13 @@ $ npx explore-mobile devices
 $ npx explore-mobile launch com.android.settings
 {"ok":true,"command":"launch","data":{"serial":"R3CY106LKVX","package":"com.android.settings"}}
 
-$ npx explore-mobile screenshot --out ./shot.png
-{"ok":true,"command":"screenshot","data":{"serial":"R3CY106LKVX","savedTo":"./shot.png","byteLength":198784}}
+$ npx explore-mobile screenshot --out ./shot.jpeg
+{"ok":true,"command":"screenshot","data":{"serial":"2beb9d2309037ece","savedTo":"./shot.jpeg",
+ "byteLength":41268,"width":498,"height":1024,"deviceWidth":1080,"deviceHeight":2220,
+ "scale":2.1686746987951806,"format":"jpeg","capturedAt":"2026-08-10T12:56:26.833Z"}}
+
+$ npx explore-mobile tap 250 400 --from ./shot.jpeg
+{"ok":true,"command":"tap","data":{"serial":"2beb9d2309037ece","x":542,"y":867}}
 
 $ npx explore-mobile tap 226 2566
 {"ok":true,"command":"tap","data":{"serial":"R3CY106LKVX","x":226,"y":2566}}
@@ -125,6 +130,48 @@ $ npx explore-mobile scroll down
 {"ok":true,"command":"scroll","data":{"serial":"R3CY106LKVX","direction":"down",
  "from":{"x":720,"y":2262},"to":{"x":720,"y":858}}}
 ```
+
+### 캡처와 좌표 — 곱셈은 CLI가 한다
+
+`screenshot`은 **기본적으로 축소한다.** 긴 변을 1024px로 줄이고 JPEG(품질 75)로
+다시 인코딩한다. 위 예시의 Android 기기에서 2,300,950 B → **41,268 B**(98.2% 감소)다.
+긴 변이 이미 1024px 이하면 축소하지 않는다 — 확대는 하지 않는다.
+
+| 플래그 | 하는 일 | 기본값 |
+|---|---|---|
+| `--full` | 축소·재인코딩을 하지 않고 원본 PNG를 낸다. 배율은 1.0 | 꺼짐 |
+| `--max-edge <px>` | 긴 변 상한 | `1024` |
+| `--format <jpeg\|png>` | 출력 포맷 | `jpeg` |
+| `--quality <1-100>` | JPEG 품질 | `75` |
+
+응답은 이미지 기하를 함께 싣는다: `width`/`height`(출력 이미지),
+`deviceWidth`/`deviceHeight`(기기 원본), `scale`(= `deviceWidth ÷ width`),
+`format`, `capturedAt`. 크기를 다시 재려고 외부 도구를 부를 필요가 없다.
+
+`--out`으로 저장하면 같은 기하가 **사이드카 파일** `<path>.geometry.json`으로
+함께 기록된다. 그 캡처를 보고 읽은 좌표는 `--from`으로 넘긴다:
+
+```bash
+$ npx explore-mobile tap 250 400 --from ./shot.jpeg
+{"ok":true,"command":"tap","data":{"serial":"2beb9d2309037ece","x":542,"y":867}}
+```
+
+`250 × 2.1686… = 542`. **이 곱셈을 호출자가 하지 않는다.** `tap`/`swipe`/`scroll`
+셋 다 `--from`을 받는다. `--from` 없이 부르면 좌표는 예전과 똑같이 기기 좌표로
+해석된다 — 기존 계약은 그대로다.
+
+거부되는 경우가 둘 있고, 둘 다 **기기를 건드리기 전에** 걸러진다:
+
+- 사이드카가 없거나 읽을 수 없으면 좌표를 임의로 해석하지 않고 오류로 거부한다.
+  배율을 모른다는 것은 "배율이 1.0"이라는 뜻이 아니다.
+- 캡처가 **5분(300초)** 보다 낡으면 거부한다. `--stale-ok`로 넘길 수 있다.
+  다만 이 검사가 막는 것은 "긴 중단 뒤 몇 분 전 캡처로 탭하는 사고"뿐이다 —
+  자기 조작으로 화면을 바꾼 직후의 좌표 오용은 초 단위라 어떤 상한으로도 잡히지 않는다.
+
+축소 하한도 실측해 두었다. 태블릿·데스크톱 폭 레이아웃(iPad Chrome의 표 그리드)에서
+**768px는 판독이 깨졌고 1024px는 성립했다.** 즉 기본값 1024는 여유 있는 값이 아니라
+최악 조건의 하한에 가깝다. 판독이 깨지면 그 회차만 `--max-edge 1568`로 올린다.
+의심할 것은 "어느 기기인가"가 아니라 **"그 화면이 데스크톱 폭 레이아웃인가"** 이다.
 
 ### `doctor`
 
@@ -228,19 +275,22 @@ iOS에는 위 내용이 적용되지 않는다 — 전환할 IME도, APK도, 세
 `tap --web "button"` 같은 호출은 `INVALID_ARGS`로 거부된다 — 실기기에서
 거부와 화면 무변화를 함께 확인했다.
 
-이 선택의 대가도 적어 둔다 — 좌표를 스크린샷에서 눈으로 읽어야 하므로, 표시용
-축소 이미지를 쓴다면 **배율을 곱해야 한다.** 예를 들어 1440×3120 화면을
-923×2000으로 축소해 보고 있다면 좌표에 1.56을 곱해야 실제 좌표가 된다. 배율을
-빠뜨리면 조용히 다른 곳을 탭한다.
+이 선택의 대가는 좌표를 스크린샷에서 눈으로 읽어야 한다는 것이다. 그리고 캡처는
+기본적으로 축소되므로 이미지 좌표와 기기 좌표가 다르다 — 예전에는 그 곱셈이
+**호출자 몫**이었고, 그래서 좌표 오류가 구조적으로 재발했다.
+
+`SPEC-IMAGE-001`이 그 곱셈을 코드로 가져왔다. 캡처를 `--from`으로 지목하면
+CLI가 사이드카에 기록된 배율로 되돌린다(위 「캡처와 좌표」). **직접 곱하지 않는다** —
+직접 곱하면 이중으로 곱해져 빗나간다.
 
 ## 현재 상태
 
-**테스트** (2026-08-03 실측):
+**테스트** (2026-08-10 실측):
 
 ```
 $ pnpm test
-Test Files  25 passed (25)
-Tests  540 passed | 2 expected fail (542)
+Test Files  41 passed (41)
+Tests  805 passed (805)
 
 $ pnpm typecheck   → exit 0
 $ pnpm build       → exit 0

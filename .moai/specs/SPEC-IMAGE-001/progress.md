@@ -363,6 +363,82 @@ npx pnpm build                     # build (exit 0)
 
 ---
 
+## §E.4 Sync-phase Audit-Ready Signal
+
+```
+sync_status: audit-ready
+sync_complete_at: 2026-08-10
+sync_commit_sha: pending-backfill-sync
+tests_total: 805
+tests_passed: 805
+typecheck: pass
+build: pass
+```
+
+위 수치는 sync 시점에 **다시 돌려서** 얻은 값이다 — run 단계 수치를 물려받지 않았다.
+증거 로그: `.moai/state/verify/sync-image-001/{1-vitest,2-tsc,3-build}.log`.
+
+### sync가 찾아낸 것 — 문서 드리프트 2건
+
+run 단계가 `SKILL.md`의 낡은 곱셈 지시를 지웠지만(AC-IMAGE-038), **같은 지시가 README에도
+있었고 거기는 지워지지 않았다.** `README.md`의 「읽기 경로는 스크린샷 하나다」 절이
+"표시용 축소 이미지를 쓴다면 배율을 곱해야 한다 … 1.56을 곱해야"라고 적고 있었다.
+
+이 문장은 낡은 정도가 아니라 **지금은 틀린 지시**다: `--from`을 쓰면서 이 지시를 따르면
+곱셈이 두 번 일어나 빗나간다. 한 파일에서 고친 문구가 다른 파일에 남아 있었다는 뜻이고,
+문서 동기화 검증을 SPEC이 지목한 파일 하나로 한정한 것이 구멍이었다.
+
+같은 절의 테스트 수치도 낡아 있었다(`25 files / 540 tests`, 2026-08-03 기준 → 실제 `41 / 805`).
+
+수정 후 반대 문장 grep으로 잔재를 확인했다:
+
+```bash
+grep -n '곱해야\|1\.56\|shot\.png\|PNG 캡처\|923×2000' README.md   # → 출력 없음
+grep -n '곱' README.md   # → 남은 6건 모두 "직접 곱하지 않는다" 방향
+```
+
+### sync가 찾아낸 것 — @MX 태그 누락 1건
+
+`src/cli/commands/from-capture.ts`에 @MX 태그가 0건이었다. 이 파일의
+`resolveCoordinateMapper`는 fan_in이 3이다:
+
+```bash
+$ grep -rn "from-capture" src/ | grep -v "\.test\.ts"
+src/cli/commands/tap.ts:25 · scroll.ts:37 · swipe.ts:31
+```
+
+constitution은 fan_in ≥ 3에 `@MX:ANCHOR`를 요구한다. 산문 주석은 충실했지만 태그 형식이
+아니어서 기계가 세지 못했다. `geometry.ts`의 ANCHOR(변환 산술)와 **다른 불변조건**을
+지킨다는 점을 명시해 부착했다 — 이 파일이 지키는 것은 산술이 아니라 **거부 시점**
+(사이드카 부재·낡음을 백엔드 호출 **전에** 거른다)이다.
+
+### README에 적은 값은 실행해서 얻었다
+
+문서에 넣을 응답을 손으로 짓지 않고 Android SM_G960N `2beb9d2309037ece`에서 실제로 찍었다:
+
+| 명령 | 실제 출력 |
+|---|---|
+| `screenshot --out ./shot.jpeg` | 498×1024, 41,268 B, scale 2.1686746987951806, jpeg |
+| `tap 250 400 --from ./shot.jpeg` | `{"x":542,"y":867}` |
+| `screenshot --full --out ./full.png` | 1080×2220, 2,300,950 B, scale 1, png |
+
+기본 대비 `--full`은 2,300,950 → 41,268 B로 **98.2% 감소** — run 단계 §E.2의 98.2%와 일치한다.
+
+탭 좌표 (250, 400)은 캡처를 **실제로 열어 보고** 아이콘이 없는 빈 배경임을 확인한 뒤 골랐다.
+캡처 파일은 저장소 밖 임시 경로에 썼다 — `.moai/reports/`는 gitignore 대상이 아니어서
+기기 화면이 저장소에 남는 사고가 이 프로젝트에서 이미 한 번 있었다.
+
+### sync가 닫지 않은 것
+
+- run 단계 §E.2 말미의 미검증 항목(iPad base64 길이, Android `htyong.com` 앱 화면,
+  `spec.md` §C.5의 열린 질문 2건)은 그대로 열려 있다. sync는 문서만 맞췄다.
+- 문서 동기화 검증 범위가 SPEC 지목 파일에 한정돼 있던 구멍은 이번에 README를 손으로
+  찾아 메웠을 뿐, **다음에 같은 일이 재발하지 않을 장치는 만들지 않았다.**
+- `.moai/reports/image-verification/` 아래 증거 캡처는 run 단계 결정대로 개인정보가 찍힌
+  것들이 삭제된 상태이며, sync는 되살리지 않았다.
+
+---
+
 ## §F Phase 4 Mode Selection
 
 ```

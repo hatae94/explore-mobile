@@ -1274,3 +1274,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     because losing runner authorization was believed impossible to
     reproduce on purpose. On 2026-08-10 02:08 the state arrived on its
     own, and four criteria were confirmed on the device instead.
+
+### Changed
+
+- **`screenshot` now downscales by default, and the coordinate multiplication
+  moved from the caller into the CLI** (SPEC-IMAGE-001). The screen is read by
+  screenshot only (SPEC-VISION-001 removed `dump` and every selector), so one
+  capture's cost sets the cost of one vision loop — and most of that cost was
+  being thrown away. An iPad capture was 7,892,077 B; the viewer that actually
+  read it reduced 2732×2048 to 2000×1499 and announced "multiply coordinates by
+  1.37". The bytes were produced, moved, and discarded at the reading step.
+  `screenshot` now caps the long edge at 1024 px and re-encodes to JPEG q75
+  before emitting. `--full` restores the old behavior verbatim (original PNG
+  bytes, `scale` 1.0).
+  - Measured on 2026-08-10 against a Samsung SM_G960N (Android 10, 1080×2220):
+    the same home screen went from **2,300,950 B (`--full`, PNG) to 41,268 B**
+    (default, 498×1024 JPEG) — 98.2% smaller. `.moai/specs/SPEC-IMAGE-001/progress.md`
+    §E.2 records the iPad Pro 12.9 pair (7,892,077 → 113,223 B, 98.6%) and the
+    `--out`-less base64 mode (a 3,067,792-character JSON document → 55,350
+    characters), which was contractually available but unusable before.
+  - Downscaling happens **in the CLI command layer only**. It was deliberately
+    kept out of `DeviceBackend.screenshot()`: iOS does not hold its scale as a
+    constant, it derives it from an unwrapped internal capture
+    (`src/backend/wda-backend.ts`), so a downscale inside the backend would be
+    multiplied by the derived scale and bend coordinates silently. The
+    constraint is asserted, not asserted-about — `git diff --name-only HEAD --
+    src/backend/` returns empty for this SPEC: the whole backend directory is
+    unchanged, which is a stronger statement than the four line-level criteria
+    that were also checked.
+- **`README.md` no longer tells callers to multiply coordinates themselves.**
+  The instruction it carried ("scale a 1440×3120 screen to 923×2000 and multiply
+  coordinates by 1.56") is now wrong rather than merely stale — doing it on top
+  of `--from` multiplies twice. The equivalent line in
+  `.claude/skills/explore-mobile/SKILL.md` was removed during implementation;
+  this closes the same drift in the README, adds the capture/coordinate rules,
+  and replaces the `screenshot` example with output captured from a real device
+  rather than hand-written.
+
+### Added
+
+- **Capture geometry travels with the capture** (SPEC-IMAGE-001 REQ-IMAGE-003/005).
+  The `screenshot` payload grew from four fields to eleven: `width`/`height`
+  (the emitted image), `deviceWidth`/`deviceHeight` (the device capture),
+  `scale` (= `deviceWidth ÷ width`), `format`, and `capturedAt` join the
+  existing `serial`/`byteLength`/`savedTo`/`pngBase64`. The values are observed
+  from the emitted image, never back-computed from the request arguments. With
+  `--out`, the same geometry is written beside the capture as
+  `<path>.geometry.json`.
+  - One naming trap is kept on purpose and documented in the type: the base64
+    field is still called **`pngBase64` but now carries JPEG by default**. It
+    was not renamed because that would break existing consumers' key lookup —
+    read the `format` field, not the field name, to learn the actual format.
+- **`--from <capture>` on `tap` / `swipe` / `scroll`** (REQ-IMAGE-004). Pass the
+  coordinates read off a capture and the CLI converts them to device
+  coordinates using that capture's recorded scale. Without `--from`, coordinates
+  are interpreted exactly as before — the pre-existing contract is unchanged,
+  and the removed selector flags (`--id`/`--text`/`--web`/`--page`/`--index`)
+  still reject with `INVALID_ARGS`.
+  - The three commands share one conversion entry point
+    (`src/cli/commands/from-capture.ts` → `src/image/geometry.ts`) rather than
+    three copies of the same arithmetic, and rejection happens **before** the
+    backend is called: a missing, unreadable, or stale sidecar is refused with
+    zero mutating calls, because an irreversible gesture cannot be taken back
+    once sent.
+  - Verified by a positive control, not only by success. Three different scales
+    (1.0, 2.168675, 3.472669) aimed at the same target converged **within 1 px**
+    and each opened the dialer. Then a deliberately distorted sidecar — claiming
+    scale 1.0 for a downscaled image, which is exactly the mistake a caller
+    makes when they forget the scale — was fed in: the tap missed and the
+    before/after screenshots were byte-identical (same SHA-256). The check
+    therefore does exercise the conversion path.
+- **New error codes**: `CAPTURE_GEOMETRY_UNAVAILABLE` and `CAPTURE_STALE`.
+  A conversion failure is never silently replaced by the original image or by
+  an assumed scale of 1.0 — not knowing the scale is not the same as the scale
+  being 1.0. `CAPTURE_STALE` fires when a capture is older than 300 s, and
+  `--stale-ok` overrides it. The 300 s figure is not a measurement of how fast
+  screens change: a provisional 60 s was tried first and rejected a normal
+  capture→read→tap loop at 62 s elapsed. What this check catches is "resuming
+  after a long pause and tapping with a capture from minutes ago" — coordinate
+  misuse right after the agent itself changed the screen happens in seconds and
+  no threshold catches it.
+- **A measured lower bound for the downscale.** `DEFAULT_MAX_EDGE` was set to
+  1024 by testing readability, not by preference: native screens (Android home,
+  settings list, device-info screen), five iPad web-app screens, and three
+  Android web screens were read at 1024 px. The bound was found by breaking it —
+  on an iPad table/grid screen, **768 px lost the date-chip labels and name
+  badges while 1024 px kept them**, so 1024 is close to the floor rather than a
+  comfortable default. The constraint turned out not to be the scale factor:
+  Android at 768 px (scale 2.895) read *better* than iPad at 1024 px (scale
+  2.668), because the iPad renders a desktop-width layout. When readability
+  breaks, the question to ask is "is this screen a desktop-width layout?", not
+  "which device is this?" — and the fix is `--max-edge 1568` for that call.
+- Rounding residuals were measured rather than reasoned about, by running the
+  implementation's own `roundingResidual`: residuals stay at or below the 0.5
+  rounding limit for coordinates inside the image, and **exceed it at the
+  clamped boundary** — recorded rather than hidden, since clamping is required
+  behavior and the increased residual is its cost.
+- 61 new tests (744 → 805 across 37 → 41 files). Statement coverage held at
+  91.4% → 91.46% while the denominator grew 11% (1,326 → 1,477), measured with
+  the same command on both sides — the "before" side from a clean `git archive
+  HEAD` checkout rather than from memory. Branch and line coverage each fell
+  0.2 pp; the uncovered lines are named in `progress.md` §E.2.
+  New modules: `src/image/constants.ts`, `transform.ts`, `geometry.ts`,
+  `image-errors.ts`, and `src/cli/commands/from-capture.ts`.
+- Recorded as **42 PASS / 0 FAIL** across 42 acceptance criteria in
+  `.moai/specs/SPEC-IMAGE-001/progress.md`, with the limits of that pass kept
+  alongside it: the iPad base64-mode JSON length is still unmeasured, the
+  `htyong.com` app screens are unverified on Android (the device is not logged
+  in), and the two open questions from `spec.md` §C.5 (why an Android capture
+  takes 2.39 s; whether base64 mode should survive at all) stay open — this
+  SPEC did not close them.

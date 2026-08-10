@@ -2,7 +2,7 @@
 id: SPEC-IMAGE-001
 title: "캡처 이미지 처리 개선 — 기본 축소·기하 정보 응답·CLI 좌표 변환"
 version: "0.1.0"
-status: in-progress
+status: completed
 created: 2026-08-10
 updated: 2026-08-10
 author: hatae
