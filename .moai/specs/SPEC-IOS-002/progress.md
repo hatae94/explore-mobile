@@ -624,7 +624,7 @@ build: exit 0
 
 ```
 sync_complete_at: 2026-08-10
-sync_commit_sha: pending-backfill-sync   (백필 대기 — spec-frontmatter-schema.md SHA placeholder backfill exemption(D3))
+sync_commit_sha: 358138d   (백필 완료 — spec-frontmatter-schema.md SHA placeholder backfill exemption(D3))
 sync_status: complete-with-gap   (§E.3의 run_status를 이어받는다 — PASS 27 · FAIL 0 · 미관측 1(AC-021) · 충족 불가 1(AC-020))
 changelog_entry_position: CHANGELOG.md [Unreleased] 섹션 끝, "### Added" 새 항목(SPEC-IOS-002 전용)
 frontmatter_status_transitions.spec_md: in-progress → completed
