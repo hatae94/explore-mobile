@@ -41,14 +41,24 @@ describe("command payload contracts (SPEC-CONTRACT-001)", () => {
     expect(Object.keys(keys)).toHaveLength(2);
   });
 
-  it("screenshot — { serial, byteLength, savedTo?, pngBase64? }", () => {
+  it("screenshot — { serial, byteLength, savedTo?, pngBase64?, + 기하 7필드 }", () => {
+    // SPEC-IMAGE-001 REQ-IMAGE-003: 기하 7필드가 늘었다. 이 리터럴을 함께
+    // 고치지 않으면 컴파일이 통과하지 않는다 — 필드 추가가 눈에 보이는
+    // 변경이 되도록 하는 것이 이 2겹 검사의 목적이다.
     const keys: Record<keyof ScreenshotPayload, true> = {
       serial: true,
       byteLength: true,
       savedTo: true,
       pngBase64: true,
+      width: true,
+      height: true,
+      deviceWidth: true,
+      deviceHeight: true,
+      scale: true,
+      format: true,
+      capturedAt: true,
     };
-    expect(Object.keys(keys)).toHaveLength(4);
+    expect(Object.keys(keys)).toHaveLength(11);
   });
 
   it("tap — { serial, x, y }", () => {

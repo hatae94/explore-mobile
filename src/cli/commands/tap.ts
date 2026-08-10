@@ -22,15 +22,16 @@ import type { TapPayload } from "../../schema/command-payloads.js";
 import { resolveTargetDevice } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { parseCoordinate } from "../validators.js";
+import { resolveCoordinateMapper } from "./from-capture.js";
 import { backendFailure, errorMessage, type CommandHandler } from "./types.js";
 
 export const tapCommand: CommandHandler = async (args, source) => {
   const [xRaw, yRaw] = args.positionals;
 
-  const x = xRaw !== undefined ? parseCoordinate(xRaw) : undefined;
-  const y = yRaw !== undefined ? parseCoordinate(yRaw) : undefined;
+  const rawX = xRaw !== undefined ? parseCoordinate(xRaw) : undefined;
+  const rawY = yRaw !== undefined ? parseCoordinate(yRaw) : undefined;
 
-  if (x === undefined || y === undefined) {
+  if (rawX === undefined || rawY === undefined) {
     return failure(
       "tap",
       "INVALID_COORDINATES",
@@ -38,6 +39,13 @@ export const tapCommand: CommandHandler = async (args, source) => {
       { received: { x: xRaw ?? null, y: yRaw ?? null } },
     );
   }
+
+  // SPEC-IMAGE-001 REQ-IMAGE-004: `--from`이 있으면 이 좌표는 축소 이미지의
+  // 좌표다. 변환은 백엔드를 부르기 전에 끝나야 한다 — 사이드카를 못 읽었는데
+  // 탭부터 보내면 되돌릴 수 없다(AC-IMAGE-025/026/027).
+  const mapper = await resolveCoordinateMapper("tap", args);
+  if (!mapper.ok) return mapper.error;
+  const { x, y } = mapper.map(rawX, rawY);
 
   const devices = await source.listAllDevices();
   const target = resolveTargetDevice(devices, args.device, source);

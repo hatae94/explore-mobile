@@ -28,6 +28,7 @@ import type { DeviceBackend, SwipeOptions } from "../../schema/device-backend.js
 import { resolveTargetDevice, type DeviceSource } from "../device-targeting.js";
 import { failure, success } from "../envelope.js";
 import { MAX_DURATION_MS, parseCoordinate, parseDurationMs } from "../validators.js";
+import { resolveCoordinateMapper } from "./from-capture.js";
 import { backendFailure, errorMessage, type CommandHandler } from "./types.js";
 
 export const swipeCommand: CommandHandler = async (args, source: DeviceSource) => {
@@ -73,12 +74,18 @@ export const swipeCommand: CommandHandler = async (args, source: DeviceSource) =
     }
   }
 
+  // SPEC-IMAGE-001 REQ-IMAGE-004: `--from`이 있으면 네 좌표 모두 축소 이미지의
+  // 좌표다. `--duration` 검증과 같은 이유로 백엔드 호출보다 앞선다 —
+  // 거부되면 어떤 제스처도 나가지 않는다(AC-IMAGE-023).
+  const mapper = await resolveCoordinateMapper("swipe", args);
+  if (!mapper.ok) return mapper.error;
+
   const devices = await source.listAllDevices();
   const target = resolveTargetDevice(devices, args.device, source);
   if (!target.ok) return failure("swipe", target.code, target.message, target.details);
 
-  const from = { x: x1, y: y1 };
-  const to = { x: x2, y: y2 };
+  const from = mapper.map(x1, y1);
+  const to = mapper.map(x2, y2);
   const options: SwipeOptions | undefined = durationMs !== undefined ? { durationMs } : undefined;
 
   try {

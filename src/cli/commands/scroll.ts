@@ -34,6 +34,7 @@ import {
   minNonDegenerateRatio,
   type ScrollDirection,
 } from "./scroll-geometry.js";
+import { resolveCoordinateMapper } from "./from-capture.js";
 import { backendFailure, errorMessage, type CommandHandler } from "./types.js";
 
 /**
@@ -94,6 +95,17 @@ export const scrollCommand: CommandHandler = async (args, source: DeviceSource) 
     }
     ratio = parsed;
   }
+
+  // SPEC-IMAGE-001 REQ-IMAGE-004: `scroll`은 **좌표를 입력받지 않는다** —
+  // from/to를 `getScreenSize`에서 계산하며(아래), 그 크기는 이미 캡처 픽셀
+  // 공간이다(`wda-backend.ts` getScreenSize 「스크린샷 픽셀 기준」). 그래서
+  // `--from`이 있어도 변환할 좌표가 없고, 변환 함수는 쓰지 않는다.
+  //
+  // 그래도 호출하는 이유는 **신선도 판정**이다: 사용자가 어떤 캡처를 보고
+  // 스크롤을 결정했는데 그 캡처가 이미 낡았다면, 스크롤 자체가 잘못된 화면을
+  // 전제한 것이다. REQ-IMAGE-004가 scroll을 명시했으므로 거부하지도 않는다.
+  const capture = await resolveCoordinateMapper("scroll", args);
+  if (!capture.ok) return capture.error;
 
   const devices = await source.listAllDevices();
   const target = resolveTargetDevice(devices, args.device, source);

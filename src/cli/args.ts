@@ -32,6 +32,26 @@ export interface ParsedCommandArgs {
    * 원시 문자열만 여기서 들고, 핸들러가 `parseRatio`(validators.ts)로 검증한다.
    */
   amount: string | undefined;
+  /**
+   * `screenshot --full` (SPEC-IMAGE-001 REQ-IMAGE-002): 축소·재인코딩을
+   * 건너뛰고 백엔드가 준 PNG 원본을 그대로 낸다. 축소가 **기본**이므로
+   * 원본을 원하는 쪽이 명시한다.
+   */
+  full: boolean;
+  /** `screenshot --max-edge <px>` — 긴 변 상한 재정의. 원시 문자열; 핸들러가 검증한다. */
+  maxEdge: string | undefined;
+  /** `screenshot --format <jpeg|png>` — 출력 포맷 재정의. */
+  format: string | undefined;
+  /** `screenshot --quality <0-100>` — JPEG 품질 재정의. */
+  quality: string | undefined;
+  /**
+   * `tap|swipe|scroll --from <capture-path>` (SPEC-IMAGE-001 REQ-IMAGE-004):
+   * 이 캡처의 기록된 기하로 입력 좌표를 기기 좌표로 되돌린다. 주지 않으면
+   * 좌표는 지금까지와 동일하게 기기 좌표로 해석된다(기존 계약 무변경).
+   */
+  from: string | undefined;
+  /** `--stale-ok`: 낡은 캡처 거부를 끈다 (REQ-IMAGE-006). */
+  staleOk: boolean;
 }
 
 /**
@@ -66,6 +86,12 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
       "keep-keyboard": { type: "boolean" },
       duration: { type: "string" },
       amount: { type: "string" },
+      full: { type: "boolean" },
+      "max-edge": { type: "string" },
+      format: { type: "string" },
+      quality: { type: "string" },
+      from: { type: "string" },
+      "stale-ok": { type: "boolean" },
     },
     allowPositionals: true,
   });
@@ -79,5 +105,11 @@ export function parseCommandArgs(argv: string[]): ParsedCommandArgs {
     keepKeyboard: values["keep-keyboard"] === true,
     duration: typeof values.duration === "string" ? values.duration : undefined,
     amount: typeof values.amount === "string" ? values.amount : undefined,
+    full: values.full === true,
+    maxEdge: typeof values["max-edge"] === "string" ? values["max-edge"] : undefined,
+    format: typeof values.format === "string" ? values.format : undefined,
+    quality: typeof values.quality === "string" ? values.quality : undefined,
+    from: typeof values.from === "string" ? values.from : undefined,
+    staleOk: values["stale-ok"] === true,
   };
 }

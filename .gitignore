@@ -238,3 +238,13 @@ dist-ssr/
 .vercel/
 .netlify/
 .firebase/
+# ===========================================
+# 실기기 검증 캡처 (SPEC-IMAGE-001 M5)
+# ===========================================
+# 판정 결과는 progress.md §E.2와 image-verification/README.md에 남긴다.
+# 이미지 자체는 로컬 증거로만 보존한다 — 기기 식별정보·개인 데이터가
+# 찍히기 쉽고(IMEI, 실명, 메일 본문) 저장소를 비대하게 만든다.
+.moai/reports/*-verification/*.png
+.moai/reports/*-verification/*.jpeg
+.moai/reports/*-verification/*.jpg
+.moai/reports/*-verification/*.geometry.json

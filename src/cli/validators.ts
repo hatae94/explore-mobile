@@ -96,6 +96,31 @@ export function parseDurationMs(value: string): number | undefined {
   return n !== undefined && n <= MAX_DURATION_MS ? n : undefined;
 }
 
+/**
+ * `screenshot --max-edge <px>`를 양의 정수로 파싱한다 (SPEC-IMAGE-001
+ * REQ-IMAGE-001). 상한은 두지 않는다 — 상한보다 큰 값을 주면 축소가 일어나지
+ * 않을 뿐이며(긴 변이 상한 이하이므로), 그것은 `--full`과 같은 결과가 아니라
+ * "포맷만 바꾼 원본 해상도"라는 별개의 유효한 요청이다.
+ */
+export function parseMaxEdge(value: string): number | undefined {
+  return parsePositiveInteger(value);
+}
+
+/**
+ * `screenshot --quality <1-100>`을 파싱한다 (SPEC-IMAGE-001). `0`은 거부한다 —
+ * `--duration 0`과 같은 이유다: 산술적으로는 파싱되지만 쓸모 있는 결과를
+ * 내지 못하는 값이며, 통과시키면 `ok:true`인 채로 판독 불가능한 이미지가 나온다.
+ */
+export function parseQuality(value: string): number | undefined {
+  const n = parsePositiveInteger(value);
+  return n !== undefined && n <= 100 ? n : undefined;
+}
+
+/** `screenshot --format <jpeg|png>` — 아는 두 값만 받는다. `sips`가 아는 다른 포맷은 이 SPEC의 범위 밖이다. */
+export function parseImageFormat(value: string): "jpeg" | "png" | undefined {
+  return value === "jpeg" || value === "png" ? value : undefined;
+}
+
 /** 소수(0 초과 1 이하)를 허용하는 정규식 — 정수 전용인 `^\d+$`로는 `--amount`의 비율 값을 받을 수 없다. */
 const RATIO_PATTERN = /^\d+(\.\d+)?$/;
 

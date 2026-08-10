@@ -68,8 +68,35 @@ export interface ScreenshotPayload {
   byteLength: number;
   /** `--out <path>`를 준 경우에만. 저장된 호스트 경로. */
   savedTo?: string;
-  /** `--out`을 주지 않은 경우에만. PNG 원본을 base64로 인코딩한 문자열. */
+  /**
+   * `--out`을 주지 않은 경우에만. 이미지 바이트를 base64로 인코딩한 문자열.
+   *
+   * **이름이 `pngBase64`인데 기본값은 JPEG다** — SPEC-IMAGE-001이 축소·JPEG
+   * 재인코딩을 기본으로 만들었기 때문이다. 이름을 바꾸지 않은 이유는
+   * 기존 소비자의 키 이름을 깨지 않기 위해서이며, **실제 포맷은 아래
+   * `format` 필드가 말한다** — 이름이 아니라 그 필드를 읽어야 한다.
+   */
   pngBase64?: string;
+
+  // ── 이미지 기하 (SPEC-IMAGE-001 REQ-IMAGE-003) ────────────────────────
+  // 호출자가 외부 도구로 크기를 다시 재지 않아도 되도록, 응답만 보고
+  // "이 이미지가 기기 화면의 어느 배율인지" 알 수 있게 한다.
+  // 일곱 필드 모두 **항상** 실린다 — 갈래에 따라 사라지지 않는다.
+
+  /** 출력 이미지의 가로(px). 실제 출력 파일에서 관측한 값이다(역산 아님). */
+  width: number;
+  /** 출력 이미지의 세로(px). */
+  height: number;
+  /** 기기 원본 캡처의 가로(px). */
+  deviceWidth: number;
+  /** 기기 원본 캡처의 세로(px). */
+  deviceHeight: number;
+  /** `deviceWidth / width`. `--full`이면 1.0이다. */
+  scale: number;
+  /** 출력 이미지의 실제 포맷 (`jpeg` / `png`). */
+  format: string;
+  /** 캡처 시각 (ISO-8601). `--from`의 신선도 판정 기준이다(REQ-IMAGE-006). */
+  capturedAt: string;
 }
 
 /** `tap <x> <y>` — 실제로 보낸 좌표를 되돌려준다. */

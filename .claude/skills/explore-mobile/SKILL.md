@@ -47,10 +47,51 @@ There is **no `dump` command and no element selector**. You cannot ask for
 **Judge by the screenshot, not by `ok:true`.** A command can report success
 while nothing visible happened (see Known traps).
 
-**Coordinates are device pixels of the full-size capture.** If you view a
-downscaled image, multiply back. Example: a 1440×3120 screen shown at
-923×2000 needs coordinates multiplied by 1.56. Forgetting the scale silently
-taps the wrong place.
+**Captures are downscaled by default, and the CLI does the coordinate math
+for you.** `screenshot` re-encodes to JPEG with a long edge of 1024 px, which
+cuts a capture by ~98% (measured: Android 2,300,794 → 41,237 bytes; iPad
+7,892,077 → 113,223 bytes) while still keeping small on-screen text legible.
+
+Because the image is smaller than the device, a coordinate you read off the
+image is **not** a device coordinate. Hand the capture back with `--from` and
+the CLI converts it:
+
+```bash
+node dist/cli/bin.js screenshot --out ./shot.jpeg      # 498×1024 for a 1080×2220 screen
+node dist/cli/bin.js tap 74 902 --from ./shot.jpeg     # sends (160, 1956) to the device
+```
+
+Do **not** multiply coordinates yourself. `--from` is the only supported way
+to use image coordinates; without it, coordinates are still interpreted as
+device pixels exactly as before.
+
+`--from` also works on `swipe` (all four coordinates) and on `scroll` (which
+takes no coordinates — there `--from` only checks the capture is still fresh).
+
+Every successful `screenshot` reports its own geometry, so you never have to
+measure the file yourself:
+
+```json
+{"width":498,"height":1024,"deviceWidth":1080,"deviceHeight":2220,
+ "scale":2.1686746987951806,"format":"jpeg","capturedAt":"2026-08-10T12:17:34.870Z"}
+```
+
+With `--out`, the same geometry is written next to the capture as
+`<path>.geometry.json` — that sidecar is what `--from` reads. Delete it and
+`--from` refuses the capture rather than guessing a scale.
+
+Related flags:
+
+| Flag | Effect |
+|------|--------|
+| `--full` | Skip downscaling; emit the original PNG. `scale` is `1.0`. Use when 1024 px is not enough to read something |
+| `--max-edge <px>` | Override the long-edge cap for one call (e.g. `--max-edge 1568`) |
+| `--format <jpeg\|png>` / `--quality <1-100>` | Override the output encoding |
+| `--stale-ok` | Accept a capture older than 5 minutes with `--from` |
+
+A capture older than 5 minutes is refused by `--from` (`CAPTURE_STALE`), since
+the screen it shows may no longer exist. The error names the capture time and
+how long ago it was.
 
 Removed flags (`--id`, `--text`, `--web`, `--page`, `--index`) are **rejected
 with `INVALID_ARGS`**, never silently downgraded to a coordinate tap.
@@ -160,10 +201,10 @@ backend — passing `--device <serial>` routes automatically.
 | `devices` | List devices: serial, model, OS version, connection state, emulator flag, platform |
 | `launch <package>` | Start an app by package/bundle id |
 | `stop <package>` | Force-stop an app |
-| `screenshot [--out <path>]` | Capture a PNG. With `--out` it saves to that host path (`data.savedTo`); without it the PNG comes back base64-encoded in `data.pngBase64` |
-| `tap <x> <y>` | Tap a device-pixel coordinate |
-| `swipe <x1> <y1> <x2> <y2> [--duration <ms>]` | Raw swipe between two coordinates |
-| `scroll <up\|down\|left\|right> [--amount <ratio>]` | Scroll without knowing the screen size. `--amount` is a fraction above 0 and at most 1 |
+| `screenshot [--out <path>] [--full] [--max-edge <px>] [--format <jpeg\|png>] [--quality <1-100>]` | Capture the screen, downscaled to a 1024 px long edge and re-encoded as JPEG by default. With `--out` it saves to that host path (`data.savedTo`) plus a `<path>.geometry.json` sidecar; without it the bytes come back base64-encoded in `data.pngBase64`. The response always carries `width`/`height`/`deviceWidth`/`deviceHeight`/`scale`/`format`/`capturedAt` |
+| `tap <x> <y> [--from <capture>] [--stale-ok]` | Tap a coordinate. Device pixels by default; with `--from` the coordinate is read in that capture's image space and converted |
+| `swipe <x1> <y1> <x2> <y2> [--duration <ms>] [--from <capture>] [--stale-ok]` | Raw swipe between two coordinates. `--from` converts all four |
+| `scroll <up\|down\|left\|right> [--amount <ratio>] [--from <capture>] [--stale-ok]` | Scroll without knowing the screen size. `--amount` is a fraction above 0 and at most 1. `--from` takes no coordinates here — it only checks the capture is still fresh |
 | `key <alias>` | Send a key event (aliases below) |
 | `text "<string>"` | Type into the focused field. `--keep-keyboard` skips the default post-send keyboard dismissal |
 | `doctor [--yes\|--install] [--clean]` | Diagnose the environment — reports whether `adb` was found (`installed`), whether it was found on `PATH` (`onPath`) or via an SDK-relative fallback, and the resolved absolute path (`resolvedPath`), plus daemon health and connected devices. `--yes`/`--install` consents to auto-installing `adb` via Homebrew (macOS only) **and, on an iOS target, to building/starting WebDriverAgent** (see iOS prerequisites). Without `--yes` the iOS path only diagnoses — it starts nothing. `--clean` does the same restore as `reset` |
@@ -175,8 +216,8 @@ backend — passing `--device <serial>` routes automatically.
 ### Examples
 
 ```bash
-node dist/cli/bin.js screenshot --out ./shot.png
-node dist/cli/bin.js tap 543 2956
+node dist/cli/bin.js screenshot --out ./shot.jpeg
+node dist/cli/bin.js tap 74 902 --from ./shot.jpeg
 node dist/cli/bin.js scroll down
 node dist/cli/bin.js text "안녕하세요 🙂"
 ```
@@ -289,7 +330,10 @@ asked for.
   capture before acting on a coordinate.
 - **The screen can change between the capture and the tap.** A notification
   banner arriving in that gap will take the tap instead. If a result looks
-  wrong, re-capture before concluding anything.
+  wrong, re-capture before concluding anything. `--from` refuses a capture
+  older than 5 minutes, but that guard only catches a long pause — a banner
+  that arrives seconds after the capture is still inside the window, so it
+  does not replace re-capturing when a result looks wrong.
 - **`adb` is often not on `PATH`** even when Android Studio installed it
   (commonly at `~/Library/Android/sdk/platform-tools/adb` on macOS). Android
   commands still work in that case — path resolution falls back through

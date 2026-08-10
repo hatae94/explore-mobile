@@ -20,6 +20,39 @@ import type { EnvServices } from "./env-services.js";
 import { runCli } from "./router.js";
 
 /**
+ * SPEC-IMAGE-001 M3: `screenshot`이 이제 `sips` 외부 프로세스를 탄다. 이
+ * 파일의 목적은 **라우터 디스패치와 봉투 형태**를 고정하는 것이지 이미지
+ * 변환을 판정하는 것이 아니므로, 변환 모듈을 대역으로 세운다. 변환 자체는
+ * `src/image/transform.test.ts`가, 배선은 `commands/screenshot.test.ts`가,
+ * 실제 축소 결과는 D 등급 AC-IMAGE-001/002가 각각 맡는다.
+ *
+ * 대역이 바이트를 **그대로 통과**시키므로 아래 바이트 왕복 검사는 이 SPEC
+ * 이전과 같은 것을 계속 판정한다 — 바뀐 것은 응답에 기하가 함께 실린다는
+ * 점뿐이다.
+ */
+vi.mock("../image/transform.js", () => ({
+  transformImage: vi.fn(async (bytes: Uint8Array) => ({
+    bytes,
+    width: 763,
+    height: 1568,
+    sourceWidth: 1080,
+    sourceHeight: 2220,
+    format: "jpeg",
+  })),
+  measureImageBytes: vi.fn(async () => ({ width: 1080, height: 2220 })),
+}));
+
+/** 위 대역이 내는 기하 — `screenshot` 응답에 항상 실린다(REQ-IMAGE-003). */
+const MOCK_GEOMETRY = {
+  width: 763,
+  height: 1568,
+  deviceWidth: 1080,
+  deviceHeight: 2220,
+  scale: 1080 / 763,
+  format: "jpeg",
+};
+
+/**
  * Wraps a test-constructed `AdbDoctor` (and optionally a mock/real
  * `WdaDoctor`) into the `EnvServices` holder `runCli`'s third parameter
  * now expects (REQ-IOS-DOCTOR-003, SPEC-IOS-001 — generalized from the
@@ -485,7 +518,17 @@ describe("runCli", () => {
 
         expect(result.ok).toBe(true);
         if (result.ok) {
-          expect(result.data).toEqual({ serial: "R58N90ABCDE", savedTo: outPath, byteLength: 4 });
+          // SPEC-IMAGE-001 REQ-IMAGE-003: 기하 7필드가 함께 실린다.
+          // `capturedAt`은 호출 시각이므로 형태만 확인하고 나머지를 고정한다.
+          const data = result.data as Record<string, unknown>;
+          expect(typeof data["capturedAt"]).toBe("string");
+          const { capturedAt: _capturedAt, ...rest } = data;
+          expect(rest).toEqual({
+            serial: "R58N90ABCDE",
+            savedTo: outPath,
+            byteLength: 4,
+            ...MOCK_GEOMETRY,
+          });
         }
         const written = await readFile(outPath);
         expect(written).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
