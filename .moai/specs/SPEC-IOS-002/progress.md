@@ -597,6 +597,29 @@ M7 마감 시점 계수 명령 출력: **총수 29 / PASS 27**, 남은 것 020(�
 
 ---
 
+## §E.3 Run-phase Audit-Ready Signal
+
+```
+run_status: audit-ready
+run_complete_at: 2026-08-10
+milestones_complete: M1, M2, M3, M4, M5, M6, M7
+ac_total: 29
+ac_pass: 27
+ac_open: AC-IOS2-020 (충족 불가), AC-IOS2-021 (만료 미도래)
+tests: 744 passed (37 files)
+typecheck: exit 0
+build: exit 0
+```
+
+**PASS로 계상하지 않은 2건을 여기에 그대로 남긴다.** 마감 시점의 정직한 상태가 27/29이지 29/29가 아니다.
+
+- **AC-IOS2-020** — *충족 불가*. 구현이 어느 관문도 지목하지 못하기로 한 결과이며(M6), 기기에서 관문을 되돌려도 결과는 `indeterminate`로 이미 정해져 있다. 기회의 문제가 아니므로 "미관측"이 아니다. 판별 신호가 조사되면 다시 열린다.
+- **AC-IOS2-021** — *미관측*. 만료는 2026-08-11 16:19:34 KST이고 마지막 재측정(2026-08-10 19:56)에서도 `verdict:"valid"`였다. 시계를 조작해 흉내내지 않는다.
+
+실환경 판정 현황도 착수 전 선언과 대조해 남긴다 — `acceptance.md` §E는 **REQ-005가 실환경 판정 0건으로 마감될 수 있다**고 미리 적어 두었으나, M5에서 권한 상실 상태가 저절로 관측돼 실기기 판정 4건이 나왔다. **0건으로 마감되지 않았다.** 반면 REQ-006의 실환경 AC(AC-020)는 충족 불가로 남고, REQ-007의 AC-021은 미관측으로 남는다.
+
+---
+
 ## §F Phase 4 Mode Selection
 
 **Decision: sub-agent**
