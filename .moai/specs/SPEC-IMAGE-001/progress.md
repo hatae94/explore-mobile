@@ -368,7 +368,7 @@ npx pnpm build                     # build (exit 0)
 ```
 sync_status: audit-ready
 sync_complete_at: 2026-08-10
-sync_commit_sha: pending-backfill-sync
+sync_commit_sha: 341403d
 tests_total: 805
 tests_passed: 805
 typecheck: pass
