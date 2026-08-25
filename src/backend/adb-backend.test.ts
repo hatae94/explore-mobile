@@ -11,6 +11,7 @@ import type { ApkAcquirer } from "./apk-downloader.js";
 import { AdbKeyboardInstallFailedError, ImeBindTimeoutError } from "./ime-errors.js";
 import { ImeSessionStore } from "./ime-session-store.js";
 import { LauncherActivityNotFoundError } from "./launch-errors.js";
+import { UnsupportedGestureOnAndroidError } from "./gesture-errors.js";
 
 function ok(stdout: string, stderr = ""): AdbExecResult {
   return { stdout: Buffer.from(stdout, "utf-8"), stderr: Buffer.from(stderr, "utf-8"), exitCode: 0 };
@@ -348,6 +349,74 @@ describe("AdbBackend", () => {
       const backend = new AdbBackend(exec);
 
       await expect(backend.swipe("R58N90ABCDE", { x: 0, y: 0 }, { x: 1, y: 1 })).rejects.toThrow(/device offline/);
+    });
+  });
+
+  describe("pinch / doubleTap — 명시적 거부 (AC-GEST2-008, REQ-GEST2-COMMON-002 — SPEC-GESTURE-002 M1)", () => {
+    const FINGERS = [
+      { from: { x: 405, y: 1110 }, to: { x: 270, y: 1110 } },
+      { from: { x: 675, y: 1110 }, to: { x: 810, y: 1110 } },
+    ] as const;
+
+    it("(양성 대조) 같은 mock 실행기로 tap을 부르면 adb 실행기가 1회 호출된다 — Android 경로 자체는 살아 있다", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValue(ok(""));
+
+      await new AdbBackend(exec).tap("R58N90ABCDE", 100, 200);
+
+      expect(exec).toHaveBeenCalledTimes(1);
+    });
+
+    it("pinch는 UNSUPPORTED_GESTURE_ON_ANDROID로 거부하고 adb 실행기를 한 번도 부르지 않는다", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValue(ok(""));
+
+      const rejection = new AdbBackend(exec).pinch("R58N90ABCDE", [FINGERS[0], FINGERS[1]]);
+
+      await expect(rejection).rejects.toBeInstanceOf(UnsupportedGestureOnAndroidError);
+      await expect(rejection).rejects.toMatchObject({ code: "UNSUPPORTED_GESTURE_ON_ANDROID" });
+      expect(exec).not.toHaveBeenCalled();
+    });
+
+    it("doubleTap도 UNSUPPORTED_GESTURE_ON_ANDROID로 거부하고 adb 실행기를 한 번도 부르지 않는다", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValue(ok(""));
+
+      const rejection = new AdbBackend(exec).doubleTap("R58N90ABCDE", 100, 200);
+
+      await expect(rejection).rejects.toBeInstanceOf(UnsupportedGestureOnAndroidError);
+      await expect(rejection).rejects.toMatchObject({ code: "UNSUPPORTED_GESTURE_ON_ANDROID" });
+      expect(exec).not.toHaveBeenCalled();
+    });
+
+    it("두 메시지가 서로 다르며 각각 막힌 원인의 종류를 이름 붙여 말한다 (보안 정책 / 기동 비용)", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValue(ok(""));
+      const backend = new AdbBackend(exec);
+
+      const pinchMessage = await backend
+        .pinch("R58N90ABCDE", [FINGERS[0], FINGERS[1]])
+        .then(() => "", (err: Error) => err.message);
+      const doubleTapMessage = await backend
+        .doubleTap("R58N90ABCDE", 100, 200)
+        .then(() => "", (err: Error) => err.message);
+
+      // 핀치는 OS 보안 정책(SELinux), 더블탭은 `input`의 기동 비용이다
+      // (spec.md §C.1-⑥ / §C.1-⑦). 한 문장으로 뭉개면 호출자는 다른 기기를
+      // 쓰면 되는지 영영 안 되는지를 구분할 수 없다.
+      expect(pinchMessage).not.toBe(doubleTapMessage);
+      expect(pinchMessage).toMatch(/SELinux/);
+      expect(doubleTapMessage).toMatch(/input/);
+    });
+
+    it("메시지가 재시도가 무의미함을 말한다 — '일시적' 계열 문구는 실패다", async () => {
+      const exec = vi.fn<AdbExecutor>().mockResolvedValue(ok(""));
+      const backend = new AdbBackend(exec);
+
+      for (const rejected of [
+        backend.pinch("R58N90ABCDE", [FINGERS[0], FINGERS[1]]),
+        backend.doubleTap("R58N90ABCDE", 100, 200),
+      ]) {
+        const message = await rejected.then(() => "", (err: Error) => err.message);
+        expect(message).toMatch(/재시도해도/);
+        expect(message).not.toMatch(/일시적/);
+      }
     });
   });
 

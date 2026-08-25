@@ -50,6 +50,8 @@ function countingBackend(devices: DeviceInfo[]): DeviceBackend {
       basis: "measured-constant",
     }),
     getScreenSize: vi.fn().mockResolvedValue({ width: 1440, height: 3120 }),
+    pinch: vi.fn().mockResolvedValue(undefined),
+    doubleTap: vi.fn().mockResolvedValue(undefined),
   };
 }
 

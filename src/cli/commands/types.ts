@@ -1,3 +1,4 @@
+import { UnsupportedGestureOnAndroidError } from "../../backend/gesture-errors.js";
 import {
   WdaPortUnmappedError,
   WdaResponseLostError,
@@ -43,7 +44,7 @@ export function errorMessage(err: unknown): string {
  *
  * 기본값은 기존 그대로 `BACKEND_COMMAND_FAILED`다(D7 오류 코드 우선순위,
  * spec.md §C.3 — 일반 백엔드 실패는 계속 이 코드 뒤에 놓인다). 다만
- * **호출자가 서로 다르게 대응해야 하는** 아래 넷만은 자기 코드를 그대로
+ * **호출자가 서로 다르게 대응해야 하는** 아래 다섯만은 자기 코드를 그대로
  * 노출한다. "타입이 식별된 백엔드 오류는 일반 코드 뒤에 가리지 않는다"는
  * 관례이며, 원래 `key.ts`에 흩어져 있던 판단을 여기 한곳으로 모았다.
  *
@@ -55,14 +56,22 @@ export function errorMessage(err: unknown): string {
  *                              메시지가 어느 쪽인지 알려준다)
  *   - `WDA_PORT_UNMAPPED`    → 포트 매핑에 이 기기를 추가하라
  *   - `UNSUPPORTED_KEY_ON_IOS` → 이 키는 iOS에 대응 동작이 없다 (재시도 무의미)
- * 넷을 하나로 뭉개면 호출자는 "왜 안 되는지 모르는 상태"에 놓인다.
+ *   - `UNSUPPORTED_GESTURE_ON_ANDROID` → 이 제스처는 Android에 보낼 수단이 없다
+ *                              (재시도 무의미, SPEC-GESTURE-002 M5 —
+ *                              REQ-GEST2-COMMON-002 / AC-GEST2-008).
+ *                              `UNSUPPORTED_KEY_ON_IOS`와 **구조적으로 대칭**이며,
+ *                              가려지면 호출자는 "잠시 뒤 다시 해 보면 되는가"와
+ *                              "이 플랫폼에서는 영영 안 되는가"를 구분할 수 없다.
+ *                              그 구분 불가가 곧 조용한 no-op과 같은 결과를 낳는다.
+ * 다섯을 하나로 뭉개면 호출자는 "왜 안 되는지 모르는 상태"에 놓인다.
  */
 export function backendFailure(command: string, err: unknown): CommandError {
   if (
     err instanceof WdaUnreachableError ||
     err instanceof WdaResponseLostError ||
     err instanceof WdaPortUnmappedError ||
-    err instanceof WdaUnsupportedKeyError
+    err instanceof WdaUnsupportedKeyError ||
+    err instanceof UnsupportedGestureOnAndroidError
   ) {
     return failure(command, err.code, err.message);
   }

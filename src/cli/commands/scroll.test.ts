@@ -122,6 +122,8 @@ function createMockBackend(
     // 이 mock은 크기를 **직접** 돌려준다 — 중간 파생 단계가 사라졌을 뿐
     // 각 테스트가 의미하던 화면 크기는 같다.
     getScreenSize: vi.fn().mockResolvedValue(screen ?? undefined),
+    pinch: vi.fn().mockResolvedValue(undefined),
+    doubleTap: vi.fn().mockResolvedValue(undefined),
   };
 }
 

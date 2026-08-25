@@ -38,6 +38,8 @@ function createMockBackend(devices: DeviceInfo[] = [device()]): DeviceBackend {
     swipe: vi.fn().mockResolvedValue(undefined),
     getMinEffectiveSwipeThreshold: vi.fn().mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
     getScreenSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
+    pinch: vi.fn().mockResolvedValue(undefined),
+    doubleTap: vi.fn().mockResolvedValue(undefined),
   };
 }
 

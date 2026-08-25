@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { WdaBackend, readPngSize } from "./wda-backend.js";
+import {
+  DOUBLE_TAP_GAP_MS,
+  PINCH_MOVE_DURATION_MS,
+  PINCH_PAUSE_MS,
+  WdaBackend,
+  readPngSize,
+} from "./wda-backend.js";
 import { WdaClient, type WdaHttpClient } from "./wda-client.js";
 import { WdaCommandFailedError, WdaUnsupportedKeyError } from "./wda-errors.js";
 import type { ProcessExecutor } from "./process-executor.js";
@@ -333,5 +339,155 @@ describe("자동 복구 배선 (SPEC-IOS-002 REQ-IOS2-005 — AC-IOS2-016)", () 
     // `tap`은 내부에서 스크린샷을 찍어 배율을 구한다. 안쪽까지 감싸면
     // 한 번의 탭에서 재기동이 두 번 일어난다(AC-IOS2-014 위반).
     expect(calls.relaunch).toBe(1);
+  });
+});
+
+/** W3C actions 봉투에 실린 포인터 목록. 봉투 형태를 한 곳에서만 읽는다. */
+interface ActionsEnvelope {
+  actions: { type: string; id: string; parameters: unknown; actions: Record<string, unknown>[] }[];
+}
+
+function actionsRequests(requests: { url: string; method: string; body: unknown }[]): ActionsEnvelope[] {
+  return requests.filter((r) => r.url.endsWith("/actions")).map((r) => r.body as ActionsEnvelope);
+}
+
+describe("performActions 포인터 N개 일반화 (plan.md §B.4 — 기존 두 경로 회귀 방지)", () => {
+  // AC-GEST2-003의 양성 대조: 핀치를 위해 포인터 배열을 늘린 변경이
+  // 기존 단일 포인터 경로를 깨지 않았음을 같은 파일에서 함께 확인한다.
+  it("tap은 그대로 포인터 1개짜리 봉투를 낸다 (id는 finger1)", async () => {
+    const { backend, requests } = createBackend();
+
+    await backend.tap("UDID-A", 645, 2640);
+
+    const [envelope] = actionsRequests(requests);
+    expect(envelope!.actions).toHaveLength(1);
+    expect(envelope!.actions[0]).toMatchObject({ type: "pointer", id: "finger1" });
+    expect(envelope!.actions[0]!.actions.map((a) => a.type)).toEqual([
+      "pointerMove",
+      "pointerDown",
+      "pause",
+      "pointerUp",
+    ]);
+  });
+
+  it("swipe도 그대로 포인터 1개짜리 봉투를 낸다 — 지속시간이 pause와 pointerMove 양쪽에 실린다", async () => {
+    const { backend, requests } = createBackend();
+
+    await backend.swipe("UDID-A", { x: 645, y: 2640 }, { x: 645, y: 600 }, { durationMs: 500 });
+
+    const [envelope] = actionsRequests(requests);
+    expect(envelope!.actions).toHaveLength(1);
+    expect(envelope!.actions[0]!.actions).toEqual([
+      { type: "pointerMove", duration: 0, x: 215, y: 880 },
+      { type: "pointerDown", button: 0 },
+      { type: "pause", duration: 500 },
+      { type: "pointerMove", duration: 500, x: 215, y: 200 },
+      { type: "pointerUp", button: 0 },
+    ]);
+  });
+});
+
+describe("WdaBackend.pinch (AC-GEST2-003 — REQ-GEST2-PINCH-001, REQ-GEST2-PINCH-002 ⑤)", () => {
+  /** 배율 3.0 기기 기준. 스크린샷 픽셀 → WDA 포인트는 ÷3이다. */
+  const FINGERS = [
+    { from: { x: 405, y: 1110 }, to: { x: 270, y: 1110 } },
+    { from: { x: 675, y: 1110 }, to: { x: 810, y: 1110 } },
+  ] as const;
+
+  it("두 손가락을 한 요청에 싣는다 — 요청이 2회면 그것은 핀치가 아니라 스와이프 두 번이다", async () => {
+    const { backend, requests } = createBackend();
+
+    await backend.pinch("UDID-A", [FINGERS[0], FINGERS[1]]);
+
+    expect(actionsRequests(requests)).toHaveLength(1);
+    expect(actionsRequests(requests)[0]!.actions).toHaveLength(2);
+  });
+
+  it("두 포인터의 id가 서로 다르다 — 같은 id를 두 번 실으면 손가락 하나로 해석된다", async () => {
+    const { backend, requests } = createBackend();
+
+    await backend.pinch("UDID-A", [FINGERS[0], FINGERS[1]]);
+
+    const ids = actionsRequests(requests)[0]!.actions.map((p) => p.id);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it("두 포인터 모두 pointerMove → pointerDown → pause → pointerMove → pointerUp 순서다", async () => {
+    const { backend, requests } = createBackend();
+
+    await backend.pinch("UDID-A", [FINGERS[0], FINGERS[1]]);
+
+    for (const pointer of actionsRequests(requests)[0]!.actions) {
+      expect(pointer.actions.map((a) => a.type)).toEqual([
+        "pointerMove",
+        "pointerDown",
+        "pause",
+        "pointerMove",
+        "pointerUp",
+      ]);
+    }
+  });
+
+  it("좌표는 toWdaPoint를 거친 포인트다 — 스크린샷 픽셀을 그대로 실으면 배율 3 기기에서 1/3 지점을 집는다", async () => {
+    const { backend, requests } = createBackend();
+
+    await backend.pinch("UDID-A", [FINGERS[0], FINGERS[1]]);
+
+    const [first, second] = actionsRequests(requests)[0]!.actions;
+    // 405/3=135, 270/3=90, 675/3=225, 810/3=270, 1110/3=370.
+    expect(first!.actions[0]).toMatchObject({ x: 135, y: 370 });
+    expect(first!.actions[3]).toMatchObject({ x: 90, y: 370 });
+    expect(second!.actions[0]).toMatchObject({ x: 225, y: 370 });
+    expect(second!.actions[3]).toMatchObject({ x: 270, y: 370 });
+  });
+
+  it("봉투의 두 지속시간이 이름 붙은 상수에서 명시적으로 온다 — 필드가 없으면 플랫폼 기본값에 맡긴 것이다", async () => {
+    const { backend, requests } = createBackend();
+
+    await backend.pinch("UDID-A", [FINGERS[0], FINGERS[1]]);
+
+    // 구조 검사다: 특정 지속시간이 확대를 일으킨다고 주장하지 않으며,
+    // `duration`이 **존재하고 이름 붙은 상수에서 오는가**만 본다
+    // (spec.md §C.1-⑪이 700/400/200/100/50/0 ms 전부에서 동작을 관측했다).
+    for (const pointer of actionsRequests(requests)[0]!.actions) {
+      expect(pointer.actions[2]).toEqual({ type: "pause", duration: PINCH_PAUSE_MS });
+      expect(pointer.actions[3]).toMatchObject({ type: "pointerMove", duration: PINCH_MOVE_DURATION_MS });
+    }
+  });
+});
+
+describe("WdaBackend.doubleTap (AC-GEST2-004 — REQ-GEST2-DTAP-001/002)", () => {
+  it("한 요청에 두 탭을 싣는다 — 요청이 2회면 그것은 tap을 두 번 부른 것과 같다", async () => {
+    const { backend, requests } = createBackend();
+
+    await backend.doubleTap("UDID-A", 645, 2640);
+
+    expect(actionsRequests(requests)).toHaveLength(1);
+  });
+
+  it("down/up 쌍이 2회이고 그 사이에 DOUBLE_TAP_GAP_MS 간격이 있다", async () => {
+    const { backend, requests } = createBackend();
+
+    await backend.doubleTap("UDID-A", 645, 2640);
+
+    const [pointer] = actionsRequests(requests)[0]!.actions;
+    expect(pointer!.actions.map((a) => a.type)).toEqual([
+      "pointerMove",
+      "pointerDown",
+      "pointerUp",
+      "pause",
+      "pointerDown",
+      "pointerUp",
+    ]);
+    expect(pointer!.actions[3]).toEqual({ type: "pause", duration: DOUBLE_TAP_GAP_MS });
+  });
+
+  it("좌표는 toWdaPoint를 거친 포인트다", async () => {
+    const { backend, requests } = createBackend();
+
+    await backend.doubleTap("UDID-A", 645, 2640);
+
+    const [pointer] = actionsRequests(requests)[0]!.actions;
+    expect(pointer!.actions[0]).toMatchObject({ x: 215, y: 880 });
   });
 });

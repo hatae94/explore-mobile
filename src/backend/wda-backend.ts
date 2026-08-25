@@ -24,6 +24,7 @@
 import type {
   DeviceBackend,
   DeviceInfo,
+  PinchGesture,
   ScreenSize,
   SwipeOptions,
   SwipePoint,
@@ -48,6 +49,58 @@ import { withRunnerRecovery, type WdaRecoveryPort } from "./wda-recovery.js";
  * `android-gesture-facts`가 기록한 그 함정). 아래에서 배율을 곱해 돌려준다.
  */
 const MEASURED_MIN_EFFECTIVE_SWIPE_POINTS = 11;
+
+/**
+ * 핀치 봉투에서 `pointerDown` 뒤에 두는 정지 시간 (REQ-GEST2-PINCH-002 ⑤).
+ *
+ * **자격**: 이 값은 **최초로 확대를 관측한 봉투의 값**이며 **경계값도 최적값도
+ * 아니다**(spec.md §C.1-①). 그리고 이 축에 대해서는 그것이 아는 전부다 —
+ * **120 ms 외의 `pause` 값은 측정된 적이 없다.** 재측정(M-5)은 `pause`를
+ * 120 ms에 **고정한 채** `pointerMove`만 여섯 값으로 바꿨으므로, `pause = 0`이
+ * 동작하는지도 동작하지 않는지도 이 저장소는 모른다(spec.md §C.1-⑪ 및 §C.2).
+ * 아래 `PINCH_MOVE_DURATION_MS`의 반증 결과를 이 상수에 옮겨 적으면 측정보다
+ * 강한 주장이 된다.
+ *
+ * **출발점이지 문턱이 아니다.** REQ가 이 값을 주는 이유는 관측된 봉투에서
+ * 시작하라는 것이지 "이 값 아래면 안 된다"가 아니다 — 경계는 측정되지 않았다.
+ *
+ * 상수로 두는 근거는 **결정성**이다: 지속시간을 정하지 않으면 같은 `--amount`가
+ * 구현마다·플랫폼 기본값마다 다른 봉투를 만들고, 그 차이는 오류 없이 생긴다.
+ */
+export const PINCH_PAUSE_MS = 120;
+
+/**
+ * 핀치 봉투에서 손가락이 끝점까지 이동하는 시간 (REQ-GEST2-PINCH-002 ⑤).
+ *
+ * **자격**: `PINCH_PAUSE_MS`와 같이 **최초로 확대를 관측한 봉투의 값**이며
+ * **경계값도 최적값도 아니다**(spec.md §C.1-①). 이 축은 재측정됐고
+ * `700 / 400 / 200 / 100 / 50 / 0 ms` **여섯 값 전부에서 핀치가 동작했다**
+ * (`0 ms`는 육안 2회 확인 — spec.md §C.1-⑪). 즉 이 값이 커야 동작한다는 근거는
+ * 없다. 스와이프와 다른 이유: 스와이프는 시간에 걸친 이동이 있어야 탭과
+ * 구별되지만, 핀치는 **두 손가락 사이 거리 변화 자체가 신호**여서 순간 이동도
+ * 인식된다.
+ *
+ * 지속시간이 확대 **폭**에 미치는 영향은 **미측정**이다(spec.md §C.1-⑫) —
+ * 그 관계에 대한 서술을 여기 적지 않는다. 확대 폭이 부족해 보이면 만질 곳은
+ * 지속시간이 아니라 간격 산식이다(plan.md §B.2).
+ *
+ * 상수로 두는 근거는 동작 가능성이 아니라 **결정성**이다.
+ */
+export const PINCH_MOVE_DURATION_MS = 700;
+
+/**
+ * 더블탭의 두 탭 사이 간격 (REQ-GEST2-DTAP-002 — 이름을 REQ가 확정한다).
+ *
+ * **자격**: 60 ms는 **동작이 확인된 값이지 경계값이 아니다.** 측정은 이 값에서
+ * 더블탭이 인식됨을 확인했을 뿐, 인식 창의 상·하한을 이분 탐색하지 않았다
+ * (spec.md §C.1-②·⑧). 다른 앱·다른 iOS 버전에서 같으리라는 근거도 없으므로,
+ * 이 값을 바꾸려면 같은 방식의 실기기 재확인이 필요하다.
+ *
+ * **CLI 표면에 노출하지 않는다.** `scroll`의 내부 고정 지속시간과 같은
+ * 성격이다 — 더블탭은 "인식되는 두 번의 탭"을 보장할 책임이 있는 편의층이고,
+ * 간격을 호출자에게 맡기면 그 보장이 사라진다.
+ */
+export const DOUBLE_TAP_GAP_MS = 60;
 
 /** WDA `pressButton`이 받는 버튼 이름. iOS에 물리 대응이 있는 것만 매핑한다. */
 const WDA_PRESS_BUTTON: Partial<Record<KeyAlias, string>> = {
@@ -357,19 +410,87 @@ export class WdaBackend implements DeviceBackend {
     }
   }
 
-  /** W3C actions 봉투는 한 곳에서만 만든다 — 탭과 스와이프가 같은 형태를 쓴다. */
-  private async performActions(client: WdaClient, actions: unknown[]): Promise<void> {
+  /**
+   * W3C actions 봉투는 한 곳에서만 만든다 — 탭·스와이프·핀치·더블탭이 같은
+   * 형태를 쓴다.
+   *
+   * **SPEC-GESTURE-002 M1 — 포인터 N개로 가법 일반화했다.** 손가락마다 하나의
+   * 동작 배열을 받는 가변 인자이며, 기존 단일 포인터 호출
+   * (`performActions(client, [ ... ])`)은 **한 글자도 바뀌지 않고** 그대로
+   * 컴파일되고 그대로 `finger1` 하나짜리 봉투를 낸다(plan.md §B.4). 이것이
+   * 가법이어야 하는 이유는 `tap`·`swipe` 두 경로가 이미 실기기에서 확증됐기
+   * 때문이다 — 봉투 형태를 바꾸면 그 둘이 조용히 깨진다.
+   *
+   * 포인터 id는 손가락마다 달라야 한다. 같은 id를 두 번 실으면 WDA는 그것을
+   * 손가락 **하나**로 해석하고, 그러면 두 포인터를 보낸 요청이 오류 없이
+   * 핀치가 아닌 무언가가 된다(AC-GEST2-003).
+   */
+  private async performActions(client: WdaClient, ...fingers: unknown[][]): Promise<void> {
     const sessionId = await client.sessionId();
     await client.request("POST", `/session/${sessionId}/actions`, {
-      actions: [
-        {
-          type: "pointer",
-          id: "finger1",
-          parameters: { pointerType: "touch" },
-          actions,
-        },
-      ],
+      actions: fingers.map((actions, index) => ({
+        type: "pointer",
+        id: `finger${index + 1}`,
+        parameters: { pointerType: "touch" },
+        actions,
+      })),
     });
+  }
+
+  /**
+   * 두 손가락 핀치 (REQ-GEST2-PINCH-001). 포인터 2개를 **한 봉투**에 싣는다 —
+   * 손가락을 각각 별도 요청으로 보내면 그것은 핀치가 아니라 스와이프 두 번이다.
+   *
+   * 받는 것은 **이미 계산된 좌표**다(spec.md §A.3 E5). 방향·비율·화면 크기는
+   * 이 계층에 들어오지 않으며, 기하는 `cli/commands/pinch-geometry.ts`의 순수
+   * 함수가 기기 없이 판정한다.
+   */
+  async pinch(serial: string, fingers: [PinchGesture, PinchGesture]): Promise<void> {
+    return this.withRecovery(serial, () => this.pinchRaw(serial, fingers));
+  }
+
+  private async pinchRaw(serial: string, fingers: [PinchGesture, PinchGesture]): Promise<void> {
+    const client = this.makeClient(serial);
+    const pointers: unknown[][] = [];
+
+    for (const finger of fingers) {
+      const start = await this.toWdaPoint(client, serial, finger.from);
+      const end = await this.toWdaPoint(client, serial, finger.to);
+      pointers.push([
+        { type: "pointerMove", duration: 0, x: start.x, y: start.y },
+        { type: "pointerDown", button: 0 },
+        { type: "pause", duration: PINCH_PAUSE_MS },
+        { type: "pointerMove", duration: PINCH_MOVE_DURATION_MS, x: end.x, y: end.y },
+        { type: "pointerUp", button: 0 },
+      ]);
+    }
+
+    await this.performActions(client, ...pointers);
+  }
+
+  /**
+   * 더블탭 (REQ-GEST2-DTAP-001). down/up → pause → down/up을 **한 요청**에
+   * 기술하고 기기가 직접 실행한다 — 그래서 호스트 왕복 지연이 끼어들지 않는다.
+   *
+   * `tap`을 두 번 부르는 것으로 대체되지 않는다: 실측된 왕복 간격은 2,531 ms로
+   * 인식 창(약 250~300 ms)의 약 10배였고, 그때 일어난 일은 무반응이 아니라
+   * **단일 탭 두 번**이었다(spec.md §C.1-③).
+   */
+  async doubleTap(serial: string, x: number, y: number): Promise<void> {
+    return this.withRecovery(serial, () => this.doubleTapRaw(serial, x, y));
+  }
+
+  private async doubleTapRaw(serial: string, x: number, y: number): Promise<void> {
+    const client = this.makeClient(serial);
+    const point = await this.toWdaPoint(client, serial, { x, y });
+    await this.performActions(client, [
+      { type: "pointerMove", duration: 0, x: point.x, y: point.y },
+      { type: "pointerDown", button: 0 },
+      { type: "pointerUp", button: 0 },
+      { type: "pause", duration: DOUBLE_TAP_GAP_MS },
+      { type: "pointerDown", button: 0 },
+      { type: "pointerUp", button: 0 },
+    ]);
   }
 
   /** 스크린샷 픽셀 → WDA 포인트 (design.md §C.2 — 환산은 백엔드 안에서). */

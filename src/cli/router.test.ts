@@ -78,6 +78,8 @@ function createMockIosBackend(): DeviceBackend {
     swipe: vi.fn().mockResolvedValue(undefined),
     getMinEffectiveSwipeThreshold: vi.fn().mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
     getScreenSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
+    pinch: vi.fn().mockResolvedValue(undefined),
+    doubleTap: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -116,6 +118,8 @@ function createMockBackend(devices: DeviceInfo[] = [device()]): DeviceBackend {
     swipe: vi.fn().mockResolvedValue(undefined),
     getMinEffectiveSwipeThreshold: vi.fn().mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
     getScreenSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
+    pinch: vi.fn().mockResolvedValue(undefined),
+    doubleTap: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -361,6 +365,8 @@ describe("runCli", () => {
           .fn()
           .mockResolvedValue({ minEffectiveSwipePx: 11, basis: "measured-constant" }),
         getScreenSize: vi.fn().mockResolvedValue({ width: 1179, height: 2556 }),
+        pinch: vi.fn().mockResolvedValue(undefined),
+        doubleTap: vi.fn().mockResolvedValue(undefined),
       };
       // M5(REQ-VISION-005): registry는 더 이상 `DeviceBackend`를 구현하지
       // 않는다 — `runCli`가 `DeviceSource`로 받아 그대로 라우팅한다.

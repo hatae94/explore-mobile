@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { UnsupportedGestureOnAndroidError } from "../../backend/gesture-errors.js";
 import { LauncherActivityNotFoundError } from "../../backend/launch-errors.js";
 import {
   WdaCommandFailedError,
@@ -23,6 +24,11 @@ describe("backendFailure", () => {
     [WdaResponseLostError, "WDA_RESPONSE_LOST"],
     [WdaPortUnmappedError, "WDA_PORT_UNMAPPED"],
     [WdaUnsupportedKeyError, "UNSUPPORTED_KEY_ON_IOS"],
+    // SPEC-GESTURE-002 M5 (REQ-GEST2-COMMON-002, AC-GEST2-008). Android의
+    // 제스처 거부가 `BACKEND_COMMAND_FAILED` 뒤에 가려지면 호출자는
+    // "일시적 실패라 재시도하면 되는가"와 "이 플랫폼에서는 영영 안 되는가"를
+    // 구분할 수 없다. `UNSUPPORTED_KEY_ON_IOS`가 승격된 것과 같은 이유다.
+    [UnsupportedGestureOnAndroidError, "UNSUPPORTED_GESTURE_ON_ANDROID"],
   ])("%s는 자기 코드를 그대로 노출한다 (%s)", (ErrorClass, expectedCode) => {
     const result = backendFailure("tap", new ErrorClass("사유"));
     expect(result.ok).toBe(false);

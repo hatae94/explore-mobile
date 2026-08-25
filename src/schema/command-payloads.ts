@@ -40,7 +40,7 @@ import type {
 import type { DevicectlCheck, IosBringUpAttempt, IosResetResult, WdaCheck } from "../backend/wda-doctor.js";
 import type { WdaGatesReport } from "../backend/wda-gates.js";
 import type { WdaSigningStatus } from "../backend/wda-signing.js";
-import type { DeviceInfo, SwipePoint } from "./device-backend.js";
+import type { DeviceInfo, PinchGesture, SwipePoint } from "./device-backend.js";
 
 /**
  * `devices`의 페이로드는 `DeviceInfo[]` 그대로다 — 별도 타입을 만들지 않는다.
@@ -106,6 +106,26 @@ export interface TapPayload {
   y: number;
 }
 
+/**
+ * `doubletap <x> <y>` — 실제로 보낸 좌표를 되돌려준다 (SPEC-GESTURE-002 M5,
+ * REQ-GEST2-COMMON-005).
+ *
+ * **`TapPayload`와 형태가 같지만 별칭이 아니다.** `type DoubleTapPayload =
+ * TapPayload`로 두면 두 명령의 계약이 갈라질 때 한쪽을 고친 것이 다른 쪽에
+ * 조용히 파급되고, 그 변경이 diff에서 "의도한 명령"으로 보이지 않는다.
+ * 형태가 같다는 것은 **지금의 사실**이지 계약이 하나라는 뜻이 아니다 —
+ * 이 파일의 존재 이유(필드 변경을 눈에 보이게 만든다)가 그것이다.
+ *
+ * **두 탭 사이 간격은 여기 실리지 않는다.** 간격은 봉투 계층의 상수이며
+ * CLI 표면에 노출하지 않는다(spec.md §D). 응답에 실으면 호출자가 그것을
+ * 조절 가능한 값으로 읽게 되는데, 이 SPEC은 그런 인자를 만들지 않는다.
+ */
+export interface DoubleTapPayload {
+  serial: string;
+  x: number;
+  y: number;
+}
+
 /** `key <alias>` — 보낸 별칭을 되돌려준다. */
 export interface KeyPayload {
   serial: string;
@@ -136,6 +156,25 @@ export interface ScrollPayload {
   direction: string;
   from: SwipePoint;
   to: SwipePoint;
+}
+
+/**
+ * `pinch <in|out> <x> <y> [--amount <ratio>]` (SPEC-GESTURE-002 M3,
+ * REQ-GEST2-PINCH-005).
+ *
+ * **방향과 좌표가 둘 다 실린다.** 방향 토큰은 반대로 구현해도 오류가 나지
+ * 않으므로(spec.md §A.5), 호출자가 응답만 보고 "in인데 벌어졌다"를 즉시
+ * 판정할 수 있어야 한다. 하나만 있으면 그 판정이 불가능하다.
+ *
+ * `fingers`는 CLI가 방향·비율·앵커·화면 크기에서 **계산한** 실제 좌표이며,
+ * 백엔드에 전달된 것과 같은 값이다. `ScrollPayload`가 `from`/`to`를 싣는 것과
+ * 같은 이유다 — 새 형태를 정의하지 않고 `PinchGesture`(`SwipePoint` 2개)를
+ * 그대로 쓴다.
+ */
+export interface PinchPayload {
+  serial: string;
+  direction: string;
+  fingers: [PinchGesture, PinchGesture];
 }
 
 /**

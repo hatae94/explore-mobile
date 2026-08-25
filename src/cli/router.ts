@@ -17,8 +17,10 @@ import { toDeviceSource, type DeviceSource } from "./device-targeting.js";
 import { parseCommandArgs } from "./args.js";
 import { devicesCommand } from "./commands/devices.js";
 import { doctorCommand } from "./commands/doctor.js";
+import { doubleTapCommand } from "./commands/doubletap.js";
 import { keyCommand } from "./commands/key.js";
 import { launchCommand } from "./commands/launch.js";
+import { pinchCommand } from "./commands/pinch.js";
 import { resetCommand } from "./commands/reset.js";
 import { screenshotCommand } from "./commands/screenshot.js";
 import { scrollCommand } from "./commands/scroll.js";
@@ -37,9 +39,11 @@ const COMMANDS: Record<string, CommandHandler> = {
   stop: stopCommand,
   screenshot: screenshotCommand,
   tap: tapCommand,
+  doubletap: doubleTapCommand,
   key: keyCommand,
   swipe: swipeCommand,
   scroll: scrollCommand,
+  pinch: pinchCommand,
   text: textCommand,
   doctor: doctorCommand,
   reset: resetCommand,

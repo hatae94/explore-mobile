@@ -19,11 +19,18 @@
  * platform directly instead of deriving two numbers from a full element
  * tree. This is the first NON-additive change to the surface.
  *
+ * SPEC-GESTURE-002 M1 (REQ-GEST2-COMMON-004) then re-opened the surface
+ * ADDITIVELY for the two-finger axis: `pinch()` and `doubleTap()`. Neither
+ * backend leaves them empty — Android IMPLEMENTS BOTH AND REJECTS, because a
+ * silent no-op that answers `ok:true` is worse than an error for an agent
+ * caller (REQ-GEST2-COMMON-002).
+ *
  * @MX:ANCHOR — invariant contract for backend substitution (REQ-ARCH-003,
  * REQ-IOS-ARCH-005). Both `AdbBackend` and `WdaBackend` implement this exact
- * 10-method surface (SPEC-GESTURE-001 M1 added `swipe`, M8 added
+ * 12-method surface (SPEC-GESTURE-001 M1 added `swipe`, M8 added
  * `getMinEffectiveSwipeThreshold`, SPEC-VISION-001 M1 added `getScreenSize`
- * and M2 removed the UI-tree dump method).
+ * and M2 removed the UI-tree dump method, SPEC-GESTURE-002 M1 added `pinch`
+ * and `doubleTap`).
  * @MX:REASON — every CLI command and the backend registry (`registry.ts`)
  * depend on this method surface; changing it ripples through every backend
  * and the command layer above it.
@@ -66,6 +73,23 @@ export interface SwipePoint {
  */
 export interface SwipeOptions {
   durationMs?: number;
+}
+
+/**
+ * One finger's straight-line path within a two-finger pinch
+ * (REQ-GEST2-PINCH-001, SPEC-GESTURE-002 M1) — the SAME device-pixel
+ * coordinate system as `swipe()`'s `SwipePoint`.
+ *
+ * The backend receives ALREADY-COMPUTED coordinates (spec.md §A.3 E5).
+ * Direction, ratio and screen size never reach this layer: the pinch
+ * geometry is a pure function in the command layer
+ * (`cli/commands/pinch-geometry.ts`) so it can be verified against fixtures
+ * with no device attached, exactly as `scroll` computes coordinates before
+ * calling `backend.swipe`.
+ */
+export interface PinchGesture {
+  from: SwipePoint;
+  to: SwipePoint;
 }
 
 /**
@@ -259,5 +283,49 @@ export interface DeviceBackend {
    * know whether retrying is worthwhile.
    */
   getScreenSize(serial: string): Promise<ScreenSize | undefined>;
+
+  /**
+   * Sends a two-finger pinch — both fingers moving **within a single
+   * request** (REQ-GEST2-PINCH-001, SPEC-GESTURE-002 M1 — additive 11th
+   * method, the original 10 are unchanged).
+   *
+   * The tuple is fixed at exactly TWO fingers, not a variable-length array:
+   * what was measured is two pointers in one W3C actions envelope
+   * (spec.md §C.1-①). A variable-length surface would promise a
+   * three-or-more-finger capability nobody has observed (spec.md §D
+   * "3개 이상의 손가락").
+   *
+   * "Within a single request" is the contract, not an implementation note.
+   * Sending each finger as its own request produces two swipes, not a
+   * pinch — the same round-trip-latency failure measured for double-tap,
+   * where two `tap` calls landed 2,531 ms apart against a ~250-300 ms
+   * recognition window (spec.md §C.1-③).
+   *
+   * `WdaBackend` sends both pointers in one `POST /session/:id/actions`;
+   * `AdbBackend` throws `UnsupportedGestureOnAndroidError` WITHOUT touching
+   * the device — SELinux denies writes to `/dev/input/event*`, so there is
+   * no injection path to attempt (spec.md §C.1-⑥).
+   */
+  pinch(serial: string, fingers: [PinchGesture, PinchGesture]): Promise<void>;
+
+  /**
+   * Taps the given device-pixel coordinate TWICE within a single request
+   * (REQ-GEST2-DTAP-001, SPEC-GESTURE-002 M1 — additive 12th method, the
+   * original 11 are unchanged).
+   *
+   * This is NOT reducible to calling `tap()` twice, and that is the reason
+   * the method exists: two CLI round trips put the taps 2,531 ms apart on
+   * iOS, roughly ten times the recognition window, so the device saw two
+   * independent single taps rather than a double tap (spec.md §C.1-③). The
+   * inter-tap gap therefore has to be described INSIDE one request and
+   * executed by the device itself.
+   *
+   * `WdaBackend` sends down/up → pause → down/up in one actions envelope;
+   * `AdbBackend` throws `UnsupportedGestureOnAndroidError` WITHOUT touching
+   * the device — `input` spawns a JVM per invocation (~400 ms measured), so
+   * no arrangement of `input` calls fits inside the recognition window
+   * (spec.md §C.1-⑦).
+   */
+  doubleTap(serial: string, x: number, y: number): Promise<void>;
 }
 

@@ -24,6 +24,7 @@ import { ensureAdbKeyboardInstalled } from "./adbkeyboard-installer.js";
 import type {
   DeviceBackend,
   DeviceInfo,
+  PinchGesture,
   ScreenSize,
   SwipeOptions,
   SwipePoint,
@@ -41,6 +42,7 @@ import { AdbKeyboardInstallFailedError, ImeBindTimeoutError } from "./ime-errors
 import type { InputMethodBindingState } from "./ime-binding-parser.js";
 import { parseInputMethodBindingState, parseSoftKeyboardShown } from "./ime-binding-parser.js";
 import { isImeEnableRegistrationRaceFailure } from "./ime-enable-retry-predicate.js";
+import { UnsupportedGestureOnAndroidError } from "./gesture-errors.js";
 import { LauncherActivityNotFoundError } from "./launch-errors.js";
 import { parseLauncherResolveOutput } from "./launcher-resolve-parser.js";
 import { ANDROID_KEYCODE, KEYCODE_HIDE_KEYBOARD } from "./keycodes.js";
@@ -858,5 +860,55 @@ export class AdbBackend implements DeviceBackend {
     assertSuccess(result, "shell wm size");
 
     return parseScreenSize(result.stdout.toString("utf-8"));
+  }
+
+  /**
+   * REQ-GEST2-COMMON-002 (SPEC-GESTURE-002 M1, additive 11th method):
+   * rejects rather than pretends. NO `exec` call is made — the rejection is
+   * settled before anything reaches the device, because there is nothing to
+   * send: `input` has no multi-touch sub-command (its whole verb list is
+   * `text`/`keyevent`/`tap`/`swipe`/`draganddrop`/`press`/`roll`/`event`,
+   * and `event <DOWN|UP|MOVE> <x> <y>` carries no pointer-index argument),
+   * and the one remaining injection path is closed by the OS: `sendevent`
+   * failed on all 84 events with `Permission denied` under an ENFORCING
+   * SELinux policy, despite the shell belonging to the `input` group
+   * (spec.md §C.1-④/⑤/⑥ — measured on SM_G960N, Android 10).
+   *
+   * The `_fingers` argument is deliberately unused: accepting it keeps this
+   * backend's signature identical to the interface, which is what lets
+   * `BackendRegistry` route without knowing which platform it holds.
+   */
+  async pinch(_serial: string, _fingers: [PinchGesture, PinchGesture]): Promise<void> {
+    throw new UnsupportedGestureOnAndroidError(
+      "Android에서는 두 손가락 핀치를 보낼 수 없습니다 — 원인은 OS 보안 정책입니다. " +
+        "하드웨어는 10손가락을 지원하지만 SELinux(Enforcing)가 /dev/input/event* 직접 쓰기를 거부하고, " +
+        "`adb shell input`에는 멀티터치 서브명령이 없습니다. 재시도해도 결과는 같습니다 — " +
+        "우회로는 계측 APK뿐이며 별도 SPEC의 소관입니다. 핀치가 필요하면 iOS 기기를 쓰십시오.",
+    );
+  }
+
+  /**
+   * REQ-GEST2-COMMON-002 (SPEC-GESTURE-002 M1, additive 12th method):
+   * rejects rather than pretends, for a DIFFERENT reason than `pinch` — and
+   * the two messages say so. Nothing here is a permission problem: `input
+   * tap` works fine. What fails is timing. `input` starts a fresh
+   * `app_process` (JVM) per invocation, measured on-device at 392 ms for the
+   * first tap and 438 ms for the second, leaving a 392 ms gap between tap
+   * starts against a ~250-300 ms recognition window (spec.md §C.1-⑦).
+   * Bundling the calls into one `adb` round trip does not help, because the
+   * cost is per-`input`-invocation, not per-round-trip — measured, not
+   * assumed: the one-round-trip form was tried and also failed.
+   *
+   * Sending the taps faster is NOT a fallback this method may take. A gesture
+   * whose success depends on how fast the device happens to be works on some
+   * devices and silently fails on others (spec.md §D).
+   */
+  async doubleTap(_serial: string, _x: number, _y: number): Promise<void> {
+    throw new UnsupportedGestureOnAndroidError(
+      "Android에서는 더블탭을 보낼 수 없습니다 — 원인은 명령 기동 비용입니다(권한 문제가 아닙니다). " +
+        "`input`은 호출마다 JVM을 새로 띄워 약 400 ms가 들고(실측: 두 탭 시작 간격 392 ms), " +
+        "이는 더블탭 인식 창(약 250~300 ms)을 넘습니다. 한 왕복에 묶어도 비용은 호출마다 들므로 " +
+        "간격이 줄지 않습니다. 재시도해도 결과는 같습니다 — 더블탭이 필요하면 iOS 기기를 쓰십시오.",
+    );
   }
 }

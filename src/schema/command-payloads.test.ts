@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import type {
   AppCommandPayload,
   DoctorPayload,
+  DoubleTapPayload,
   KeyPayload,
+  PinchPayload,
   ResetPayload,
   ScreenshotPayload,
   ScrollPayload,
@@ -89,6 +91,36 @@ describe("command payload contracts (SPEC-CONTRACT-001)", () => {
       to: true,
     };
     expect(Object.keys(keys)).toHaveLength(4);
+  });
+
+  /**
+   * SPEC-GESTURE-002 M5 (REQ-GEST2-COMMON-005, AC-GEST2-013).
+   *
+   * M3이 `PinchPayload`를 **먼저** 선언한 것은 `pinch.ts`가 그것 없이는 컴파일될
+   * 수 없었기 때문이고, 소진 검사는 그때 함께 서지 않았다. 여기서 두 타입에
+   * 대해 한꺼번에 세운다 — 타입만 있고 소진 검사가 없으면 2겹 중 1겹이며,
+   * 이 파일 상단이 적었듯 **1겹만으로는 부족하다**(타입과 핸들러를 함께 고치면
+   * 조용히 통과한다).
+   */
+  it("pinch — { serial, direction, fingers } (REQ-GEST2-PINCH-005: 방향과 좌표 둘 다)", () => {
+    const keys: Record<keyof PinchPayload, true> = {
+      serial: true,
+      direction: true,
+      fingers: true,
+    };
+    expect(Object.keys(keys)).toHaveLength(3);
+  });
+
+  /**
+   * `doubletap`은 `tap`과 **같은 형태**이지만 **별도 타입**이다. 별칭
+   * (`type DoubleTapPayload = TapPayload`)으로 두지 않은 이유: 두 명령의 계약이
+   * 나중에 갈라질 때 별칭은 한쪽을 고치면 다른 쪽이 조용히 따라 바뀌고,
+   * 그 변경이 diff에 "의도한 명령"으로 보이지 않는다. 형태가 같다는 것은
+   * 지금의 사실이지 계약이 하나라는 뜻이 아니다.
+   */
+  it("doubletap — { serial, x, y } (tap과 같은 형태이나 별도 계약)", () => {
+    const keys: Record<keyof DoubleTapPayload, true> = { serial: true, x: true, y: true };
+    expect(Object.keys(keys)).toHaveLength(3);
   });
 
   it("text — { serial } (입력 문자열은 되돌려주지 않는다)", () => {
