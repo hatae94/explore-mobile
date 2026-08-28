@@ -24,12 +24,14 @@
 import type {
   DeviceBackend,
   DeviceInfo,
+  InstallOutcome,
   PinchGesture,
   ScreenSize,
   SwipeOptions,
   SwipePoint,
   SwipeThreshold,
 } from "../schema/device-backend.js";
+import { InstallUnsupportedOnIosError } from "./install-errors.js";
 import { isKeyAlias, type KeyAlias } from "../schema/key-alias.js";
 import type { ProcessExecutor } from "./process-executor.js";
 import { spawnProcess } from "./process-executor.js";
@@ -101,6 +103,22 @@ export const PINCH_MOVE_DURATION_MS = 700;
  * 간격을 호출자에게 맡기면 그 보장이 사라진다.
  */
 export const DOUBLE_TAP_GAP_MS = 60;
+
+/**
+ * 더블탭에서 **한 번의 탭이 눌려 있는 시간** (`pointerDown` → `pointerUp` 사이).
+ * REQ-GEST2-DTAP-005 — 이름을 REQ가 확정한다. 간격(`DOUBLE_TAP_GAP_MS`)과 **다른 상수**이며,
+ * 값이 우연히 같아도 뜻이 다르므로 한쪽을 조정할 때 다른 쪽이 따라 움직여서는 안 된다.
+ *
+ * **왜 필요한가**: 이 값이 없으면 봉투는 `down` 직후 곧바로 `up`을 보내 **0 ms 터치**가
+ * 된다 — 사람 손으로는 만들 수 없는 신호다. Apple 지도는 그 봉투를 더블탭으로 받았지만
+ * 네이버 지도는 받지 않았다(2026-08-29 실측: 좌표 5곳·축척 2종·UI 표시/숨김·상세패널
+ * 열림에서 7회, 간격을 120 ms로 올린 뒤에도 2회 — 전부 탭 **한 번**으로만 처리됐다.
+ * 같은 화면을 사람이 손으로 더블탭하면 확대된다).
+ *
+ * **자격**: 위 실측은 "0 ms 유지가 네이버 지도에서 인식되지 않는다"까지만 말한다.
+ * 이 값이 인식되는 하한이라는 근거는 없다 — 인식 창의 상·하한은 이분 탐색되지 않았다.
+ */
+export const DOUBLE_TAP_HOLD_MS = 60;
 
 /** WDA `pressButton`이 받는 버튼 이름. iOS에 물리 대응이 있는 것만 매핑한다. */
 const WDA_PRESS_BUTTON: Partial<Record<KeyAlias, string>> = {
@@ -486,9 +504,11 @@ export class WdaBackend implements DeviceBackend {
     await this.performActions(client, [
       { type: "pointerMove", duration: 0, x: point.x, y: point.y },
       { type: "pointerDown", button: 0 },
+      { type: "pause", duration: DOUBLE_TAP_HOLD_MS },
       { type: "pointerUp", button: 0 },
       { type: "pause", duration: DOUBLE_TAP_GAP_MS },
       { type: "pointerDown", button: 0 },
+      { type: "pause", duration: DOUBLE_TAP_HOLD_MS },
       { type: "pointerUp", button: 0 },
     ]);
   }
@@ -528,6 +548,18 @@ export class WdaBackend implements DeviceBackend {
     };
     this.geometry.set(serial, geometry);
     return geometry;
+  }
+
+  /**
+   * REQ-INSTALL-004 (SPEC-INSTALL-001 M3): iOS APK install is out of this
+   * SPEC's Android-only scope (spec.md §B.2). Reject EXPLICITLY without
+   * touching the device — a silent no-op answering `ok:true` would be worse
+   * than an error for an agent caller (same discipline as `AdbBackend`'s
+   * gesture rejections). The `_` parameters keep the signature identical to
+   * the interface so `BackendRegistry` can route without knowing the platform.
+   */
+  async installApp(_serial: string, _apkPath: string, _packageId: string): Promise<InstallOutcome> {
+    throw new InstallUnsupportedOnIosError();
   }
 }
 

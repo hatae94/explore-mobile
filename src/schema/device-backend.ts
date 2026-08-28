@@ -27,10 +27,11 @@
  *
  * @MX:ANCHOR — invariant contract for backend substitution (REQ-ARCH-003,
  * REQ-IOS-ARCH-005). Both `AdbBackend` and `WdaBackend` implement this exact
- * 12-method surface (SPEC-GESTURE-001 M1 added `swipe`, M8 added
+ * 13-method surface (SPEC-GESTURE-001 M1 added `swipe`, M8 added
  * `getMinEffectiveSwipeThreshold`, SPEC-VISION-001 M1 added `getScreenSize`
  * and M2 removed the UI-tree dump method, SPEC-GESTURE-002 M1 added `pinch`
- * and `doubleTap`).
+ * and `doubleTap`, SPEC-INSTALL-001 M3 added `installApp` — Android
+ * implements it, iOS rejects it as out-of-scope).
  * @MX:REASON — every CLI command and the backend registry (`registry.ts`)
  * depend on this method surface; changing it ripples through every backend
  * and the command layer above it.
@@ -146,6 +147,19 @@ export interface ScreenSize {
  * platform.
  */
 export type DevicePlatform = "android" | "ios";
+
+/**
+ * Whether an install put the app down for the first time (`"fresh"`) or
+ * overwrote an already-installed copy (`"upgrade"`) — SPEC-INSTALL-001
+ * REQ-INSTALL-004. The distinction is determined from the device's
+ * pre-install package list, not from the install command's own output.
+ */
+export type InstallMode = "fresh" | "upgrade";
+
+/** Result of `installApp` (SPEC-INSTALL-001 REQ-INSTALL-004). */
+export interface InstallOutcome {
+  mode: InstallMode;
+}
 
 /** One connected device, as reported by `devices` (REQ-DEVICES-001/002). */
 export interface DeviceInfo {
@@ -327,5 +341,24 @@ export interface DeviceBackend {
    * (spec.md §C.1-⑦).
    */
   doubleTap(serial: string, x: number, y: number): Promise<void>;
+
+  /**
+   * Installs (or overwrites) an APK on the device (SPEC-INSTALL-001
+   * REQ-INSTALL-004 — additive 13th method, the original 12 are unchanged).
+   *
+   * `apkPath` is a host filesystem path to the APK; `packageId` is the
+   * package name already extracted from that APK (by `apk-metadata.ts`,
+   * BEFORE the device was touched) — the backend needs it only to read the
+   * device's pre-install package list and report `fresh` vs `upgrade`, never
+   * to derive it from the filename.
+   *
+   * `AdbBackend` runs `adb install -r` (data-preserving reinstall) and
+   * classifies failures into typed errors (signature mismatch / downgrade /
+   * generic — `install-errors.ts`); `WdaBackend` throws
+   * `InstallUnsupportedOnIosError` WITHOUT touching the device — iOS APK
+   * install is out of this SPEC's Android-only scope (spec.md §B.2), and a
+   * silent no-op answering `ok:true` would be worse than an explicit refusal.
+   */
+  installApp(serial: string, apkPath: string, packageId: string): Promise<InstallOutcome>;
 }
 

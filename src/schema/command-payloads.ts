@@ -31,6 +31,7 @@
  */
 
 import type {
+  AaptInstalledCheck,
   AdbInstalledCheck,
   AdbKeyboardResult,
   DaemonHealthCheck,
@@ -40,7 +41,7 @@ import type {
 import type { DevicectlCheck, IosBringUpAttempt, IosResetResult, WdaCheck } from "../backend/wda-doctor.js";
 import type { WdaGatesReport } from "../backend/wda-gates.js";
 import type { WdaSigningStatus } from "../backend/wda-signing.js";
-import type { DeviceInfo, PinchGesture, SwipePoint } from "./device-backend.js";
+import type { DeviceInfo, InstallMode, PinchGesture, SwipePoint } from "./device-backend.js";
 
 /**
  * `devices`의 페이로드는 `DeviceInfo[]` 그대로다 — 별도 타입을 만들지 않는다.
@@ -53,6 +54,26 @@ export type DevicesPayload = DeviceInfo[];
 export interface AppCommandPayload {
   serial: string;
   package: string;
+}
+
+/**
+ * `install <apk-path>` (SPEC-INSTALL-001 REQ-INSTALL-001).
+ *
+ * `package`/`versionCode`/`versionName`은 APK에서 읽은 값이다(파일명 역산
+ * 아님, AC-INSTALL-010). `versionCode`/`versionName`이 문자열인 이유: aapt가
+ * 문자열로 내며(`versionCode='1'`), 숫자로 강제 변환하면 매우 큰 versionCode나
+ * 비정형 값에서 정보가 손상될 수 있어 aapt가 준 그대로 싣는다.
+ *
+ * `mode`는 이번 설치가 최초(`"fresh"`)였는지 덮어쓰기(`"upgrade"`)였는지를
+ * 알린다 — 설치 명령 자체의 출력이 아니라 기기의 설치 전 패키지 목록으로
+ * 판정한 값이다(REQ-INSTALL-004).
+ */
+export interface InstallPayload {
+  serial: string;
+  package: string;
+  versionCode: string;
+  versionName: string;
+  mode: InstallMode;
 }
 
 /**
@@ -246,6 +267,12 @@ export type DoctorAdbKeyboardReport =
  */
 export interface DoctorPayload {
   adb: AdbInstalledCheck;
+  /**
+   * aapt/aapt2 presence (SPEC-INSTALL-001 M4). Always present — the same
+   * treatment as `adb`: reported on every branch (Android and iOS), since
+   * `install` depends on aapt just as device commands depend on adb.
+   */
+  aapt: AaptInstalledCheck;
   daemon: DaemonHealthCheck;
   devices: DeviceInfo[];
   adbKeyboard: DoctorAdbKeyboardReport;

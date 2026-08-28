@@ -106,6 +106,15 @@ node dist/cli/bin.js <command> [args...] [--device <serial>]
 
 Once published, the same commands run via `npx explore-mobile <command>`.
 
+**Calling from another project (the test runner).** A program outside this
+repository consumes the CLI as a module rather than shelling out to
+`node dist/cli/bin.js`: `import { runCli } from "explore-mobile"` (a local
+path dependency until the package is published) and call
+`runCli(argv, backend)`. `runCli` returns the SAME JSON result object the
+binary prints, so a module caller and the command line share one contract. The
+`node dist/cli/bin.js …` form above is the in-repo path used while developing
+this package; a runner in a sibling directory does not depend on that path.
+
 Every invocation prints **exactly one JSON document to stdout** and sets a
 matching exit code (0 = success, 1 = error). Never parse free text — the
 JSON body is the only contract.
@@ -135,6 +144,13 @@ Branch on `error.code`. Codes you will actually meet:
 | `SCREEN_SIZE_UNKNOWN` | screen size could not be determined — **refuses rather than guessing** |
 | `AMOUNT_TOO_SMALL` | swipe distance below the touch slop; would land as a tap |
 | `LAUNCHER_ACTIVITY_NOT_FOUND` | no launchable activity for that package |
+| `APK_NOT_FOUND` | `install`: the APK path is not a readable file. No device was touched |
+| `APK_INVALID` | `install`: the file is not a readable APK (`aapt2` could not read its package metadata). No device was touched |
+| `AAPT_NOT_FOUND` | `install`: neither `aapt2` nor `aapt` could be located — the message names every location searched. Not on `PATH` is normal; run `doctor` to see the resolved path |
+| `INSTALL_SIGNATURE_MISMATCH` | `install`: the installed app and this APK are signed with different keys — Android refuses the overwrite. Re-sign with the original key |
+| `INSTALL_VERSION_DOWNGRADE` | `install`: the APK's `versionCode` is lower than the installed version. Raise the versionCode and rebuild |
+| `INSTALL_FAILED` | `install`: an install failure not classified above — the raw `adb install` output is preserved in the message (does not assert a single cause). Insufficient storage surfaces here today |
+| `INSTALL_UNSUPPORTED_ON_IOS` | `install`: the target is an iOS device. APK install is Android-only — target an Android device with `--device` |
 | `IME_RESTORE_FAILED` | original keyboard was not restored — **surface to the user, do not retry blindly** |
 | `UNSUPPORTED_KEY_ON_IOS` | that key alias has no iOS equivalent (retry is pointless) |
 | `WDA_UNREACHABLE` | iOS: WebDriverAgent is not up — message carries the recovery steps |
@@ -200,6 +216,7 @@ backend — passing `--device <serial>` routes automatically.
 |---|---|
 | `devices` | List devices: serial, model, OS version, connection state, emulator flag, platform |
 | `launch <package>` | Start an app by package/bundle id |
+| `install <apk-path>` | Install (or overwrite/upgrade) an APK on the device. **Android only.** Reads the package name and version from the APK itself (via `aapt2`), so you pass a file path — not a package id. Data-preserving reinstall (`adb install -r`); `data.mode` reports `"fresh"` or `"upgrade"`. Fails with a distinct code on signature mismatch / version downgrade (see error table) |
 | `stop <package>` | Force-stop an app |
 | `screenshot [--out <path>] [--full] [--max-edge <px>] [--format <jpeg\|png>] [--quality <1-100>]` | Capture the screen, downscaled to a 1024 px long edge and re-encoded as JPEG by default. With `--out` it saves to that host path (`data.savedTo`) plus a `<path>.geometry.json` sidecar; without it the bytes come back base64-encoded in `data.pngBase64`. The response always carries `width`/`height`/`deviceWidth`/`deviceHeight`/`scale`/`format`/`capturedAt` |
 | `tap <x> <y> [--from <capture>] [--stale-ok]` | Tap a coordinate. Device pixels by default; with `--from` the coordinate is read in that capture's image space and converted |
@@ -235,8 +252,13 @@ arrow rather than sending `back`).
 Unicode IME and switches back afterward. On iOS there is no keyboard switch —
 text goes straight through. See the Unicode note below.
 
-**`doctor` output shape.** Android targets report `adb`, `daemon`, `devices`,
-`adbKeyboard`. iOS targets additionally report `wdaEnvironment`, and
+**`doctor` output shape.** Every target reports `adb`, `aapt`, `daemon`,
+`devices`, `adbKeyboard`. The `aapt` block (`installed` / `onPath` /
+`resolvedPath` / `buildToolsVersion` / `isAapt2`) is the resolution `install`
+uses to read APK metadata — the diagnosis path and the execution path share it,
+so what `doctor` shows is what `install` runs. Like `adb`, `aapt` is often not
+on `PATH` (`onPath: false`) yet still resolved via the SDK's `build-tools`.
+iOS targets additionally report `wdaEnvironment`, and
 `adbKeyboard` comes back marked skipped. `wdaEnvironment` carries four keys —
 `devicectl` (is the backend usable at all), `wda` (is the runner alive, and is
 it operable — two separate fields, see below), `signing` (when the runner's

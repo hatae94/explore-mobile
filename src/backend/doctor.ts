@@ -26,6 +26,8 @@ import { ADBKEYBOARD_IME_ID, ADBKEYBOARD_PACKAGE_ID } from "./adbkeyboard.js";
 import { ensureAdbKeyboardInstalled } from "./adbkeyboard-installer.js";
 import type { AdbExecutor, AdbPathPredicate } from "./adb-executor.js";
 import { resolveAdbPath, spawnAdb } from "./adb-executor.js";
+import type { AaptPathPredicate, BuildToolsLister } from "./aapt-executor.js";
+import { resolveAaptPath } from "./aapt-executor.js";
 import type { ApkAcquirer } from "./apk-downloader.js";
 import { createApkAcquirer } from "./apk-downloader.js";
 import type { ProcessExecutor } from "./process-executor.js";
@@ -44,6 +46,26 @@ export interface AdbInstalledCheck {
 export interface DaemonHealthCheck {
   healthy: boolean;
   message?: string;
+}
+
+/**
+ * aapt/aapt2 presence report (SPEC-INSTALL-001 M4, REQ-INSTALL-003). Same
+ * shape family as `AdbInstalledCheck` — `install`'s APK metadata extraction
+ * depends on aapt exactly as every device command depends on adb, so `doctor`
+ * reports it the same way. `buildToolsVersion` is the added field aapt needs
+ * and adb does not (adb lives at a fixed path; aapt lives under a versioned
+ * `build-tools/<version>/` directory). Reported via the SHARED
+ * `resolveAaptPath()` so the diagnosis matches the execution path
+ * (AC-INSTALL-016).
+ */
+export interface AaptInstalledCheck {
+  installed: boolean;
+  onPath: boolean;
+  resolvedPath: string | null;
+  /** The `build-tools` version the binary came from, or `null` (PATH hit / not found). */
+  buildToolsVersion: string | null;
+  /** Whether the resolved binary is `aapt2` (`true`) or legacy `aapt` (`false`); `null` if not found. */
+  isAapt2: boolean | null;
 }
 
 export interface InstallAttemptResult {
@@ -96,7 +118,32 @@ export class AdbDoctor {
      * fresh, uncached scan of its own fake filesystem.
      */
     private readonly adbPathPredicate?: AdbPathPredicate,
+    /**
+     * Injectable test seams for aapt resolution (SPEC-INSTALL-001 M4),
+     * forwarded as-is to `resolveAaptPath()`. Left `undefined` (the default)
+     * so a bare `new AdbDoctor()` shares the process-wide memoized resolution
+     * with `spawnAapt` — the diagnosis path and the execution path agree
+     * (AC-INSTALL-016).
+     */
+    private readonly aaptPathPredicate?: AaptPathPredicate,
+    private readonly buildToolsLister?: BuildToolsLister,
   ) {}
+
+  /**
+   * Is aapt/aapt2 present and resolvable? (SPEC-INSTALL-001 M4,
+   * REQ-INSTALL-003). Reports via the SHARED `resolveAaptPath()` (never a
+   * private resolution) so the path `doctor` reports is the path `install`
+   * would actually use (AC-INSTALL-016). No subprocess is run — presence and
+   * location are enough to diagnose; `install` surfaces any deeper failure as
+   * `APK_INVALID` at use time.
+   */
+  async checkAaptInstalled(): Promise<AaptInstalledCheck> {
+    const { onPath, resolvedPath, buildToolsVersion, isAapt2 } = resolveAaptPath(
+      this.aaptPathPredicate,
+      this.buildToolsLister,
+    );
+    return { installed: resolvedPath !== null, onPath, resolvedPath, buildToolsVersion, isAapt2 };
+  }
 
   /**
    * Is the `adb` client binary present and runnable? (REQ-DOCTOR-001,

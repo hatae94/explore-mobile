@@ -24,6 +24,8 @@ import { ensureAdbKeyboardInstalled } from "./adbkeyboard-installer.js";
 import type {
   DeviceBackend,
   DeviceInfo,
+  InstallMode,
+  InstallOutcome,
   PinchGesture,
   ScreenSize,
   SwipeOptions,
@@ -43,6 +45,12 @@ import type { InputMethodBindingState } from "./ime-binding-parser.js";
 import { parseInputMethodBindingState, parseSoftKeyboardShown } from "./ime-binding-parser.js";
 import { isImeEnableRegistrationRaceFailure } from "./ime-enable-retry-predicate.js";
 import { UnsupportedGestureOnAndroidError } from "./gesture-errors.js";
+import {
+  InstallFailedError,
+  InstallSignatureMismatchError,
+  InstallVersionDowngradeError,
+} from "./install-errors.js";
+import { classifyInstallOutput, pmListHasExactPackage } from "./install-result-parser.js";
 import { LauncherActivityNotFoundError } from "./launch-errors.js";
 import { parseLauncherResolveOutput } from "./launcher-resolve-parser.js";
 import { ANDROID_KEYCODE, KEYCODE_HIDE_KEYBOARD } from "./keycodes.js";
@@ -910,5 +918,51 @@ export class AdbBackend implements DeviceBackend {
         "이는 더블탭 인식 창(약 250~300 ms)을 넘습니다. 한 왕복에 묶어도 비용은 호출마다 들므로 " +
         "간격이 줄지 않습니다. 재시도해도 결과는 같습니다 — 더블탭이 필요하면 iOS 기기를 쓰십시오.",
     );
+  }
+
+  /**
+   * REQ-INSTALL-004 (SPEC-INSTALL-001 M3, additive 13th method).
+   *
+   * Determines `fresh` vs `upgrade` from the device's pre-install package
+   * list (`pm list packages`, a read that touches nothing), THEN runs
+   * `adb install -r` (data-preserving reinstall — AC-INSTALL-020). Failure is
+   * classified from the OUTPUT tokens, never the exit code (spec.md §C.2 /
+   * AC-INSTALL-025): a signature mismatch or a downgrade becomes its own
+   * typed error; anything else preserves the raw output in `InstallFailedError`
+   * (AC-INSTALL-024). Insufficient-storage is deliberately NOT classified
+   * until observed on a real device (AC-INSTALL-036).
+   *
+   * @MX:WARN — this is the only method that MODIFIES device app state. The
+   * pre-install `pm list` read must complete before the install so the
+   * `mode` reflects the state BEFORE this call, not after.
+   * @MX:REASON — mode is measured, not assumed: reporting `upgrade` for a
+   * fresh install (or vice versa) would misinform the caller about whether
+   * prior app data survived (AC-INSTALL-019/020).
+   */
+  async installApp(serial: string, apkPath: string, packageId: string): Promise<InstallOutcome> {
+    const listResult = await this.exec(["-s", serial, "shell", "pm", "list", "packages", packageId]);
+    // A non-zero pm-list is not fatal to install; treat an unreadable list as
+    // "not installed" (fresh) rather than blocking — the install itself is the
+    // authority on success. Mode is best-effort pre-state.
+    const alreadyInstalled =
+      listResult.exitCode === 0 && pmListHasExactPackage(listResult.stdout.toString("utf-8"), packageId);
+    const mode: InstallMode = alreadyInstalled ? "upgrade" : "fresh";
+
+    const installResult = await this.exec(["-s", serial, "install", "-r", apkPath]);
+    const combined =
+      installResult.stdout.toString("utf-8") + "\n" + installResult.stderr.toString("utf-8");
+
+    const classification = classifyInstallOutput(combined);
+    if (classification.ok) {
+      return { mode };
+    }
+    switch (classification.kind) {
+      case "signature":
+        throw new InstallSignatureMismatchError(packageId, classification.raw);
+      case "downgrade":
+        throw new InstallVersionDowngradeError(packageId, classification.raw);
+      default:
+        throw new InstallFailedError(classification.raw);
+    }
   }
 }

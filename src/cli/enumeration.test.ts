@@ -52,6 +52,7 @@ function countingBackend(devices: DeviceInfo[]): DeviceBackend {
     getScreenSize: vi.fn().mockResolvedValue({ width: 1440, height: 3120 }),
     pinch: vi.fn().mockResolvedValue(undefined),
     doubleTap: vi.fn().mockResolvedValue(undefined),
+    installApp: vi.fn().mockResolvedValue({ mode: "fresh" }),
   };
 }
 
@@ -128,6 +129,7 @@ describe("기기 열거 1회 보장 (REQ-VISION-005)", () => {
       return {
         android: {
           checkAdbInstalled: vi.fn().mockResolvedValue({ installed: true, onPath: true, resolvedPath: "/fake/path/adb", version: "test" }),
+          checkAaptInstalled: vi.fn().mockResolvedValue({ installed: true, onPath: false, resolvedPath: "/fake/build-tools/36.1.0/aapt2", buildToolsVersion: "36.1.0", isAapt2: true }),
           checkDaemonHealth: vi.fn().mockResolvedValue({ healthy: true }),
           ensureAdbKeyboard: vi.fn().mockResolvedValue({ skipped: true, reason: "stub" }),
           resetDevice: vi.fn().mockResolvedValue({ originalImeRestored: true }),

@@ -19,7 +19,28 @@ export type {
   DeviceBackend,
   DeviceConnectionState,
   DeviceInfo,
+  InstallMode,
+  InstallOutcome,
 } from "./schema/device-backend.js";
+// SPEC-INSTALL-001: install command surface — a module consumer (the test
+// runner) imports these to type the install result and its failure codes.
+export type { InstallPayload } from "./schema/command-payloads.js";
+export {
+  InstallFailedError,
+  InstallSignatureMismatchError,
+  InstallUnsupportedOnIosError,
+  InstallVersionDowngradeError,
+} from "./backend/install-errors.js";
+export {
+  extractApkMetadata,
+  AaptNotFoundError,
+  ApkInvalidError,
+  ApkNotFoundError,
+  type ApkMetadataDeps,
+} from "./backend/apk-metadata.js";
+export type { ApkMetadata } from "./backend/apk-metadata-parser.js";
+export { resolveAaptPath, spawnAapt, type AaptPathResolution } from "./backend/aapt-executor.js";
+export type { AaptInstalledCheck } from "./backend/doctor.js";
 export { KEY_ALIASES, isKeyAlias, type KeyAlias } from "./schema/key-alias.js";
 export { AdbBackend } from "./backend/adb-backend.js";
 export type { AdbExecResult, AdbExecutor } from "./backend/adb-executor.js";

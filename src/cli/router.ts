@@ -18,6 +18,7 @@ import { parseCommandArgs } from "./args.js";
 import { devicesCommand } from "./commands/devices.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { doubleTapCommand } from "./commands/doubletap.js";
+import { installCommand } from "./commands/install.js";
 import { keyCommand } from "./commands/key.js";
 import { launchCommand } from "./commands/launch.js";
 import { pinchCommand } from "./commands/pinch.js";
@@ -36,6 +37,7 @@ import type { CommandResult } from "./envelope.js";
 const COMMANDS: Record<string, CommandHandler> = {
   devices: devicesCommand,
   launch: launchCommand,
+  install: installCommand,
   stop: stopCommand,
   screenshot: screenshotCommand,
   tap: tapCommand,

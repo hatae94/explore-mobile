@@ -40,6 +40,9 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
   }
 
   const adb = await envServices.android.checkAdbInstalled();
+  // SPEC-INSTALL-001 M4: aapt presence is reported on every branch, the same
+  // treatment as adb — `install` needs aapt as much as device commands need adb.
+  const aapt = await envServices.android.checkAaptInstalled();
   const daemon = adb.installed
     ? await envServices.android.checkDaemonHealth()
     : { healthy: false, message: "adb is not installed; daemon health cannot be checked." };
@@ -101,6 +104,7 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
 
     return success<DoctorPayload>("doctor", {
       adb,
+      aapt,
       daemon,
       devices,
       adbKeyboard: { skipped: true, reason: "Target device is iOS; see wdaEnvironment instead." },
@@ -114,6 +118,7 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
     const installAttempt = await envServices.android.installMissingAdb(args.yes);
     return success<DoctorPayload>("doctor", {
       adb,
+      aapt,
       daemon,
       installAttempt,
       devices,
@@ -124,6 +129,7 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
   if (!daemon.healthy) {
     return success<DoctorPayload>("doctor", {
       adb,
+      aapt,
       daemon,
       devices,
       adbKeyboard: { skipped: true, reason: "adb daemon is not healthy; cannot query or target devices." },
@@ -133,6 +139,7 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
   if (!target.ok) {
     return success<DoctorPayload>("doctor", {
       adb,
+      aapt,
       daemon,
       devices,
       adbKeyboard: { skipped: true, reason: `Cannot install/enable ADBKeyBoard: ${target.message}` },
@@ -143,6 +150,7 @@ export const doctorCommand: CommandHandler = async (args, source, envServices) =
 
   return success<DoctorPayload>("doctor", {
     adb,
+    aapt,
     daemon,
     devices,
     adbKeyboard: { skipped: false, ...adbKeyboard },

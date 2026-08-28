@@ -80,6 +80,7 @@ function createMockIosBackend(): DeviceBackend {
     getScreenSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
     pinch: vi.fn().mockResolvedValue(undefined),
     doubleTap: vi.fn().mockResolvedValue(undefined),
+    installApp: vi.fn().mockResolvedValue({ mode: "fresh" }),
   };
 }
 
@@ -120,6 +121,7 @@ function createMockBackend(devices: DeviceInfo[] = [device()]): DeviceBackend {
     getScreenSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
     pinch: vi.fn().mockResolvedValue(undefined),
     doubleTap: vi.fn().mockResolvedValue(undefined),
+    installApp: vi.fn().mockResolvedValue({ mode: "fresh" }),
   };
 }
 
@@ -367,6 +369,7 @@ describe("runCli", () => {
         getScreenSize: vi.fn().mockResolvedValue({ width: 1179, height: 2556 }),
         pinch: vi.fn().mockResolvedValue(undefined),
         doubleTap: vi.fn().mockResolvedValue(undefined),
+        installApp: vi.fn().mockResolvedValue({ mode: "fresh" }),
       };
       // M5(REQ-VISION-005): registry는 더 이상 `DeviceBackend`를 구현하지
       // 않는다 — `runCli`가 `DeviceSource`로 받아 그대로 라우팅한다.
@@ -917,7 +920,7 @@ describe("runCli", () => {
         expect(result.ok).toBe(true);
         if (result.ok) {
           expect(Object.keys(result.data as object).sort()).toEqual(
-            ["adb", "adbKeyboard", "daemon", "devices", "installAttempt"].sort(),
+            ["aapt", "adb", "adbKeyboard", "daemon", "devices", "installAttempt"].sort(),
           );
         }
       });
@@ -935,7 +938,7 @@ describe("runCli", () => {
         expect(result.ok).toBe(true);
         if (result.ok) {
           expect(Object.keys(result.data as object).sort()).toEqual(
-            ["adb", "adbKeyboard", "daemon", "devices"].sort(),
+            ["aapt", "adb", "adbKeyboard", "daemon", "devices"].sort(),
           );
         }
       });
@@ -977,7 +980,7 @@ describe("runCli", () => {
         if (result.ok) {
           const data = result.data as { wdaEnvironment: object };
           expect(Object.keys(data).sort()).toEqual(
-            ["adb", "adbKeyboard", "daemon", "devices", "wdaEnvironment"].sort(),
+            ["aapt", "adb", "adbKeyboard", "daemon", "devices", "wdaEnvironment"].sort(),
           );
           // `signing`은 SPEC-IOS-002 M5에서 추가됐다 — `--yes` 없이도 늘 실린다.
           // 만료는 기동이 깨진 뒤가 아니라 깨지기 전에 알려야 값이 있다(REQ-IOS2-007).

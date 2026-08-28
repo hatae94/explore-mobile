@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type {
   AppCommandPayload,
+  InstallPayload,
   DoctorPayload,
   DoubleTapPayload,
   KeyPayload,
@@ -41,6 +42,17 @@ describe("command payload contracts (SPEC-CONTRACT-001)", () => {
   it("launch / stop — { serial, package }", () => {
     const keys: Record<keyof AppCommandPayload, true> = { serial: true, package: true };
     expect(Object.keys(keys)).toHaveLength(2);
+  });
+
+  it("install — { serial, package, versionCode, versionName, mode } (SPEC-INSTALL-001)", () => {
+    const keys: Record<keyof InstallPayload, true> = {
+      serial: true,
+      package: true,
+      versionCode: true,
+      versionName: true,
+      mode: true,
+    };
+    expect(Object.keys(keys)).toHaveLength(5);
   });
 
   it("screenshot — { serial, byteLength, savedTo?, pngBase64?, + 기하 7필드 }", () => {
@@ -144,16 +156,18 @@ describe("command payload contracts (SPEC-CONTRACT-001)", () => {
     expect(Object.keys(keys)).toHaveLength(8);
   });
 
-  it("doctor — 항상 4개 + 갈래별 선택 2개", () => {
+  it("doctor — 항상 5개(adb/aapt/daemon/devices/adbKeyboard) + 갈래별 선택 2개", () => {
+    // SPEC-INSTALL-001 M4: aapt가 항상-present 필드로 늘었다(adb와 같은 취급).
     const keys: Record<keyof DoctorPayload, true> = {
       adb: true,
+      aapt: true,
       daemon: true,
       devices: true,
       adbKeyboard: true,
       installAttempt: true,
       wdaEnvironment: true,
     };
-    expect(Object.keys(keys)).toHaveLength(6);
+    expect(Object.keys(keys)).toHaveLength(7);
   });
 
   /**
