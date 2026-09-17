@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "explore-mobile 아키텍처",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/hatae94/explore-mobile",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "06a16f438b03887d88b975083d2bf0d4fa826bfd"
+    }
+  },
+  "components": [
+    { "id": "caller", "type": "external", "label": "에이전트 / 사용자", "sublabel": "CLI · 라이브러리 호출", "pos": [40, 340], "size": [130, 60] },
+    { "id": "bin", "type": "frontend", "label": "CLI 진입점", "sublabel": "bin.ts", "pos": [240, 340], "size": [130, 60], "sources": [{ "path": "src/cli/bin.ts" }] },
+    { "id": "router", "type": "backend", "label": "명령 라우터", "sublabel": "router.ts", "pos": [440, 340], "size": [130, 60], "sources": [{ "path": "src/cli/router.ts" }] },
+    { "id": "registry", "type": "backend", "label": "백엔드 레지스트리", "sublabel": "기기 자동 판별", "pos": [440, 160], "size": [140, 60], "sources": [{ "path": "src/backend/registry.ts" }] },
+    { "id": "commands", "type": "backend", "label": "명령 핸들러", "sublabel": "14개 명령 핸들러", "pos": [640, 340], "size": [150, 64], "sources": [{ "path": "src/cli/commands/screenshot.ts" }] },
+    { "id": "image", "type": "backend", "label": "이미지 · 좌표 변환", "sublabel": "캡처 축소 · 좌표 변환", "pos": [640, 540], "size": [150, 60], "sources": [{ "path": "src/image/transform.ts" }] },
+    { "id": "deviceBackend", "type": "backend", "label": "DeviceBackend 인터페이스", "sublabel": "13개 메서드 계약", "pos": [860, 340], "size": [160, 64], "tag": "교체 가능 플러그인 지점", "sources": [{ "path": "src/schema/device-backend.ts" }] },
+    { "id": "adbBackend", "type": "backend", "label": "Android 백엔드", "sublabel": "adb", "pos": [1080, 160], "size": [140, 60], "sources": [{ "path": "src/backend/adb-backend.ts" }] },
+    { "id": "wdaBackend", "type": "backend", "label": "iOS 백엔드", "sublabel": "WebDriverAgent", "pos": [1080, 540], "size": [140, 60], "sources": [{ "path": "src/backend/wda-backend.ts" }] },
+    { "id": "aapt", "type": "external", "label": "Android SDK aapt", "sublabel": "APK 메타데이터 추출", "pos": [1080, 20], "size": [140, 54] },
+    { "id": "androidDevice", "type": "external", "label": "Android 기기", "sublabel": "실기기 · 에뮬레이터", "pos": [1080, 280], "size": [140, 60] },
+    { "id": "iosDevice", "type": "external", "label": "iOS 기기", "sublabel": "WDA 러너 탑재", "pos": [1080, 660], "size": [140, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "explore-mobile CLI 프로세스 (Node.js)", "wraps": ["bin", "router", "registry", "commands", "image", "deviceBackend", "adbBackend", "wdaBackend"] }
+  ],
+  "connections": [
+    { "id": "caller-to-bin", "from": "caller", "to": "bin", "label": "CLI 실행 / import", "variant": "emphasis", "labelDy": -26 },
+    { "id": "bin-to-router", "from": "bin", "to": "router", "label": "argv 전달" },
+    { "id": "router-to-registry", "from": "router", "to": "registry", "label": "기기 자동 판별", "fromSide": "top", "toSide": "bottom" },
+    { "id": "router-to-commands", "from": "router", "to": "commands", "label": "명령 디스패치", "variant": "emphasis" },
+    { "id": "commands-to-image", "from": "commands", "to": "image", "label": "좌표 변환", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
+    { "id": "commands-to-devicebackend", "from": "commands", "to": "deviceBackend", "label": "인터페이스 호출", "labelDy": 56 },
+    { "id": "devicebackend-to-adb", "from": "deviceBackend", "to": "adbBackend", "label": "구현", "variant": "dashed" },
+    { "id": "devicebackend-to-wda", "from": "deviceBackend", "to": "wdaBackend", "label": "구현", "variant": "dashed" },
+    { "id": "adb-to-aapt", "from": "adbBackend", "to": "aapt", "label": "APK 파싱", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "adb-to-device", "from": "adbBackend", "to": "androidDevice", "label": "adb 프로토콜", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
+    { "id": "wda-to-device", "from": "wdaBackend", "to": "iosDevice", "label": "WDA HTTP", "fromSide": "bottom", "toSide": "top", "labelDy": 24 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "진입점", "items": ["CLI 실행 파일(bin.ts) 또는 라이브러리(index.ts)로 시작", "명령 라우터가 14개 명령어를 각 핸들러로 위임"] },
+    { "dot": "emerald", "title": "백엔드 교체 구조", "items": ["DeviceBackend 인터페이스(13개 메서드)를 Android(adb)와 iOS(WDA)가 각각 구현", "레지스트리가 두 백엔드의 기기 목록을 하나로 합쳐 자동 라우팅"] },
+    { "dot": "amber", "title": "외부 의존", "items": ["Android는 adb 데몬, iOS는 기기 위 WebDriverAgent 서버와 통신", "APK 설치 시 Android SDK aapt로 메타데이터 추출"] }
+  ]
+}

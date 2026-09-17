@@ -26,6 +26,18 @@ Android는 `adb`, iOS는 실기기 경로를 통해 동작하며, AI 에이전�
 - **화면을 읽는 수단은 스크린샷 하나다.** UI 계층 덤프와 네이티브 셀렉터
   경로는 제거됐다 — 이유는 [읽기 경로](#읽기-경로는-스크린샷-하나다) 참고.
 
+## 구조
+
+![explore-mobile 아키텍처 다이어그램](.moai/reports/diagrams/explore-mobile-architecture.png)
+
+CLI 진입점 → 명령 라우터 → 명령 핸들러는 `DeviceBackend` 인터페이스(13개
+메서드 계약) 하나만 보고, Android(`adb`)와 iOS(WebDriverAgent)가 그
+인터페이스를 각각 구현한다 — 이 교체 가능한 경계 덕분에 명령 핸들러 쪽
+코드는 플랫폼을 몰라도 된다. 팬/줌·테마 전환·경로 추적을 지원하는
+인터랙티브 버전은 로컬 클론 후
+[`explore-mobile-architecture.html`](.moai/reports/diagrams/explore-mobile-architecture.html)을
+브라우저로 열면 볼 수 있다.
+
 ## 요구사항
 
 - **Node.js >= 22** — 원래 iOS 웹 경로가 Node 내장 `WebSocket`(22.4+)을 쓰기
