@@ -1,10 +1,10 @@
 ---
 id: SPEC-GESTURE-002
 title: "두 손가락 핀치와 더블탭 — 구현 계획"
-version: "0.4.0"
+version: "0.5.0"
 status: in-progress
 created: 2026-08-25
-updated: 2026-08-25
+updated: 2026-08-29
 author: hatae
 ---
 
@@ -53,7 +53,7 @@ author: hatae
 |------|----------|------|
 | `src/schema/device-backend.ts` | M1 | `pinch`·`doubleTap` 2개 추가 + `PinchGesture` 타입 + `@MX:ANCHOR` "10-method" 문구 갱신 |
 | `src/backend/gesture-errors.ts` | M1 | **신규** — `UNSUPPORTED_GESTURE_ON_ANDROID` 오류 클래스. `launch-errors.ts`의 선례(성격이 다르면 신규 모듈)를 따른다 |
-| `src/backend/wda-backend.ts` | M1 | `performActions` 포인터 N개 일반화 + `pinch`/`doubleTap` 구현 + 간격 상수 |
+| `src/backend/wda-backend.ts` | M1 · **M6** | `performActions` 포인터 N개 일반화 + `pinch`/`doubleTap` 구현 + 간격 상수. **M6(0.5.0)**: 유지 시간 상수 `DOUBLE_TAP_HOLD_MS` 신설 + 더블탭 봉투의 각 탭 안에 `pause` 2곳 추가 — 실기기 관측이 0 ms 터치를 잡았다(spec.md §C.1-⑱, REQ-GEST2-DTAP-005) |
 | `src/backend/adb-backend.ts` | M1 | `pinch`/`doubleTap` — 사유가 다른 두 메시지로 명시적 거부 |
 | `src/schema/device-backend.test.ts` | M1 | 트립와이어 10 → 12 + 문구 갱신 |
 | 테스트 더블 보강(아래 §B.1의 세는 명령으로 확정) | M1 | 신규 2메서드를 갖도록 객체 리터럴 갱신 |
@@ -85,7 +85,7 @@ grep -rc "getMinEffectiveSwipeThreshold: " src --include="*.test.ts" | grep -v "
 
 `src/backend/registry.test.ts`의 `new BackendRegistry(...)` 인스턴스와 `adb-backend.test.ts`/`wda-backend.test.ts`의 실제 구현 시험은 **이 수에 포함되지 않는다** — 클래스가 메서드를 얻으면 자동으로 컴파일된다.
 
-### B.2 핀치 간격 산식이 실기기에서 뒤집힐 수 있다 [최고 — 이 SPEC의 유일한 미검증 축]
+### B.2 핀치 간격 산식이 실기기에서 뒤집힐 수 있다 [해소됨 — M6에서 조정 없이 확인, 0.5.0]
 
 spec.md §C.1-⑨: 측정은 **기구**(포인터 2개가 한 요청에 실리면 확대가 일어난다)를 확인했을 뿐 **손가락 좌표를 기록하지 않았다.** 따라서 `narrowGap = round(wideGap / 2)`는 설계 선택이며 실기기 확인 전에는 미검증이다.
 
@@ -104,6 +104,12 @@ spec.md §C.1-⑨: 측정은 **기구**(포인터 2개가 한 요청에 실리�
 - **다만 `pause`는 0으로 재측정되지 않았다** — ⑪은 `pause(120 ms)`를 **고정한 채** `pointerMove`만 바꿨다. 두 축을 같은 것으로 취급하지 않는다. 1·2가 다 실패하고 봉투를 의심할 근거가 생기면 그때 `pause`를 **재측정 대상으로** 올리되, 사다리의 기본 경로에는 두지 않는다.
 
 **조정된 값은 그 근거와 함께 spec.md §C.1에 실측으로 기록한다** — 그러지 않으면 다음 사람이 같은 탐색을 처음부터 반복한다.
+
+**0.5.0 — 이 리스크는 해소됐다. 사다리는 한 단계도 쓰이지 않았다.** M6에서 `--amount` 기본값(0.5) 그대로 `out`이 확대하고 `in`이 축소했다(spec.md §C.1-⑰: 새 상호 10건 등장, 두 지점 거리 127px → 219px → 131px). 따라서 위 1·2·3 단계는 **실행되지 않았고 조정된 값도 없다** — 이 절을 읽는 사람이 "어떤 값으로 조정됐지?"를 찾지 않도록 여기 적어 둔다.
+
+**해소된 범위를 정확히 적는다.** 확인된 것은 `narrowGap = round(wideGap / 2)`가 **동작한다**까지이며, 그것이 최적값이라는 뜻은 아니다(spec.md §C.1-⑨). 사다리는 지우지 않고 남겨 둔다 — 다른 기기·다른 앱에서 확대가 관측되지 않을 때 다시 쓸 순서이기 때문이다.
+
+**대신 미검증 축은 다른 자리로 옮겨갔다.** M6이 잡은 것은 핀치가 아니라 **더블탭 봉투의 유지 시간**이었고(spec.md §C.1-⑱, REQ-GEST2-DTAP-005), 그 인식 하한은 여전히 이분 탐색되지 않았다. "이 SPEC의 유일한 미검증 축"이라는 표현은 0.4.0까지의 사실이다.
 
 ### B.3 빌려 온 문턱이 핀치를 과다 거부하거나 과소 거부할 수 있다 [중간 · 방향이 비대칭]
 
@@ -289,7 +295,9 @@ node dist/cli/bin.js doctor --yes
 
 > **PARTIAL ≠ PASS이며, PARTIAL은 `implemented → completed` 전이를 막는다.**
 
-즉 실기기 없이 도달할 수 있는 최대 상태는 **`implemented`**다. 기기가 없다는 사실이 마감의 **면제**가 되지 않는다 — 오히려 그 반대로, 이 SPEC의 유일한 미검증 축(간격 산식, spec.md §C.1-⑨)을 막는 마지막 관문이 여기다. 0.1.0은 "기기 없으면 PARTIAL"(acceptance.md)과 "M6 없이는 마감 금지"(이 문서)를 서로 다른 문서에 따로 적어 두고 잇지 않았다.
+즉 실기기 없이 도달할 수 있는 최대 상태는 **`implemented`**다. 기기가 없다는 사실이 마감의 **면제**가 되지 않는다 — 오히려 그 반대로, 이 SPEC의 유일한 미검증 축(간격 산식, spec.md §C.1-⑨)을 막는 마지막 관문이 여기다.
+
+> **[0.5.0 — 이 관문은 통과했고, 실제로 무언가를 잡았다.]** M6이 끝난 지금 위 문장의 "유일한 미검증 축(간격 산식)"은 **0.4.0까지의 사실**이다. 간격 산식은 조정 없이 확인됐고(§B.2), 대신 그 관문이 잡은 것은 **더블탭 봉투의 0 ms 유지 시간**이었다(spec.md §C.1-⑱). 한 앱(Apple 지도)에서만 검증했다면 통과했을 결함이며, **관문을 세운 값이 여기서 나왔다.** 0.1.0은 "기기 없으면 PARTIAL"(acceptance.md)과 "M6 없이는 마감 금지"(이 문서)를 서로 다른 문서에 따로 적어 두고 잇지 않았다.
 
 **PARTIAL로 남는 경우 무엇을 하는가**: (a) 어느 AC가 왜 PARTIAL인지 progress.md에 남기고, (b) `status`를 `implemented`에서 멈추며, (c) "아마 될 것"이라고 적지 않는다. **이 구속에 예외를 두지 않는다 — Android 거부 확인(아래 4번)도 포함이다**(0.3.0).
 
