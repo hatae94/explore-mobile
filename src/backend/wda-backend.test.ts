@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DOUBLE_TAP_GAP_MS,
+  DOUBLE_TAP_HOLD_MS,
   PINCH_MOVE_DURATION_MS,
   PINCH_PAUSE_MS,
   WdaBackend,
@@ -474,12 +475,25 @@ describe("WdaBackend.doubleTap (AC-GEST2-004 — REQ-GEST2-DTAP-001/002)", () =>
     expect(pointer!.actions.map((a) => a.type)).toEqual([
       "pointerMove",
       "pointerDown",
+      "pause",
       "pointerUp",
       "pause",
       "pointerDown",
+      "pause",
       "pointerUp",
     ]);
-    expect(pointer!.actions[3]).toEqual({ type: "pause", duration: DOUBLE_TAP_GAP_MS });
+    expect(pointer!.actions[4]).toEqual({ type: "pause", duration: DOUBLE_TAP_GAP_MS });
+  });
+
+  it("각 탭이 DOUBLE_TAP_HOLD_MS 동안 눌려 있다 — 0 ms 터치는 손으로 만들 수 없는 신호다", async () => {
+    const { backend, requests } = createBackend();
+
+    await backend.doubleTap("UDID-A", 645, 2640);
+
+    const [pointer] = actionsRequests(requests)[0]!.actions;
+    // 인덱스 2·6 = 각 pointerDown 바로 뒤. 간격(인덱스 4)과 다른 상수를 진다.
+    expect(pointer!.actions[2]).toEqual({ type: "pause", duration: DOUBLE_TAP_HOLD_MS });
+    expect(pointer!.actions[6]).toEqual({ type: "pause", duration: DOUBLE_TAP_HOLD_MS });
   });
 
   it("좌표는 toWdaPoint를 거친 포인트다", async () => {
