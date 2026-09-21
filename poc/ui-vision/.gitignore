@@ -31,6 +31,13 @@ output/*
 !output/flow2-binzino-always-awake-narrated.mp4
 !output/flow-naver-sports-narrated.mp4
 !output/flow-binzino-always-awake.mp4
+# 위 mp4를 GitHub에서 재생되게 만든 GIF 사본(가려진 mp4에서 변환 — 원본 아님, 480px·10fps)
+!output/flow-search-and-play-full.gif
+!output/flow2-explore-queue.gif
+!output/flow3-travis-scott-save.gif
+!output/flow-binzino-always-awake.gif
+!output/flow2-binzino-always-awake-narrated.gif
+!output/flow-naver-sports-narrated.gif
 
 __pycache__/
 *.pyc

@@ -11,10 +11,11 @@ rough draft — 나중에 블로그용으로 다듬을 초안. 문체·구성 �
 > 올리기 전에 필요하면 마저 가리거나 다른 화면으로 교체하세요.
 >
 > **영상 재생 관련**: GitHub는 마크다운의 `<video>` 태그를 통째로 지워서 영상이
-> 재생되지 않아요(GitHub 마크다운 렌더링 API로 확인). 그래서 각 영상 아래에
-> `▶ GitHub에서 보기` 링크를 함께 뒀어요. `<video>` 태그를 지원하는 정적 사이트
-> 생성기에서는 바로 재생되고, 최종 발행 플랫폼에 따라 플랫폼 전용 임베드로
-> 바꿔야 할 수도 있어요.
+> 재생되지 않아요(GitHub 마크다운 렌더링 API로 확인). 그래서 영상은 GIF(480px,
+> 초당 10프레임)로 바꿔 그림처럼 넣었고, 각 GIF 아래에 원본 화질 mp4 링크를
+> 뒀어요. GIF는 소리·재생 컨트롤이 없고 mp4보다 화질이 낮아요. mp4 링크는
+> GitHub에서 재생 대신 다운로드로 떨어질 수 있어요. 최종 발행 플랫폼이
+> `<video>`를 지원하면 mp4로 되돌려도 돼요.
 
 ## 왜 해봤나
 
@@ -348,12 +349,9 @@ concat=...`, 프레임 단위로 디코딩해서 잇는 방식)로 바꾸니 11�
 같이 넘기면, 직전 스텝의 결과 화면 위에 그 지점을 자동으로 강조해서
 끼워 넣는다.
 
-<!-- 마크다운 뷰어가 <video> 태그를 지원 안 하면 아래 링크로 대체됨 -->
-<video src="output/flow-search-and-play-full.mp4" controls width="360">
-  <a href="output/flow-search-and-play-full.mp4">flow-search-and-play-full.mp4</a>
-</video>
+![홈에서 검색, 검색결과, 재생까지 이어지는 40초 녹화](output/flow-search-and-play-full.gif)
 
-▶ [GitHub에서 보기](output/flow-search-and-play-full.mp4)
+▶ [원본 화질 mp4](output/flow-search-and-play-full.mp4)
 
 *(홈→검색→검색결과→재생, 4개 전환 + 탐지 합성 + 다음 액션 강조까지 담은 40초 영상)*
 
@@ -392,11 +390,9 @@ concat=...`, 프레임 단위로 디코딩해서 잇는 방식)로 바꾸니 11�
 이번엔 진짜로 메뉴가 열렸다(처음 의도했던 바텀시트 테스트가 드디어
 성공).
 
-<video src="output/flow2-explore-queue.mp4" controls width="360">
-  <a href="output/flow2-explore-queue.mp4">flow2-explore-queue.mp4</a>
-</video>
+![재생목록 큐 탐색에서 점 세 개 메뉴가 열리는 29초 녹화](output/flow2-explore-queue.gif)
 
-▶ [GitHub에서 보기](output/flow2-explore-queue.mp4)
+▶ [원본 화질 mp4](output/flow2-explore-queue.mp4)
 
 *(강조 좌표를 고친 뒤의 재생목록 큐 탐색 영상 — "⋮"에 정확히 강조가
 들어가고, 실제로 메뉴가 열리는 것까지 담김)*
@@ -436,11 +432,9 @@ SICKO MODE 재생 → "⋮" 메뉴 → "보관함에 저장" → 플레이어 �
   "최근에 저장됨" 맨 위에 실제로 들어가 있었다 — 저장 액션이 진짜로
   성공했다는 걸 직접 확인한 셈
 
-<video src="output/flow3-travis-scott-save.mp4" controls width="360">
-  <a href="output/flow3-travis-scott-save.mp4">flow3-travis-scott-save.mp4</a>
-</video>
+![검색, 재생, 메뉴, 저장, 검증까지 이어진 65초 전체 플로우](output/flow3-travis-scott-save.gif)
 
-▶ [GitHub에서 보기](output/flow3-travis-scott-save.mp4)
+▶ [원본 화질 mp4](output/flow3-travis-scott-save.mp4)
 
 *(검색→재생→메뉴→저장→검증까지, 끊김 없이 이어진 65초 전체 플로우)*
 
@@ -485,11 +479,9 @@ jev의 **Choice**(여러 선택지 중 하나를 고르는 질문 타입)를 써
 
 결과 — 성공은 했지만 순탄친 않았다:
 
-<video src="output/flow-binzino-always-awake.mp4" controls width="360">
-  <a href="output/flow-binzino-always-awake.mp4">flow-binzino-always-awake.mp4</a>
-</video>
+![YT Music 홈에서 검색, 재생, 보관함 저장까지 62초 녹화](output/flow-binzino-always-awake.gif)
 
-▶ [GitHub에서 보기](output/flow-binzino-always-awake.mp4)
+▶ [원본 화질 mp4](output/flow-binzino-always-awake.mp4)
 
 *(YT Music 홈 → 검색 → 재생 → 보관함 저장까지, 판단불가 개입 구간까지 담은 62초 영상)*
 
@@ -523,11 +515,9 @@ jev의 **Choice**(여러 선택지 중 하나를 고르는 질문 타입)를 써
 같은 목표로 처음부터 다시 돌렸다(공정한 비교를 위해 홈 화면부터
 시작 — 직전 실행이 보관함에 저장해둔 곡은 지우고 시작했다).
 
-<video src="output/flow2-binzino-always-awake-narrated.mp4" controls width="360">
-  <a href="output/flow2-binzino-always-awake-narrated.mp4">flow2-binzino-always-awake-narrated.mp4</a>
-</video>
+![수정 후 66초 녹화 — 스텝마다 액션 대상을 강조한 프레임이 끼워져 있음](output/flow2-binzino-always-awake-narrated.gif)
 
-▶ [GitHub에서 보기](output/flow2-binzino-always-awake-narrated.mp4)
+▶ [원본 화질 mp4](output/flow2-binzino-always-awake-narrated.mp4)
 
 *(수정 후 66초 영상. 이번엔 스텝마다 [액션 대상을 빨간 박스+좌표
 십자선으로 강조한 프레임] → [실제 녹화] → [탐지 합성 이미지]를 끼워
@@ -810,6 +800,10 @@ naver.com에 들어가서, 스포츠 탭으로 이동해서, 기사를 하나 �
 만들었다. 다만 스크롤 구간은 `explore-mobile scroll` 명령을 raw로
 호출해서 녹화 파이프라인(`explore_step.run_step`)을 거치지 않았기
 때문에 영상엔 빠져 있다 — tap/text 스텝만 녹화가 붙는다.
+
+![naver.com에서 스포츠 기사를 여는 42초 녹화](output/flow-naver-sports-narrated.gif)
+
+▶ [원본 화질 mp4](output/flow-naver-sports-narrated.mp4)
 
 ### 남은 것
 
