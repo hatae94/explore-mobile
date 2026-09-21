@@ -1,0 +1,15 @@
+[project]
+name = "ui-vision-poc"
+version = "0.1.0"
+description = "PoC: YOLO UI detector + OCR로 안드로이드 화면을 분석해 객체 인식 결과 이미지·데이터 리스트를 산출한다."
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "ultralytics>=8.3",
+  "easyocr>=1.7",
+  "pillow>=11.0",
+  "huggingface-hub>=0.27",
+  "typesafe-sdk>=0.6",
+]
+
+[tool.uv]
+package = false
