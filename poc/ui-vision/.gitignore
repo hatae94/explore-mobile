@@ -6,9 +6,31 @@ models/*
 !models/.gitkeep
 
 # 실기기 캡처 결과물 — 실제 화면 스크린샷은 개인정보(연락처, 메시지 등)를
-# 담을 수 있어 커밋하지 않는다 (auto-memory: "검증 캡처는 식별정보를 흘린다").
+# 담을 수 있어 기본은 커밋하지 않는다 (auto-memory: "검증 캡처는 식별정보를 흘린다").
 output/*
 !output/.gitkeep
+
+# 예외: blog-draft.md가 임베드하거나 이름으로 언급하는 사진·영상 14개는 GitHub에서
+# 보이도록 추적한다. YT Music 화면에 찍힌 본인 이름과 프로필 사진(Chrome 프로필 원
+# 포함)은 가려서(블러) 올렸다 — 가리기 전 원본은 output/_unblurred/에 로컬로만 두며
+# 위 output/* 규칙으로 무시된다.
+# 올리기 전 확인: OCR로 글자, 전 프레임 템플릿 매칭으로 프로필 사진·이름 잔존 여부,
+# 구간 경계 프레임 육안. 이메일·전화번호·알림 배너는 찾지 못했다(샘플링 한계는 있다).
+# 새 미디어를 블로그에 넣을 땐 같은 확인을 거친 뒤 여기에 한 줄씩 더한다.
+!output/capture.annotated.png
+!output/ytmusic-home.annotated.png
+!output/ytmusic-home-full.annotated.png
+!output/verify-ytmusic-search.annotated.png
+!output/final-ytmusic-playback2.annotated.png
+!output/step-search-page.png
+!output/step-search-page.annotated.png
+!output/step-search-page.mp4
+!output/flow-search-and-play-full.mp4
+!output/flow2-explore-queue.mp4
+!output/flow3-travis-scott-save.mp4
+!output/flow2-binzino-always-awake-narrated.mp4
+!output/flow-naver-sports-narrated.mp4
+!output/flow-binzino-always-awake.mp4
 
 __pycache__/
 *.pyc
