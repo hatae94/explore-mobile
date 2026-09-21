@@ -5,15 +5,16 @@ rough draft — 나중에 블로그용으로 다듬을 초안. 문체·구성 �
 
 # 안드로이드 화면을 YOLO + OCR로 읽어보기 — PoC 기록
 
-> **발행 전 체크**: 아래 스크린샷·영상에 실제 알림 개수·프로필 사진·이름
-> ("하태용")이 그대로 찍혀 있어요. 블로그에 올리기 전에 모자이크하거나
-> 다른 화면으로 교체하는 걸 권합니다.
+> **발행 전 체크**: 아래 스크린샷·영상에 찍혀 있던 프로필 사진과 본인 이름은
+> GitHub 업로드용으로 가려 뒀어요(가리기 전 원본은 `output/_unblurred/`에
+> 로컬로만 있어요). 알림 개수 배지(빨간 숫자)는 그대로 남아 있으니, 블로그에
+> 올리기 전에 필요하면 마저 가리거나 다른 화면으로 교체하세요.
 >
-> **영상 재생 관련**: 아래 `<video>` 태그는 GitHub README나 `<video>` 태그를
-> 지원하는 정적 사이트 생성기에서는 바로 재생돼요. 지원 안 하는 곳(예:
-> 일반 마크다운 프리뷰)에서는 태그 안의 링크 텍스트로 대체 표시됩니다 —
-> 최종 발행 플랫폼에 맞춰 `<video>` 태그 대신 플랫폼 전용 임베드로 바꿔야
-> 할 수도 있어요.
+> **영상 재생 관련**: GitHub는 마크다운의 `<video>` 태그를 통째로 지워서 영상이
+> 재생되지 않아요(GitHub 마크다운 렌더링 API로 확인). 그래서 각 영상 아래에
+> `▶ GitHub에서 보기` 링크를 함께 뒀어요. `<video>` 태그를 지원하는 정적 사이트
+> 생성기에서는 바로 재생되고, 최종 발행 플랫폼에 따라 플랫폼 전용 임베드로
+> 바꿔야 할 수도 있어요.
 
 ## 왜 해봤나
 
@@ -352,6 +353,8 @@ concat=...`, 프레임 단위로 디코딩해서 잇는 방식)로 바꾸니 11�
   <a href="output/flow-search-and-play-full.mp4">flow-search-and-play-full.mp4</a>
 </video>
 
+▶ [GitHub에서 보기](output/flow-search-and-play-full.mp4)
+
 *(홈→검색→검색결과→재생, 4개 전환 + 탐지 합성 + 다음 액션 강조까지 담은 40초 영상)*
 
 ## 5차 — 더 복잡한 플로우, 그리고 두 번의 진짜 실수
@@ -392,6 +395,8 @@ concat=...`, 프레임 단위로 디코딩해서 잇는 방식)로 바꾸니 11�
 <video src="output/flow2-explore-queue.mp4" controls width="360">
   <a href="output/flow2-explore-queue.mp4">flow2-explore-queue.mp4</a>
 </video>
+
+▶ [GitHub에서 보기](output/flow2-explore-queue.mp4)
 
 *(강조 좌표를 고친 뒤의 재생목록 큐 탐색 영상 — "⋮"에 정확히 강조가
 들어가고, 실제로 메뉴가 열리는 것까지 담김)*
@@ -434,6 +439,8 @@ SICKO MODE 재생 → "⋮" 메뉴 → "보관함에 저장" → 플레이어 �
 <video src="output/flow3-travis-scott-save.mp4" controls width="360">
   <a href="output/flow3-travis-scott-save.mp4">flow3-travis-scott-save.mp4</a>
 </video>
+
+▶ [GitHub에서 보기](output/flow3-travis-scott-save.mp4)
 
 *(검색→재생→메뉴→저장→검증까지, 끊김 없이 이어진 65초 전체 플로우)*
 
@@ -482,6 +489,8 @@ jev의 **Choice**(여러 선택지 중 하나를 고르는 질문 타입)를 써
   <a href="output/flow-binzino-always-awake.mp4">flow-binzino-always-awake.mp4</a>
 </video>
 
+▶ [GitHub에서 보기](output/flow-binzino-always-awake.mp4)
+
 *(YT Music 홈 → 검색 → 재생 → 보관함 저장까지, 판단불가 개입 구간까지 담은 62초 영상)*
 
 발견이 세 개 나왔다:
@@ -517,6 +526,8 @@ jev의 **Choice**(여러 선택지 중 하나를 고르는 질문 타입)를 써
 <video src="output/flow2-binzino-always-awake-narrated.mp4" controls width="360">
   <a href="output/flow2-binzino-always-awake-narrated.mp4">flow2-binzino-always-awake-narrated.mp4</a>
 </video>
+
+▶ [GitHub에서 보기](output/flow2-binzino-always-awake-narrated.mp4)
 
 *(수정 후 66초 영상. 이번엔 스텝마다 [액션 대상을 빨간 박스+좌표
 십자선으로 강조한 프레임] → [실제 녹화] → [탐지 합성 이미지]를 끼워
