@@ -60,6 +60,7 @@ function createMockBackend(): DeviceBackend {
     getScreenSize: vi.fn().mockResolvedValue({ width: 2732, height: 2048 }),
     pinch: vi.fn().mockResolvedValue(undefined),
     doubleTap: vi.fn().mockResolvedValue(undefined),
+    installApp: vi.fn().mockResolvedValue({ mode: "fresh" }),
   };
 }
 
